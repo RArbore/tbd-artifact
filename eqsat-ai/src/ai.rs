@@ -74,7 +74,7 @@ impl<'a> AIContext<'a> {
     // because a block gets re-interpreted as a new SSA block (however, if this re-interpretation
     // also results in an update in variables, see `update_vars`, then a re-interpretation of
     // successor blocks is warranted).
-    fn update_block(&mut self, block_id: BlockId, new_ssa_block: SSABlock) -> SSABlockId {
+    fn update_new_block(&mut self, block_id: BlockId, new_ssa_block: SSABlock) -> SSABlockId {
         if let Some(old_ssa_block_id) = self.blocks.get(&block_id) {
             self.ssa.set_block(new_ssa_block, *old_ssa_block_id);
             *old_ssa_block_id
@@ -83,6 +83,16 @@ impl<'a> AIContext<'a> {
             self.blocks.insert(block_id, new_ssa_block_id);
             new_ssa_block_id
         }
+    }
+
+    fn update_block(&mut self, block_id: BlockId, ssa_block_id: SSABlockId) {
+        assert!(
+            self.blocks
+                .get(&block_id)
+                .map(|old_ssa_block_id| *old_ssa_block_id == ssa_block_id)
+                .unwrap_or(true)
+        );
+        self.blocks.insert(block_id, ssa_block_id);
     }
 
     fn is_bottom(&self, block_id: BlockId) -> bool {
@@ -104,7 +114,7 @@ impl<'a> AIContext<'a> {
     }
 
     fn visit_entry(&mut self, nonssa: &NonSSAFunc, block: BlockId) -> bool {
-        self.update_block(block, SSABlock::Entry);
+        self.update_new_block(block, SSABlock::Entry);
         let vars = nonssa
             .params
             .iter()
@@ -119,11 +129,10 @@ impl<'a> AIContext<'a> {
         if self.ssa.is_always_false(value) {
             false
         } else {
-            let pred_block = self.blocks[&pred];
             if self.ssa.is_always_true(value) {
-                self.update_block(block, self.ssa.get_block(pred_block).clone());
+                self.update_block(block, self.blocks[&pred]);
             } else {
-                self.update_block(block, SSABlock::Guard(pred_block, value));
+                self.update_new_block(block, SSABlock::Guard(self.blocks[&pred], value));
             }
             // Guards make no assignments.
             self.update_vars(block, self.vars[&pred].clone())
@@ -131,8 +140,7 @@ impl<'a> AIContext<'a> {
     }
 
     fn visit_assign(&mut self, block: BlockId, pred: BlockId, var: Symbol, expr: &Expr) -> bool {
-        let pred_block = self.blocks[&pred];
-        self.update_block(block, self.ssa.get_block(pred_block).clone());
+        self.update_block(block, self.blocks[&pred]);
         let mut vars = self.vars[&pred].clone();
         let value = visit_expr(&mut self.ssa, expr, &vars);
         vars.insert(var, value);
@@ -145,11 +153,11 @@ impl<'a> AIContext<'a> {
         match (self.is_bottom(pred1), self.is_bottom(pred2)) {
             (true, true) => false,
             (false, true) => {
-                self.update_block(block, self.ssa.get_block(self.blocks[&pred1]).clone());
+                self.update_block(block, pred1);
                 self.update_vars(block, self.vars[&pred1].clone())
             }
             (true, false) => {
-                self.update_block(block, self.ssa.get_block(self.blocks[&pred2]).clone());
+                self.update_block(block, pred2);
                 self.update_vars(block, self.vars[&pred2].clone())
             }
             (false, false) => {
@@ -171,7 +179,7 @@ impl<'a> AIContext<'a> {
                         }
                     }
                 }
-                self.update_block(block, SSABlock::Merge(ssa_pred1, ssa_pred2, knot_values));
+                self.update_new_block(block, SSABlock::Merge(ssa_pred1, ssa_pred2, knot_values));
                 self.update_vars(block, new_vars)
             }
         }
@@ -183,7 +191,7 @@ impl<'a> AIContext<'a> {
             .into_iter()
             .map(|expr| visit_expr(&mut self.ssa, expr, pred_vars))
             .collect();
-        let return_block_id = self.update_block(block, SSABlock::Return(pred, values));
+        let return_block_id = self.update_new_block(block, SSABlock::Return(self.blocks[&pred], values));
         self.ssa.add_exit(self.name, return_block_id);
         // Returns have no successors;
         false

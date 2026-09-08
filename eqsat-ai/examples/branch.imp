@@ -1,0 +1,6 @@
+fn branch(x) {
+	if x {
+		x = 0;
+	}
+	return x + 7;
+}
