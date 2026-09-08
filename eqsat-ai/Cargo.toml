@@ -11,10 +11,13 @@ path = "src/lib.rs"
 name = "experiment"
 
 [dependencies]
+clap = { version = "*", features = ["derive"] }
 derive_more = { version = "*", features = ["from_str"] }
 hashbrown = "*"
 lalrpop-util = { version = "*", features = ["lexer", "unicode"] }
-symbol_table = { version = "*", features = ["global"] }
+serde = { version = "*", features = ["derive"] }
+spytial = "*"
+symbol_table = { version = "*", features = ["global", "serde"] }
 
 [build-dependencies]
 lalrpop = "*"

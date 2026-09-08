@@ -1,15 +1,16 @@
 use core::fmt::{Display, Formatter, Result};
 
 use derive_more::FromStr;
+use serde::Serialize;
 use symbol_table::GlobalSymbol as Symbol;
 
-#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, FromStr)]
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, FromStr, Serialize)]
 pub enum UnaryOp {
     Neg,
     Not,
 }
 
-#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, FromStr)]
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, FromStr, Serialize)]
 pub enum BinaryOp {
     Add,
     Sub,
@@ -22,7 +23,7 @@ pub enum BinaryOp {
     GE,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum Expr {
     Number(i64),
     Variable(Symbol),
@@ -39,7 +40,7 @@ pub enum Expr {
 
 pub type BlockId = usize;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum Block {
     Entry,
     Guard(BlockId, Expr),
@@ -48,7 +49,7 @@ pub enum Block {
     Return(BlockId, Vec<Expr>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct NonSSAFunc {
     pub name: Symbol,
     pub params: Vec<Symbol>,
