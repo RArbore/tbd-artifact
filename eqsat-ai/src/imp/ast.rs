@@ -44,14 +44,19 @@ pub fn convert_to_cfg(func: ImpFunc) -> NonSSAFunc {
 
     if let Some(mut block) = convert_context.returns.get(0).copied() {
         for idx in 1..convert_context.returns.len() {
-            block = convert_context.add_block(Block::Merge(block, convert_context.returns[idx]));
+            block = convert_context.add_block(Block::Merge {
+                pred1: block,
+                pred2: convert_context.returns[idx],
+            });
         }
-        convert_context.add_block(Block::Return(
-            block,
-            (0..convert_context.num_returned.unwrap())
-                .map(|idx| Expr::Variable(Symbol::from(format!("%{}", idx))))
+        convert_context.add_block(Block::Return {
+            pred: block,
+            exprs: (0..convert_context.num_returned.unwrap())
+                .map(|idx| Expr::Variable {
+                    var: Symbol::from(format!("%{}", idx)),
+                })
                 .collect(),
-        ));
+        });
     }
 
     NonSSAFunc {
@@ -83,44 +88,58 @@ impl ConvertContext {
                 }
                 Some(id)
             }
-            ImpStmt::Assign { var, expr } => Some(self.add_block(Block::Assign(pred, var, expr))),
+            ImpStmt::Assign { var, expr } => {
+                Some(self.add_block(Block::Assign { pred, var, expr }))
+            }
             ImpStmt::IfElse {
                 cond,
                 then_body,
                 else_body,
             } => {
-                let then_guard = self.add_block(Block::Guard(pred, cond.clone()));
-                let else_guard = self.add_block(Block::Guard(
+                let then_guard = self.add_block(Block::Guard {
                     pred,
-                    Expr::Unary {
+                    cond: cond.clone(),
+                });
+                let else_guard = self.add_block(Block::Guard {
+                    pred,
+                    cond: Expr::Unary {
                         op: UnaryOp::Not,
                         input: Box::new(cond),
                     },
-                ));
+                });
                 let then_block = self.convert(then_guard, *then_body);
                 let else_block = self.convert(else_guard, *else_body);
                 match (then_block, else_block) {
-                    (Some(then_block), Some(else_block)) => {
-                        Some(self.add_block(Block::Merge(then_block, else_block)))
+                    (Some(pred1), Some(pred2)) => {
+                        Some(self.add_block(Block::Merge { pred1, pred2 }))
                     }
                     (None, block) | (block, None) => block,
                 }
             }
             ImpStmt::While { cond, body } => {
                 let header = self.add_block(Block::Entry);
-                let then_guard = self.add_block(Block::Guard(header, cond.clone()));
-                let else_guard = self.add_block(Block::Guard(
-                    header,
-                    Expr::Unary {
+                let then_guard = self.add_block(Block::Guard {
+                    pred: header,
+                    cond: cond.clone(),
+                });
+                let else_guard = self.add_block(Block::Guard {
+                    pred: header,
+                    cond: Expr::Unary {
                         op: UnaryOp::Not,
                         input: Box::new(cond),
                     },
-                ));
+                });
                 let body_block = self.convert(then_guard, *body);
                 self.cfg[header] = if let Some(body_block) = body_block {
-                    Block::Merge(pred, body_block)
+                    Block::Merge {
+                        pred1: pred,
+                        pred2: body_block,
+                    }
                 } else {
-                    Block::Guard(pred, Expr::Number(1))
+                    Block::Guard {
+                        pred,
+                        cond: Expr::Number { num: 1 },
+                    }
                 };
                 Some(else_guard)
             }
@@ -129,11 +148,11 @@ impl ConvertContext {
                 assert!(self.num_returned.is_none() || self.num_returned == Some(exprs.len()));
                 self.num_returned = Some(exprs.len());
                 for (idx, expr) in exprs.into_iter().enumerate() {
-                    block = self.add_block(Block::Assign(
-                        block,
-                        Symbol::from(format!("%{}", idx)),
+                    block = self.add_block(Block::Assign {
+                        pred: block,
+                        var: Symbol::from(format!("%{}", idx)),
                         expr,
-                    ));
+                    });
                 }
                 self.returns.push(block);
                 None

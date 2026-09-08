@@ -50,8 +50,8 @@ UnaryExpr: Expr = {
 }
 
 Atomic: Expr = {
-    Num => Expr::Number(<>),
-    Iden => Expr::Variable(<>),
+    Num => Expr::Number { num: <> },
+    Iden => Expr::Variable { var: <> },
     "(" <BinaryExpr> ")",
 }
 
