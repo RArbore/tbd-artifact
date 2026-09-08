@@ -1,0 +1,94 @@
+use hashbrown::HashMap;
+use symbol_table::GlobalSymbol as Symbol;
+
+use crate::nonssa::{BinaryOp, BlockId, UnaryOp};
+
+pub type SSAId = usize;
+pub type SSABlockId = usize;
+pub type KnotId = usize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SSA {
+    Constant(i64),
+    Param(usize),
+    Unary(UnaryOp, SSAId),
+    Binary(BinaryOp, SSAId, SSAId),
+    Knot(KnotId),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SSABlock {
+    Entry,
+    Guard(SSABlockId, SSAId),
+    Merge(SSABlockId, SSABlockId, HashMap<KnotId, (SSAId, SSAId)>),
+    Return(SSABlockId, Vec<SSAId>),
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SSAHashCons {
+    map: HashMap<SSA, SSAId>,
+    vec: Vec<SSA>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SSAProgram {
+    ssa: SSAHashCons,
+    cfg: Vec<SSABlock>,
+    exits: HashMap<Symbol, SSABlockId>,
+
+    // Intern tuples of BlockId and variable name to KnotId.
+    knot_map: HashMap<(BlockId, Symbol), KnotId>,
+}
+
+impl SSAHashCons {
+    pub fn intern(&mut self, ssa: SSA) -> SSAId {
+        let entry = self.map.entry(ssa);
+        *entry.or_insert_with(|| {
+            let id = self.vec.len();
+            self.vec.push(ssa);
+            id
+        })
+    }
+
+    pub fn get(&self, id: SSAId) -> &SSA {
+        &self.vec[id]
+    }
+}
+
+impl SSAProgram {
+    pub fn intern(&mut self, ssa: SSA) -> SSAId {
+        self.ssa.intern(ssa)
+    }
+
+    pub fn add_block(&mut self, block: SSABlock) -> SSABlockId {
+        let id = self.cfg.len();
+        self.cfg.push(block);
+        id
+    }
+
+    pub fn set_block(&mut self, block: SSABlock, id: SSABlockId) {
+        self.cfg[id] = block;
+    }
+
+    pub fn get_block(&self, id: SSABlockId) -> &SSABlock {
+        &self.cfg[id]
+    }
+
+    pub fn is_always_false(&self, id: SSAId) -> bool {
+        *self.ssa.get(id) == SSA::Constant(0)
+    }
+
+    pub fn is_always_true(&self, id: SSAId) -> bool {
+        *self.ssa.get(id) == SSA::Constant(1)
+    }
+
+    pub fn intern_knot(&mut self, block: BlockId, var: Symbol) -> KnotId {
+        let new_id = self.knot_map.len();
+        let entry = self.knot_map.entry((block, var));
+        *entry.or_insert(new_id)
+    }
+
+    pub fn add_exit(&mut self, name: Symbol, return_block: SSABlockId) {
+        self.exits.insert(name, return_block);
+    }
+}
