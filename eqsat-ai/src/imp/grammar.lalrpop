@@ -1,0 +1,69 @@
+use core::str::FromStr;
+
+use hashbrown::HashMap;
+use symbol_table::GlobalSymbol as Symbol;
+
+use crate::imp::ast::{ImpFunc, ImpStmt};
+use crate::nonssa::{BinaryOp, Expr, UnaryOp};
+
+grammar();
+
+pub Program: HashMap<Symbol, ImpFunc> = {
+    Func* => <>.into_iter().collect(),
+}
+
+Func: (Symbol, ImpFunc) = {
+    "fn" <name:Iden> "(" <params:List<Iden>> ")" <body:Stmt> => (name, ImpFunc { name: name, params, body }),
+}
+
+Stmt: ImpStmt = {
+    Block => <>,
+    <var:Iden> "=" <expr:BinaryExpr> ";" => ImpStmt::Assign { var, expr },
+    "if" <cond:BinaryExpr> <then_body:Block> <else_body:("else" <Block>)?> => ImpStmt::IfElse { cond, then_body: Box::new(then_body), else_body: Box::new(else_body.unwrap_or_else(|| ImpStmt::Block { body: vec![] })) },
+    "while" <cond:BinaryExpr> <body:Block> => ImpStmt::While { cond, body: Box::new(body) },
+    "return" <exprs:List<BinaryExpr>> ";" => ImpStmt::Return { exprs },
+}
+
+Block: ImpStmt = "{" <body:Stmt*> "}" => ImpStmt::Block { body };
+
+BinaryExpr: Expr = {
+    #[precedence(level="0")]
+    UnaryExpr,
+    #[precedence(level="1")] #[assoc(side="left")]
+    <lhs:BinaryExpr> "*" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::Mul, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+    #[precedence(level="2")] #[assoc(side="left")]
+    <lhs:BinaryExpr> "+" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::Add, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+    <lhs:BinaryExpr> "-" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::Sub, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+    #[precedence(level="3")] #[assoc(side="left")]
+    <lhs:BinaryExpr> "==" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::EE, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+    <lhs:BinaryExpr> "!=" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::NE, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+    <lhs:BinaryExpr> "<" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::LT, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+    <lhs:BinaryExpr> "<=" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::LE, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+    <lhs:BinaryExpr> ">" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::GT, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+    <lhs:BinaryExpr> ">=" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::GE, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+}
+
+UnaryExpr: Expr = {
+    Atomic,
+    "!" <UnaryExpr> => Expr::Unary { op: UnaryOp::Not, input: Box::new(<>) },
+    "-" <UnaryExpr> => Expr::Unary { op: UnaryOp::Neg, input: Box::new(<>) },
+}
+
+Atomic: Expr = {
+    Num => Expr::Number(<>),
+    Iden => Expr::Variable(<>),
+    "(" <BinaryExpr> ")",
+}
+
+Iden: Symbol = r"[a-zA-Z_][a-zA-Z0-9_]*" => Symbol::from(<>);
+Num: i64 = r"-?[0-9]+" => i64::from_str(<>).unwrap();
+
+List<T>: Vec<T> = {
+    <mut v:(<T> ",")*> <e:T?> => match e {
+        None => v,
+        Some(e) => {
+            v.push(e);
+            v
+        }
+    }
+};
