@@ -30,6 +30,9 @@ pub fn abstract_interpret(ssa: &mut SSAProgram, name: Symbol, nonssa: &NonSSAFun
         blocks: Default::default(),
         ssa,
     };
+    // A faster interpreter would walk the non-SSA CFG in WTO. We use a worklist for two reasons.
+    // 1. Laziness.
+    // 2. We could randomize the order of blocks in the worklist to stress test the interpreter.
     let mut worklist = vec![0];
     while let Some(block) = worklist.pop() {
         if context.visit_block(nonssa, block) {
@@ -110,6 +113,10 @@ impl<'a> AIContext<'a> {
         !has_vars
     }
 
+    fn to_ssa_block(&self, block_id: BlockId) -> SSABlockId {
+        self.blocks[&block_id].0
+    }
+
     fn visit_block(&mut self, nonssa: &NonSSAFunc, block: BlockId) -> bool {
         use Block::*;
         match &nonssa.cfg[block] {
@@ -138,9 +145,9 @@ impl<'a> AIContext<'a> {
             false
         } else {
             if self.ssa.is_always_true(value) {
-                self.update_block(block, self.blocks[&pred].0);
+                self.update_block(block, self.to_ssa_block(pred));
             } else {
-                self.update_new_block(block, SSABlock::Guard(self.blocks[&pred].0, value));
+                self.update_new_block(block, SSABlock::Guard(self.to_ssa_block(pred), value));
             }
             // Guards make no assignments.
             self.update_vars(block, self.vars[&pred].clone())
@@ -148,7 +155,7 @@ impl<'a> AIContext<'a> {
     }
 
     fn visit_assign(&mut self, block: BlockId, pred: BlockId, var: Symbol, expr: &Expr) -> bool {
-        self.update_block(block, self.blocks[&pred].0);
+        self.update_block(block, self.to_ssa_block(pred));
         let mut vars = self.vars[&pred].clone();
         let value = visit_expr(&mut self.ssa, expr, &vars);
         vars.insert(var, value);
@@ -161,18 +168,18 @@ impl<'a> AIContext<'a> {
         match (self.is_bottom(pred1), self.is_bottom(pred2)) {
             (true, true) => false,
             (false, true) => {
-                self.update_block(block, self.blocks[&pred1].0);
+                self.update_block(block, self.to_ssa_block(pred1));
                 self.update_vars(block, self.vars[&pred1].clone())
             }
             (true, false) => {
-                self.update_block(block, self.blocks[&pred2].0);
+                self.update_block(block, self.to_ssa_block(pred2));
                 self.update_vars(block, self.vars[&pred2].clone())
             }
             (false, false) => {
                 let vars1 = &self.vars[&pred1];
                 let vars2 = &self.vars[&pred2];
-                let ssa_pred1 = self.blocks[&pred1].0;
-                let ssa_pred2 = self.blocks[&pred2].0;
+                let ssa_pred1 = self.to_ssa_block(pred1);
+                let ssa_pred2 = self.to_ssa_block(pred2);
                 let mut new_vars = HashMap::new();
                 let mut knot_values = HashMap::new();
                 for (var, value1) in vars1 {
@@ -200,7 +207,7 @@ impl<'a> AIContext<'a> {
             .map(|expr| visit_expr(&mut self.ssa, expr, pred_vars))
             .collect();
         let return_block_id =
-            self.update_new_block(block, SSABlock::Return(self.blocks[&pred].0, values));
+            self.update_new_block(block, SSABlock::Return(self.to_ssa_block(pred), values));
         self.ssa.add_exit(self.name, return_block_id);
         // Returns have no successors;
         false
