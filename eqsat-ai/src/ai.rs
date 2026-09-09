@@ -46,8 +46,12 @@ struct AIContext<'a> {
     name: Symbol,
     // At each (visited) original block, map each variable to an SSA value.
     vars: HashMap<BlockId, VarMap>,
-    // Map each (visited) original block to a SSA block.
-    blocks: HashMap<BlockId, SSABlockId>,
+    // Map each (visited) original block to a SSA block - also indicate whether this SSA block is
+    // specific to this non-SSA block or not. Intuitively, a non-SSA block may go from not having a
+    // SSA block made for it to having a SSA block made for it (but not the other way around) - when
+    // this happens, we need to allocate a fresh SSABlockId for the created SSA block, but we only
+    // want to do this once, so the analysis terminates.
+    blocks: HashMap<BlockId, (SSABlockId, bool)>,
 
     ssa: &'a mut SSAProgram,
 }
@@ -75,12 +79,16 @@ impl<'a> AIContext<'a> {
     // also results in an update in variables, see `update_vars`, then a re-interpretation of
     // successor blocks is warranted).
     fn update_new_block(&mut self, block_id: BlockId, new_ssa_block: SSABlock) -> SSABlockId {
-        if let Some(old_ssa_block_id) = self.blocks.get(&block_id) {
+        if let Some((old_ssa_block_id, true)) = self.blocks.get(&block_id) {
+            // If we already created a new SSA block for this non-SSA block, re-use the SSABlockId.
             self.ssa.set_block(new_ssa_block, *old_ssa_block_id);
             *old_ssa_block_id
         } else {
+            // If we haven't created a new SSA block for this non-SSA block (either because we
+            // haven't visited this non-SSA block yet or because we have and previously assigned it
+            // a non-fresh SSA block), then create a new SSABlockId and map the non-SSA block to it.
             let new_ssa_block_id = self.ssa.add_block(new_ssa_block);
-            self.blocks.insert(block_id, new_ssa_block_id);
+            self.blocks.insert(block_id, (new_ssa_block_id, true));
             new_ssa_block_id
         }
     }
@@ -89,10 +97,10 @@ impl<'a> AIContext<'a> {
         assert!(
             self.blocks
                 .get(&block_id)
-                .map(|old_ssa_block_id| *old_ssa_block_id == ssa_block_id)
+                .map(|(_, fresh)| !fresh)
                 .unwrap_or(true)
         );
-        self.blocks.insert(block_id, ssa_block_id);
+        self.blocks.insert(block_id, (ssa_block_id, false));
     }
 
     fn is_bottom(&self, block_id: BlockId) -> bool {
@@ -130,9 +138,9 @@ impl<'a> AIContext<'a> {
             false
         } else {
             if self.ssa.is_always_true(value) {
-                self.update_block(block, self.blocks[&pred]);
+                self.update_block(block, self.blocks[&pred].0);
             } else {
-                self.update_new_block(block, SSABlock::Guard(self.blocks[&pred], value));
+                self.update_new_block(block, SSABlock::Guard(self.blocks[&pred].0, value));
             }
             // Guards make no assignments.
             self.update_vars(block, self.vars[&pred].clone())
@@ -140,7 +148,7 @@ impl<'a> AIContext<'a> {
     }
 
     fn visit_assign(&mut self, block: BlockId, pred: BlockId, var: Symbol, expr: &Expr) -> bool {
-        self.update_block(block, self.blocks[&pred]);
+        self.update_block(block, self.blocks[&pred].0);
         let mut vars = self.vars[&pred].clone();
         let value = visit_expr(&mut self.ssa, expr, &vars);
         vars.insert(var, value);
@@ -153,18 +161,18 @@ impl<'a> AIContext<'a> {
         match (self.is_bottom(pred1), self.is_bottom(pred2)) {
             (true, true) => false,
             (false, true) => {
-                self.update_block(block, pred1);
+                self.update_block(block, self.blocks[&pred1].0);
                 self.update_vars(block, self.vars[&pred1].clone())
             }
             (true, false) => {
-                self.update_block(block, pred2);
+                self.update_block(block, self.blocks[&pred2].0);
                 self.update_vars(block, self.vars[&pred2].clone())
             }
             (false, false) => {
                 let vars1 = &self.vars[&pred1];
                 let vars2 = &self.vars[&pred2];
-                let ssa_pred1 = self.blocks[&pred1];
-                let ssa_pred2 = self.blocks[&pred2];
+                let ssa_pred1 = self.blocks[&pred1].0;
+                let ssa_pred2 = self.blocks[&pred2].0;
                 let mut new_vars = HashMap::new();
                 let mut knot_values = HashMap::new();
                 for (var, value1) in vars1 {
@@ -191,7 +199,8 @@ impl<'a> AIContext<'a> {
             .into_iter()
             .map(|expr| visit_expr(&mut self.ssa, expr, pred_vars))
             .collect();
-        let return_block_id = self.update_new_block(block, SSABlock::Return(self.blocks[&pred], values));
+        let return_block_id =
+            self.update_new_block(block, SSABlock::Return(self.blocks[&pred].0, values));
         self.ssa.add_exit(self.name, return_block_id);
         // Returns have no successors;
         false
