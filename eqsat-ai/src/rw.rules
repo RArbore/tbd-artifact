@@ -21,6 +21,6 @@
 (rw (GE a b) (LE b a))
 
 (rw (Add a 0) a)
-(rw (Mul a 0) 0)
+(rw (Mul _ 0) 0)
 (rw (Mul a 1) a)
 (rw (EE (Sub a b) 0) (EE a b))

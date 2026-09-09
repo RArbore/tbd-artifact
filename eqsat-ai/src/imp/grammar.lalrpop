@@ -13,7 +13,7 @@ pub Program: HashMap<Symbol, ImpFunc> = {
 }
 
 Func: (Symbol, ImpFunc) = {
-    "fn" <name:Iden> "(" <params:List<Iden>> ")" <body:Stmt> => (name, ImpFunc { name: name, params, body }),
+    "fn" <name:Iden> "(" <params:List<Iden>> ")" <body:Stmt> => (name, ImpFunc { name, params, body }),
 }
 
 Stmt: ImpStmt = {

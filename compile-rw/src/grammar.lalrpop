@@ -2,8 +2,35 @@ use core::str::FromStr;
 
 use symbol_table::GlobalSymbol as Symbol;
 
+use crate::{Rewrite, Pattern};
+
 grammar();
 
-pub Rewrites: Vec<()> = {
-    "" => vec![],
+pub Rewrites: Vec<Rewrite> = {
+    Rewrite* => <>,
 }
+
+Rewrite: Rewrite = {
+    "(" "rw" <lhs:Pattern> <rhs:Pattern> ")" => Rewrite { lhs, rhs },
+}
+
+Pattern: Pattern = {
+    Iden => Pattern::Variable(<>),
+    Num => Pattern::Constant(<>),
+    "_" => Pattern::Wildcard,
+    "(" <op:Iden> <inp:Pattern> ")" => Pattern::Unary(op, Box::new(inp)),
+    "(" <op:Iden> <lhs:Pattern> <rhs:Pattern> ")" => Pattern::Binary(op, Box::new(lhs), Box::new(rhs)),
+}
+
+Iden: Symbol = r"[a-zA-Z][a-zA-Z0-9_]*" => Symbol::from(<>);
+Num: i64 = r"-?[0-9]+" => i64::from_str(<>).unwrap();
+
+List<T>: Vec<T> = {
+    <mut v:(<T> ",")*> <e:T?> => match e {
+        None => v,
+        Some(e) => {
+            v.push(e);
+            v
+        }
+    }
+};
