@@ -21,3 +21,4 @@ symbol_table = { version = "*", features = ["global", "serde"] }
 
 [build-dependencies]
 lalrpop = "*"
+compile-rw = { path = "../compile-rw" }

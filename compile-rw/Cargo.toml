@@ -1,0 +1,15 @@
+[package]
+name = "compile-rw"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "compile_rw"
+path = "src/lib.rs"
+
+[dependencies]
+lalrpop-util = { version = "*", features = ["lexer", "unicode"] }
+symbol_table = { version = "*", features = ["global", "serde"] }
+
+[build-dependencies]
+lalrpop = "*"

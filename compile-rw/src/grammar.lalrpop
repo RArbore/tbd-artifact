@@ -1,0 +1,9 @@
+use core::str::FromStr;
+
+use symbol_table::GlobalSymbol as Symbol;
+
+grammar();
+
+pub Rewrites: Vec<()> = {
+    "" => vec![],
+}
