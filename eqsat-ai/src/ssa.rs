@@ -13,6 +13,8 @@ pub enum SSA {
     Param(usize),
     Unary(UnaryOp, SSAId),
     Binary(BinaryOp, SSAId, SSAId),
+    // Knots serve the function of phi functions in our SSA form. They can be thought of as block
+    // arguments (see SSABlock::Merge below).
     Knot(KnotId),
 }
 
@@ -20,12 +22,14 @@ pub enum SSA {
 pub enum SSABlock {
     Entry,
     Guard(SSABlockId, SSAId),
+    // The third field maps knots to SSA values corresponding to the two predecessors (think of these
+    // like the inputs to a phi function).
     Merge(SSABlockId, SSABlockId, HashMap<KnotId, (SSAId, SSAId)>),
     Return(SSABlockId, Vec<SSAId>),
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct SSAHashCons {
+struct SSAHashCons {
     map: HashMap<SSA, SSAId>,
     vec: Vec<SSA>,
 }
@@ -41,7 +45,7 @@ pub struct SSAProgram {
 }
 
 impl SSAHashCons {
-    pub fn intern(&mut self, ssa: SSA) -> SSAId {
+    fn intern(&mut self, ssa: SSA) -> SSAId {
         let entry = self.map.entry(ssa);
         *entry.or_insert_with(|| {
             let id = self.vec.len();
@@ -50,7 +54,7 @@ impl SSAHashCons {
         })
     }
 
-    pub fn get(&self, id: SSAId) -> &SSA {
+    fn get(&self, id: SSAId) -> &SSA {
         &self.vec[id]
     }
 }
