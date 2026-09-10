@@ -49,6 +49,22 @@ pub enum Trie {
 }
 
 impl Trie {
+    pub fn try_internal(&self) -> Option<&HashMap<TupleValue, Trie>> {
+        use Trie::*;
+        match self {
+            Internal(map) => Some(map),
+            Leaf(_) => None,
+        }
+    }
+
+    pub fn try_leaf(&self) -> Option<&HashSet<SSAId>> {
+        use Trie::*;
+        match self {
+            Internal(_) => None,
+            Leaf(set) => Some(set),
+        }
+    }
+    
     pub fn insert_tuple<I>(&mut self, mut iter: I, id: SSAId)
     where
         I: Iterator<Item = TupleValue>,

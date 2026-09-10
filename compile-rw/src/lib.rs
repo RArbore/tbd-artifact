@@ -1,10 +1,12 @@
+lalrpop_mod!(grammar);
+
 use core::fmt::{Display, Formatter, Result};
 
 use hashbrown::{HashMap, HashSet};
 use lalrpop_util::lalrpop_mod;
 use prettyplease::unparse;
 use proc_macro2::{Ident, Span, TokenStream};
-use quote::{ToTokens, TokenStreamExt, quote};
+use quote::{ToTokens, TokenStreamExt, format_ident, quote};
 use symbol_table::GlobalSymbol as Symbol;
 use syn::parse2;
 
@@ -26,8 +28,6 @@ enum Pattern {
     Unary(Symbol, Box<Pattern>),
     Binary(Symbol, Box<Pattern>, Box<Pattern>),
 }
-
-lalrpop_mod!(grammar);
 
 // The LHS patterns of rewrites are converted into relational queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,8 +169,9 @@ fn variable_order(query: &Query, delta_idx: usize) -> Vec<Symbol> {
 
 // For each variable in a query, determine the set of atoms (indices) that contain that variable, and
 // for each atom at what column indices that variable appears.
-fn atoms_containing(query: &Query) -> HashMap<Symbol, HashMap<usize, Vec<usize>>> {
-    let mut atoms_containing: HashMap<Symbol, HashMap<usize, Vec<usize>>> = HashMap::new();
+type AtomsContaining = HashMap<Symbol, HashMap<usize, Vec<usize>>>;
+fn atoms_containing(query: &Query) -> AtomsContaining {
+    let mut atoms_containing = AtomsContaining::new();
     for (atom_idx, atom) in query.atoms.iter().enumerate() {
         for (column_idx, term) in atom.terms.iter().enumerate() {
             if let Term::Variable(var) = term {
@@ -185,6 +186,96 @@ fn atoms_containing(query: &Query) -> HashMap<Symbol, HashMap<usize, Vec<usize>>
         }
     }
     atoms_containing
+}
+
+fn emit_wcoj(
+    query: &Query,
+    delta_idx: usize,
+    atoms_containing: &AtomsContaining,
+    var_order: &Vec<Symbol>,
+    rule_tries: &Vec<NeededTrie>,
+) -> TokenStream {
+    // Emits one nested loop of the WCOJ.
+    fn emit_wcoj_helper(
+        query: &Query,
+        delta_idx: usize,
+        atoms_containing: &AtomsContaining,
+        var_order: &[Symbol],
+    ) -> TokenStream {
+        if let Some((var, rest)) = var_order.split_first() {
+            let var_iden = format_ident!("{}", var.as_str());
+            
+            // Figure out which involved trie is smallest.
+            let mut smallest = quote! {};
+            let mut first = true;
+            for (atom_idx, _) in &atoms_containing[var] {
+                let trievar = format_ident!("trie_{}", atom_idx);
+                if first {
+                    first = false;
+                    smallest = quote! {
+                        #smallest
+                        let mut smallest_idx = #atom_idx;
+                        let mut smallest_trie = #trievar;
+                    };
+                } else {
+                    smallest = quote! {
+                        #smallest
+                        if #trievar.try_internal().unwrap().len() < smallest_trie.try_internal().unwrap().len() {
+                            smallest_idx = #atom_idx;
+                            smallest_trie = #trievar;
+                        }
+                    };
+                }
+            }
+
+            // Check that the scanned value is in the other tries. At the same time, redefine
+            // `trie_N` for the next level of the WCOJ.
+            let probe: TokenStream = atoms_containing[var]
+                .iter()
+                .map(|(atom_idx, _)| {
+                    let trievar = format_ident!("trie_{}", atom_idx);
+                    quote! {
+                        let #trievar =
+                            if #atom_idx == smallest_idx {
+                                child_of_smallest
+                            } else {
+                                let Some(child) = #trievar.try_internal().unwrap().get(#var_iden) else { continue; };
+                                child
+                            };
+                    }
+                })
+                .collect();
+
+            // Emit the rest of the WCOJ.
+            let nested = emit_wcoj_helper(query, delta_idx, atoms_containing, rest);
+
+            quote! {
+                #smallest
+                for (#var_iden, child_of_smallest) in smallest_trie.try_internal().unwrap() {
+                    #probe
+                    #nested
+                } }
+        } else {
+            // Construct the nodes in the e-graph for the RHS.
+            quote! { todo!() }
+        }
+    }
+
+    let init: TokenStream = rule_tries
+        .iter()
+        .enumerate()
+        .map(|(idx, needed_trie)| {
+            let trievar = format_ident!("trie_{}", idx);
+            quote! { let #trievar = &tries.#needed_trie; }
+        })
+        .collect();
+    let block = emit_wcoj_helper(query, delta_idx, atoms_containing, var_order);
+    quote! {
+        {
+            #init
+            #block
+        }
+    }
 }
 
 pub fn compile_rw(contents: &str) -> String {
@@ -204,6 +295,10 @@ pub fn compile_rw(contents: &str) -> String {
                 .collect()
         })
         .collect();
+    let atoms_containings: Vec<_> = queries
+        .iter()
+        .map(|query| atoms_containing(query))
+        .collect();
 
     // Second, we need to determine the set of tries that are needed. Each trie is identified by:
     // 1. A relation the trie is indexing (an identifier + is delta or not).
@@ -212,9 +307,11 @@ pub fn compile_rw(contents: &str) -> String {
     //    columns simultaneously, enforcing the constraint that their values are equal.
     // The set of needed tries is shared across all rewrites.
     let mut needed_tries = HashSet::new();
+    let mut query_tries = vec![];
     for query_idx in 0..queries.len() {
         let query = &queries[query_idx];
-        let atoms_containing = atoms_containing(query);
+        let atoms_containing = &atoms_containings[query_idx];
+        let mut tries_for_query = vec![];
         for delta_idx in 0..query.atoms.len() {
             let mut rule_tries: Vec<_> = (0..query.atoms.len())
                 .map(|atom_idx| NeededTrie {
@@ -231,11 +328,13 @@ pub fn compile_rw(contents: &str) -> String {
                     rule_tries[*atom_idx].column_order.push(columns.clone());
                 }
             }
+            tries_for_query.push(rule_tries.clone());
             needed_tries.extend(rule_tries);
         }
+        query_tries.push(tries_for_query);
     }
 
-    // Third, build the code that constructs the tries.
+    // Third, emit the code that constructs the tries.
     let mut trie_struct = quote! {};
     trie_struct.extend(needed_tries.iter().map(|trie| {
         quote! {
@@ -249,14 +348,38 @@ pub fn compile_rw(contents: &str) -> String {
         }
     };
 
-    // Finally, build the top level rewriting function.
+    // Fourth, emit the code that implements WCOJ.
+    let mut wcojs = quote! {};
+    for query_idx in 0..queries.len() {
+        let query = &queries[query_idx];
+        let atoms_containing = &atoms_containings[query_idx];
+        for delta_idx in 0..query.atoms.len() {
+            let var_order = &var_orders[query_idx][delta_idx];
+            let rule_tries = &query_tries[query_idx][delta_idx];
+            wcojs.extend(emit_wcoj(
+                query,
+                delta_idx,
+                atoms_containing,
+                var_order,
+                rule_tries,
+            ));
+        }
+    }
+
+    // Finally, emit the top level rewriting function.
     let rw_fn = quote! {
+        use crate::saturator::Saturator;
         use crate::trie::Trie;
 
         #trie_struct
 
-        fn apply_rws() {}
+        fn apply_rws(saturator: &mut Saturator) {
+            let tries: Tries = todo!();
+
+            #wcojs
+        }
     };
+    // Format the Rust code so it's (more) pretty to look at.
     unparse(&parse2(rw_fn).unwrap())
 }
 
