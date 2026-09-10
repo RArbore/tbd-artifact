@@ -42,6 +42,14 @@ enum Term {
     Wildcard,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct NeededTrie {
+    relation: Symbol,
+    is_delta: bool,
+    // For each step in the order, store a set of columns that must hold the same value.
+    column_order: Vec<Vec<usize>>,
+}
+
 // Flatten a nested pattern into a relational qeury - see "Relational E-matching" by Zhang et al.
 fn pattern_to_query(pattern: &Pattern) -> Query {
     fn pattern_to_query_helper(pattern: &Pattern, atoms: &mut Vec<Atom>) -> Term {
@@ -110,12 +118,20 @@ fn variable_order(query: &Query, delta_idx: usize) -> Vec<Symbol> {
     order
 }
 
-fn atoms_containing(query: &Query) -> HashMap<Symbol, HashSet<usize>> {
-    let mut atoms_containing: HashMap<Symbol, HashSet<usize>> = HashMap::new();
+// For each variable in a query, determine the set of atoms (indices) that contain that variable, and
+// for each atom at what column indices that variable appears.
+fn atoms_containing(query: &Query) -> HashMap<Symbol, HashMap<usize, Vec<usize>>> {
+    let mut atoms_containing: HashMap<Symbol, HashMap<usize, Vec<usize>>> = HashMap::new();
     for (atom_idx, atom) in query.atoms.iter().enumerate() {
-        for term in &atom.terms {
+        for (column_idx, term) in atom.terms.iter().enumerate() {
             if let Term::Variable(var) = term {
-                atoms_containing.entry(*var).or_default().insert(atom_idx);
+                // The Vec acts as a set since per atom, column indices are visited once, in order.
+                atoms_containing
+                    .entry(*var)
+                    .or_default()
+                    .entry(atom_idx)
+                    .or_default()
+                    .push(column_idx);
             }
         }
     }
@@ -143,6 +159,35 @@ pub fn compile_rw(contents: &str) {
         .iter()
         .map(|query| atoms_containing(query))
         .collect();
+
+    // Second, we need to determine the set of tries that are needed. Each trie is identified by:
+    // 1. A relation the trie is indexing (an identifier + is delta or not).
+    // 2. An order to index the columns of the relation in - each step of the order is a set of
+    //    column indices, not just a single column index, because a query may want to index multiple
+    //    columns simultaneously, enforcing the constraint that their values are equal.
+    // The set of needed tries is shared across all rewrites.
+    let mut needed_tries = HashSet::new();
+    for query_idx in 0..queries.len() {
+        let query = &queries[query_idx];
+        let atoms_containing = &atoms_containings[query_idx];
+        for delta_idx in 0..query.atoms.len() {
+            let mut rule_tries: Vec<_> = (0..query.atoms.len())
+                .map(|atom_idx| NeededTrie {
+                    relation: query.atoms[atom_idx].relation,
+                    is_delta: atom_idx == delta_idx,
+                    column_order: vec![],
+                })
+                .collect();
+            let var_order = &var_orders[query_idx][delta_idx];
+            for var in var_order {
+                let atoms = &atoms_containing[var];
+                for (atom_idx, columns) in atoms {
+                    rule_tries[*atom_idx].column_order.push(columns.clone());
+                }
+            }
+            needed_tries.extend(rule_tries);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -190,20 +235,28 @@ mod tests {
         );
         let atoms_containing = atoms_containing(&query);
         assert_eq!(
-            atoms_containing[&Symbol::from("a")],
-            [0, 1].into_iter().collect()
+            atoms_containing[&Symbol::from("a")][&0],
+            [2].into_iter().collect()
         );
         assert_eq!(
-            atoms_containing[&Symbol::from("b")],
+            atoms_containing[&Symbol::from("a")][&1],
+            [1].into_iter().collect()
+        );
+        assert_eq!(
+            atoms_containing[&Symbol::from("b")][&0],
+            [1].into_iter().collect()
+        );
+        assert_eq!(
+            atoms_containing[&Symbol::from("_root_0")][&0],
             [0].into_iter().collect()
         );
         assert_eq!(
-            atoms_containing[&Symbol::from("_root_0")],
-            [0, 1].into_iter().collect()
+            atoms_containing[&Symbol::from("_root_0")][&1],
+            [2].into_iter().collect()
         );
         assert_eq!(
-            atoms_containing[&Symbol::from("_root_1")],
-            [1].into_iter().collect()
+            atoms_containing[&Symbol::from("_root_1")][&1],
+            [0].into_iter().collect()
         );
     }
 }
