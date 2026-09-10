@@ -10,7 +10,11 @@ path = "src/lib.rs"
 [dependencies]
 hashbrown = "*"
 lalrpop-util = { version = "*", features = ["lexer", "unicode"] }
+prettyplease = "*"
+proc-macro2 = "*"
+quote = "*"
 symbol_table = { version = "*", features = ["global", "serde"] }
+syn = "*"
 
 [build-dependencies]
 lalrpop = "*"

@@ -168,10 +168,14 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 name = "compile-rw"
 version = "0.1.0"
 dependencies = [
- "hashbrown 0.15.5",
+ "hashbrown 0.17.1",
  "lalrpop",
  "lalrpop-util",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
  "symbol_table",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -523,6 +527,16 @@ name = "precomputed-hash"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
+
+[[package]]
+name = "prettyplease"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bfe0f4c752e450fc2faf62654f1c134747922825d5b04ca717b8874f41a40c0"
+dependencies = [
+ "proc-macro2",
+ "syn 3.0.5",
+]
 
 [[package]]
 name = "proc-macro2"

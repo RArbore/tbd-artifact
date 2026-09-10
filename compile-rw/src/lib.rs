@@ -1,8 +1,16 @@
+use core::fmt::{Display, Formatter, Result};
+
 use hashbrown::{HashMap, HashSet};
 use lalrpop_util::lalrpop_mod;
+use prettyplease::unparse;
+use proc_macro2::{Ident, Span, TokenStream};
+use quote::{ToTokens, TokenStreamExt, quote};
 use symbol_table::GlobalSymbol as Symbol;
+use syn::parse2;
 
 use grammar::RewritesParser;
+
+type Constant = i64;
 
 #[derive(Debug, Clone)]
 struct Rewrite {
@@ -13,7 +21,7 @@ struct Rewrite {
 #[derive(Debug, Clone)]
 enum Pattern {
     Variable(Symbol),
-    Constant(i64),
+    Constant(Constant),
     Wildcard,
     Unary(Symbol, Box<Pattern>),
     Binary(Symbol, Box<Pattern>, Box<Pattern>),
@@ -38,7 +46,7 @@ struct Atom {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Term {
     Variable(Symbol),
-    Constant(i64),
+    Constant(Constant),
     Wildcard,
 }
 
@@ -46,8 +54,49 @@ enum Term {
 struct NeededTrie {
     relation: Symbol,
     is_delta: bool,
+    constants: Vec<(usize, Constant)>,
     // For each step in the order, store a set of columns that must hold the same value.
     column_order: Vec<Vec<usize>>,
+}
+
+impl Atom {
+    fn constants(&self) -> Vec<(usize, Constant)> {
+        let mut constants = vec![];
+        for (term_idx, term) in self.terms.iter().enumerate() {
+            if let Term::Constant(cons) = term {
+                constants.push((term_idx, *cons));
+            }
+        }
+        constants
+    }
+}
+
+impl Display for NeededTrie {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        write!(
+            f,
+            "{}{}_c",
+            if self.is_delta { "delta_" } else { "" },
+            self.relation
+        )?;
+        for (column, cons) in &self.constants {
+            write!(f, "_{}_{}", column, cons)?;
+        }
+        write!(f, "_v")?;
+        for columns in &self.column_order {
+            write!(f, "_")?;
+            for column in columns {
+                write!(f, "_{}", column)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl ToTokens for NeededTrie {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        tokens.append(Ident::new(&format!("{}", self), Span::call_site()))
+    }
 }
 
 // Flatten a nested pattern into a relational qeury - see "Relational E-matching" by Zhang et al.
@@ -138,7 +187,7 @@ fn atoms_containing(query: &Query) -> HashMap<Symbol, HashMap<usize, Vec<usize>>
     atoms_containing
 }
 
-pub fn compile_rw(contents: &str) {
+pub fn compile_rw(contents: &str) -> String {
     let rws = RewritesParser::new().parse(contents).unwrap();
 
     // Implementing the LHS matching of each rule is the "hard" part.
@@ -155,10 +204,6 @@ pub fn compile_rw(contents: &str) {
                 .collect()
         })
         .collect();
-    let atoms_containings: Vec<_> = queries
-        .iter()
-        .map(|query| atoms_containing(query))
-        .collect();
 
     // Second, we need to determine the set of tries that are needed. Each trie is identified by:
     // 1. A relation the trie is indexing (an identifier + is delta or not).
@@ -169,12 +214,13 @@ pub fn compile_rw(contents: &str) {
     let mut needed_tries = HashSet::new();
     for query_idx in 0..queries.len() {
         let query = &queries[query_idx];
-        let atoms_containing = &atoms_containings[query_idx];
+        let atoms_containing = atoms_containing(query);
         for delta_idx in 0..query.atoms.len() {
             let mut rule_tries: Vec<_> = (0..query.atoms.len())
                 .map(|atom_idx| NeededTrie {
                     relation: query.atoms[atom_idx].relation,
                     is_delta: atom_idx == delta_idx,
+                    constants: query.atoms[atom_idx].constants(),
                     column_order: vec![],
                 })
                 .collect();
@@ -188,6 +234,24 @@ pub fn compile_rw(contents: &str) {
             needed_tries.extend(rule_tries);
         }
     }
+
+    // Third, build the code that constructs the tries.
+    let mut trie_init = quote! {};
+    trie_init.extend(needed_tries.iter().map(|trie| {
+        quote! {
+            let #trie = Trie::new();
+        }
+    }));
+
+    // Finally, build the top level rewriting function.
+    let rw_fn = quote! {
+        use crate::trie::Trie;
+
+        fn apply_rws() {
+            #trie_init
+        }
+    };
+    unparse(&parse2(rw_fn).unwrap())
 }
 
 #[cfg(test)]
@@ -236,27 +300,27 @@ mod tests {
         let atoms_containing = atoms_containing(&query);
         assert_eq!(
             atoms_containing[&Symbol::from("a")][&0],
-            [2].into_iter().collect()
+            [2].into_iter().collect::<Vec<_>>()
         );
         assert_eq!(
             atoms_containing[&Symbol::from("a")][&1],
-            [1].into_iter().collect()
+            [1].into_iter().collect::<Vec<_>>()
         );
         assert_eq!(
             atoms_containing[&Symbol::from("b")][&0],
-            [1].into_iter().collect()
+            [1].into_iter().collect::<Vec<_>>()
         );
         assert_eq!(
             atoms_containing[&Symbol::from("_root_0")][&0],
-            [0].into_iter().collect()
+            [0].into_iter().collect::<Vec<_>>()
         );
         assert_eq!(
             atoms_containing[&Symbol::from("_root_0")][&1],
-            [2].into_iter().collect()
+            [2].into_iter().collect::<Vec<_>>()
         );
         assert_eq!(
             atoms_containing[&Symbol::from("_root_1")][&1],
-            [0].into_iter().collect()
+            [0].into_iter().collect::<Vec<_>>()
         );
     }
 }
