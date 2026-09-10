@@ -32,10 +32,10 @@ pub enum BinaryOp {
 #[attribute(field = "num")]
 #[attribute(field = "op")]
 #[attribute(field = "var")]
-#[hide_atom(selector = "i64 + string + UnaryOp + BinaryOp")]
+#[hide_atom(selector = "i32 + string + UnaryOp + BinaryOp")]
 pub enum Expr {
     Number {
-        num: i64,
+        num: i32,
     },
     Variable {
         var: Symbol,

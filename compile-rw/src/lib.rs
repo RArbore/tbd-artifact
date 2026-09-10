@@ -10,7 +10,7 @@ use syn::parse2;
 
 use grammar::RewritesParser;
 
-type Constant = i64;
+type Constant = i32;
 
 #[derive(Debug, Clone)]
 struct Rewrite {
@@ -236,20 +236,26 @@ pub fn compile_rw(contents: &str) -> String {
     }
 
     // Third, build the code that constructs the tries.
-    let mut trie_init = quote! {};
-    trie_init.extend(needed_tries.iter().map(|trie| {
+    let mut trie_struct = quote! {};
+    trie_struct.extend(needed_tries.iter().map(|trie| {
         quote! {
-            let #trie = Trie::new();
+            #trie: Trie,
         }
     }));
+    trie_struct = quote! {
+        #[derive(Default)]
+        struct Tries {
+            #trie_struct
+        }
+    };
 
     // Finally, build the top level rewriting function.
     let rw_fn = quote! {
         use crate::trie::Trie;
 
-        fn apply_rws() {
-            #trie_init
-        }
+        #trie_struct
+
+        fn apply_rws() {}
     };
     unparse(&parse2(rw_fn).unwrap())
 }

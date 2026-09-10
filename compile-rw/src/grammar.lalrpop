@@ -23,7 +23,7 @@ Pattern: Pattern = {
 }
 
 Iden: Symbol = r"[a-zA-Z][a-zA-Z0-9_]*" => Symbol::from(<>);
-Num: i64 = r"-?[0-9]+" => i64::from_str(<>).unwrap();
+Num: i32 = r"-?[0-9]+" => i32::from_str(<>).unwrap();
 
 List<T>: Vec<T> = {
     <mut v:(<T> ",")*> <e:T?> => match e {

@@ -9,7 +9,7 @@ pub type KnotId = usize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SSA {
-    Constant(i64),
+    Constant(i32),
     Param(usize),
     Unary(UnaryOp, SSAId),
     Binary(BinaryOp, SSAId, SSAId),
