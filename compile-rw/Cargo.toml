@@ -8,6 +8,7 @@ name = "compile_rw"
 path = "src/lib.rs"
 
 [dependencies]
+hashbrown = "*"
 lalrpop-util = { version = "*", features = ["lexer", "unicode"] }
 symbol_table = { version = "*", features = ["global", "serde"] }
 

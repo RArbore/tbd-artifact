@@ -168,6 +168,7 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 name = "compile-rw"
 version = "0.1.0"
 dependencies = [
+ "hashbrown 0.15.5",
  "lalrpop",
  "lalrpop-util",
  "symbol_table",
