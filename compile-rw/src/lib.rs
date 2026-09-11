@@ -215,7 +215,7 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
             quote! { *#var_iden as SSAId }
         }
         Pattern::Constant(cons) => quote! {
-            make(SSA::Constant(#cons))
+            saturator.intern(SSA::Constant(#cons))
         },
         Pattern::Wildcard => panic!(),
         Pattern::Unary(op, input) => {
@@ -224,7 +224,7 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
             quote! {
                 {
                     let input = #input;
-                    make(SSA::Unary(UnaryOp::#op_iden, input))
+                    saturator.intern(SSA::Unary(UnaryOp::#op_iden, input))
                 }
             }
         }
@@ -236,7 +236,7 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
                 {
                     let lhs = #lhs;
                     let rhs = #rhs;
-                    make(SSA::Binary(BinaryOp::#op_iden, lhs, rhs))
+                    saturator.intern(SSA::Binary(BinaryOp::#op_iden, lhs, rhs))
                 }
             }
         }
@@ -320,7 +320,7 @@ fn emit_wcoj(
             let root_lhs = format_ident!("{}", query.root.as_str());
             quote! {
                 let root_rhs = #build_rhs;
-                union(*#root_lhs as SSAId, root_rhs);
+                saturator.union(*#root_lhs as SSAId, root_rhs);
             }
         }
     }
@@ -531,19 +531,13 @@ pub fn compile_rw(contents: &str) -> String {
     // Finally, emit the top level rewriting function.
     let rw_fn = quote! {
         use crate::nonssa::{BinaryOp, UnaryOp};
+        use crate::saturator::Saturator;
         use crate::ssa::{SSA, SSAId};
         use crate::trie::{Trie, TupleValue, tuple_field};
 
         #trie_struct
 
-        pub fn apply_rws<'a, T, M, U>(get_tries: T, mut make: M, mut union: U)
-        where
-            T: FnOnce() -> &'a Tries,
-            M: FnMut(SSA) -> SSAId,
-            U: FnMut(SSAId, SSAId),
-        {
-            let tries = get_tries();
-
+        pub fn apply_rws(tries: &Tries, saturator: &mut Saturator) {
             #wcojs
         }
     };

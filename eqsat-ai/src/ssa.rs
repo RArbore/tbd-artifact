@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use symbol_table::GlobalSymbol as Symbol;
 
 use crate::nonssa::{BinaryOp, BlockId, UnaryOp};
@@ -71,6 +71,14 @@ impl SSAProgram {
 
     pub fn intern(&mut self, ssa: SSA) -> SSAId {
         self.ssa.intern(ssa)
+    }
+
+    pub fn get(&self, id: SSAId) -> SSA {
+        self.ssa.get(id)
+    }
+
+    pub fn users(&self, id: SSAId) -> &HashSet<SSAId> {
+        todo!()
     }
 
     pub fn add_block(&mut self, block: SSABlock) -> SSABlockId {

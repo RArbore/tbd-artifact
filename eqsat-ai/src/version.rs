@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::ssa::SSAId;
+use crate::ssa::{SSA, SSAId};
 
 // We use a sparse representation for union finds, because in the majority of versions there are
 // relatively few unions compared to the number of SSAIds. We use Rem's algorithm for unions and
@@ -247,6 +247,24 @@ impl Version {
         VersionSet {
             set_stack: vec![self.uf.set(self.find(id))],
             version_stack: vec![self],
+        }
+    }
+
+    pub fn is_canonical(&mut self, ssa: SSA) -> bool {
+        use SSA::*;
+        match ssa {
+            Unary(_, input) => input == self.find_mut(input),
+            Binary(_, lhs, rhs) => lhs == self.find_mut(lhs) && rhs == self.find_mut(rhs),
+            _ => true,
+        }
+    }
+
+    pub fn canonicalize(&mut self, ssa: SSA) -> SSA {
+        use SSA::*;
+        match ssa {
+            Unary(op, input) => Unary(op, self.find_mut(input)),
+            Binary(op, lhs, rhs) => Binary(op, self.find_mut(lhs), self.find_mut(rhs)),
+            _ => ssa,
         }
     }
 }
