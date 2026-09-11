@@ -32,6 +32,7 @@ pub enum SSABlock {
 struct SSAHashCons {
     map: HashMap<SSA, SSAId>,
     vec: Vec<SSA>,
+    users: HashMap<SSAId, HashSet<SSAId>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -55,12 +56,27 @@ impl SSAHashCons {
         *entry.or_insert_with(|| {
             let id = self.vec.len();
             self.vec.push(ssa);
+            use SSA::*;
+            match ssa {
+                Unary(_, input) => {
+                    self.users.entry(input).or_default().insert(id);
+                }
+                Binary(_, lhs, rhs) => {
+                    self.users.entry(lhs).or_default().insert(id);
+                    self.users.entry(rhs).or_default().insert(id);
+                }
+                _ => {}
+            }
             id
         })
     }
 
     fn get(&self, id: SSAId) -> SSA {
         self.vec[id]
+    }
+
+    pub fn users(&mut self, id: SSAId) -> &HashSet<SSAId> {
+        self.users.entry(id).or_default()
     }
 }
 
@@ -77,8 +93,8 @@ impl SSAProgram {
         self.ssa.get(id)
     }
 
-    pub fn users(&self, id: SSAId) -> &HashSet<SSAId> {
-        todo!()
+    pub fn users(&mut self, id: SSAId) -> &HashSet<SSAId> {
+        self.ssa.users(id)
     }
 
     pub fn add_block(&mut self, block: SSABlock) -> SSABlockId {

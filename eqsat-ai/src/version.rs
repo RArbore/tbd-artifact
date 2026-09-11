@@ -300,7 +300,7 @@ mod tests {
     use std::collections::HashSet;
     use std::rc::Rc;
 
-    use super::{SparseUnionFind, Version};
+    use super::*;
 
     #[test]
     fn uf1() {

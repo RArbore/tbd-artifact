@@ -97,7 +97,7 @@ impl Default for Trie {
 mod tests {
     use std::collections::{HashMap, HashSet};
 
-    use super::Trie;
+    use super::*;
 
     #[test]
     fn trie1() {

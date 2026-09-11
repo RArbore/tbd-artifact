@@ -549,7 +549,7 @@ pub fn compile_rw(contents: &str) -> String {
 mod tests {
     use symbol_table::GlobalSymbol as Symbol;
 
-    use crate::*;
+    use super::*;
 
     #[test]
     fn pattern_to_query1() {
