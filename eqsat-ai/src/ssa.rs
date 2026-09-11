@@ -45,6 +45,11 @@ pub struct SSAProgram {
 }
 
 impl SSAHashCons {
+    fn num_nodes(&self) -> usize {
+        assert_eq!(self.map.len(), self.vec.len());
+        self.vec.len()
+    }
+
     fn intern(&mut self, ssa: SSA) -> SSAId {
         let entry = self.map.entry(ssa);
         *entry.or_insert_with(|| {
@@ -60,6 +65,10 @@ impl SSAHashCons {
 }
 
 impl SSAProgram {
+    pub fn num_nodes(&self) -> usize {
+        self.ssa.num_nodes()
+    }
+
     pub fn intern(&mut self, ssa: SSA) -> SSAId {
         self.ssa.intern(ssa)
     }

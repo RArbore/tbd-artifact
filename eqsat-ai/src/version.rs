@@ -115,6 +115,50 @@ impl SparseUnionFind {
         }
     }
 
+    // To properly maintain delta sets, we need to be able to, on a union, add all of the IDs whose
+    // canonical IDs changed to the delta set. In effect, this means running a function on the
+    // disjoint set that "lost" the comparison on a union (that is, when unioning two sets, right
+    // before joining the two sets with `exchange_siblings`, we call `fn_for_changed_set` on all of
+    // the IDs in the set that's about to be entirely non-canonical).
+    fn union_with<F>(&mut self, mut x: SSAId, mut y: SSAId, mut fn_for_changed_set: F) -> SSAId
+    where
+        F: FnMut(SSAId),
+    {
+        loop {
+            let px = self.parent(x);
+            let py = self.parent(y);
+            if px == py {
+                break px;
+            }
+
+            if px > py {
+                if x == px {
+                    self.set_parent(x, py);
+                    // The only difference with `union`.
+                    for id in self.set(x) {
+                        fn_for_changed_set(id);
+                    }
+                    self.exchange_siblings(x, y);
+                    break self.find_mut(py);
+                }
+                self.set_parent(x, py);
+                x = px;
+            } else {
+                if y == py {
+                    self.set_parent(y, px);
+                    // And here.
+                    for id in self.set(y) {
+                        fn_for_changed_set(id);
+                    }
+                    self.exchange_siblings(x, y);
+                    break self.find_mut(px);
+                }
+                self.set_parent(y, px);
+                y = py;
+            }
+        }
+    }
+
     fn set(&self, id: SSAId) -> SparseUnionFindSet<'_> {
         SparseUnionFindSet {
             start: id,
@@ -176,6 +220,29 @@ impl Version {
         self.uf.union(x, y)
     }
 
+    // See `SparseUnionFind::union_with` for an explanation of `fn_for_changed_set`.
+    pub fn union_with<F>(&mut self, mut x: SSAId, mut y: SSAId, mut fn_for_changed_set: F) -> SSAId
+    where
+        F: FnMut(SSAId),
+    {
+        if let Some(parent) = self.parent.as_ref() {
+            x = parent.find(x);
+            y = parent.find(y);
+        }
+        self.uf.union_with(x, y, |outer_id| {
+            // `SparseUnionFind::union` will call `fn_for_changed_set` on all IDs in the set *at the
+            // current layer* (the `outer_id`s), but we want to call it on all IDs in the *multi-
+            // layer* set of the losing ID.
+            if let Some(parent) = self.parent.as_ref() {
+                for id in parent.set(outer_id) {
+                    fn_for_changed_set(id);
+                }
+            } else {
+                fn_for_changed_set(outer_id);
+            }
+        })
+    }
+
     pub fn set(&self, id: SSAId) -> impl Iterator<Item = SSAId> + '_ {
         VersionSet {
             set_stack: vec![self.uf.set(self.find(id))],
@@ -198,6 +265,8 @@ impl Iterator for VersionSet<'_> {
                     self.set_stack.push(parent_version.uf.set(id));
                     self.version_stack.push(parent_version);
                 } else {
+                    // Yield the ID if we've traversed all the way to the root version - there are no
+                    // more layers to call `set` on the ID with.
                     break Some(id);
                 }
             } else {
@@ -272,6 +341,26 @@ mod tests {
     }
 
     #[test]
+    fn uf3() {
+        let mut uf = SparseUnionFind::default();
+        let mut set = HashSet::new();
+        uf.union_with(1, 2, |id| {
+            set.insert(id);
+        });
+        assert_eq!(set, HashSet::from([2]));
+        let mut set = HashSet::new();
+        uf.union_with(2, 0, |id| {
+            set.insert(id);
+        });
+        assert_eq!(set, HashSet::from([1, 2]));
+        let mut set = HashSet::new();
+        uf.union_with(3, 0, |id| {
+            set.insert(id);
+        });
+        assert_eq!(set, HashSet::from([3]));
+    }
+
+    #[test]
     fn luf1() {
         let mut parent = Version::default();
         parent.union(0, 1);
@@ -302,7 +391,38 @@ mod tests {
         );
         assert_eq!(
             HashSet::from_iter([0, 1, 2, 3]),
+            child.set(1).collect::<HashSet<_>>()
+        );
+        assert_eq!(
+            HashSet::from_iter([0, 1, 2, 3]),
+            child.set(2).collect::<HashSet<_>>()
+        );
+        assert_eq!(
+            HashSet::from_iter([0, 1, 2, 3]),
             child.set(3).collect::<HashSet<_>>()
         );
+        assert_eq!(
+            HashSet::from_iter([0, 1]),
+            parent.set(1).collect::<HashSet<_>>()
+        );
+        assert_eq!(
+            HashSet::from_iter([2, 3]),
+            parent.set(2).collect::<HashSet<_>>()
+        );
+    }
+
+    #[test]
+    fn luf2() {
+        let mut parent = Version::default();
+        parent.union(0, 1);
+        parent.union(2, 3);
+
+        let parent = Rc::new(parent);
+        let mut child = Version::child(parent.clone());
+        let mut set = HashSet::new();
+        child.union_with(0, 3, |id| {
+            set.insert(id);
+        });
+        assert_eq!(set, HashSet::from([2, 3]));
     }
 }
