@@ -1,6 +1,14 @@
-use crate::rw::{Tries, apply_rws};
-use crate::ssa::{SSA, SSAId};
+use std::collections::HashSet;
 
-pub struct Saturator {}
+use crate::rw::{Tries, apply_rws};
+use crate::ssa::{SSA, SSAId, SSAProgram};
+use crate::version::Version;
+
+pub struct Saturator {
+    ssa: SSAProgram,
+    version: Version,
+
+    delta: HashSet<SSAId>,
+}
 
 impl Saturator {}

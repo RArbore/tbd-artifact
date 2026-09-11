@@ -1,6 +1,6 @@
+use std::collections::{HashMap, HashSet};
 use core::assert_matches;
 
-use hashbrown::{HashMap, HashSet};
 use symbol_table::GlobalSymbol as Symbol;
 
 use crate::nonssa::{Block, BlockId, Expr, NonSSAFunc};

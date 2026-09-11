@@ -1,6 +1,5 @@
+use std::collections::HashMap;
 use std::rc::Rc;
-
-use hashbrown::HashMap;
 
 use crate::ssa::SSAId;
 
@@ -21,7 +20,7 @@ struct SparseUnionFind {
 pub struct Version {
     uf: SparseUnionFind,
     // Store a pointer to the parent version. This is ref-counted to simplify the code in the
-    // abstract interpreter w.r.t. ownership of versions.
+    // saturator w.r.t. ownership of versions.
     parent: Option<Rc<Version>>,
 }
 
@@ -211,9 +210,8 @@ impl Iterator for VersionSet<'_> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::rc::Rc;
-
-    use hashbrown::HashSet;
 
     use super::{SparseUnionFind, Version};
 

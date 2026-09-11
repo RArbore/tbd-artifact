@@ -1,8 +1,8 @@
 lalrpop_mod!(grammar);
 
 use core::fmt::{Display, Formatter, Result};
+use std::collections::{HashMap, HashSet};
 
-use hashbrown::{HashMap, HashSet};
 use itertools::Itertools;
 use lalrpop_util::lalrpop_mod;
 use prettyplease::unparse;

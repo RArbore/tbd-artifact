@@ -8,7 +8,6 @@ name = "compile_rw"
 path = "src/lib.rs"
 
 [dependencies]
-hashbrown = "*"
 itertools = "*"
 lalrpop-util = { version = "*", features = ["lexer", "unicode"] }
 prettyplease = "*"

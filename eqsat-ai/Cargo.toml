@@ -13,7 +13,6 @@ name = "experiment"
 [dependencies]
 clap = { version = "*", features = ["derive"] }
 derive_more = { version = "*", features = ["from_str"] }
-hashbrown = "*"
 lalrpop-util = { version = "*", features = ["lexer", "unicode"] }
 serde = { version = "*", features = ["derive"] }
 spytial = "*"

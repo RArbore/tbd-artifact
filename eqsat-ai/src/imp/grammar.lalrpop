@@ -1,6 +1,6 @@
 use core::str::FromStr;
+use std::collections::HashMap;
 
-use hashbrown::HashMap;
 use symbol_table::GlobalSymbol as Symbol;
 
 use crate::imp::ast::{ImpFunc, ImpStmt};

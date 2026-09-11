@@ -168,7 +168,6 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 name = "compile-rw"
 version = "0.1.0"
 dependencies = [
- "hashbrown 0.17.1",
  "itertools",
  "lalrpop",
  "lalrpop-util",
@@ -267,7 +266,6 @@ dependencies = [
  "clap",
  "compile-rw",
  "derive_more",
- "hashbrown 0.17.1",
  "lalrpop",
  "lalrpop-util",
  "serde",
@@ -294,12 +292,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
-name = "foldhash"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
-
-[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -317,7 +309,7 @@ checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
  "allocator-api2",
  "equivalent",
- "foldhash 0.1.5",
+ "foldhash",
 ]
 
 [[package]]
@@ -325,11 +317,6 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
-dependencies = [
- "allocator-api2",
- "equivalent",
- "foldhash 0.2.0",
-]
 
 [[package]]
 name = "heck"
@@ -775,7 +762,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aabf1e4bbb0a27b4b9bf61d9f634f6ef9d897bc139454b111e1f0cd4bfbe5641"
 dependencies = [
  "crossbeam-utils",
- "foldhash 0.1.5",
+ "foldhash",
  "hashbrown 0.15.5",
  "serde",
 ]

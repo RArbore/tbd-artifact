@@ -1,4 +1,4 @@
-use hashbrown::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use crate::ssa::{SSA, SSAId};
 
@@ -95,7 +95,7 @@ impl Default for Trie {
 
 #[cfg(test)]
 mod tests {
-    use hashbrown::{HashMap, HashSet};
+    use std::collections::{HashMap, HashSet};
 
     use super::Trie;
 

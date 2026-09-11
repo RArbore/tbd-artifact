@@ -1,4 +1,4 @@
-use hashbrown::HashMap;
+use std::collections::HashMap;
 use symbol_table::GlobalSymbol as Symbol;
 
 use crate::nonssa::{BinaryOp, BlockId, UnaryOp};
