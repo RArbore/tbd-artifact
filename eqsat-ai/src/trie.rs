@@ -6,7 +6,7 @@ use crate::ssa::{SSA, SSAId};
 // same type as SSAId.
 pub type TupleValue = u32;
 
-pub fn tuple_field(id: SSAId, ssa: &SSA, column: usize) -> TupleValue {
+pub fn tuple_field(id: SSAId, ssa: SSA, column: usize) -> TupleValue {
     if column == 0 {
         return id as TupleValue;
     }
@@ -14,27 +14,27 @@ pub fn tuple_field(id: SSAId, ssa: &SSA, column: usize) -> TupleValue {
     match ssa {
         Constant(cons) => {
             assert_eq!(column, 1);
-            *cons as TupleValue
+            cons as TupleValue
         }
         Param(idx) => {
             assert_eq!(column, 1);
-            *idx as TupleValue
+            idx as TupleValue
         }
         Unary(_, input) => {
             assert_eq!(column, 1);
-            *input as TupleValue
+            input as TupleValue
         }
         Binary(_, lhs, rhs) => {
             if column == 1 {
-                *lhs as TupleValue
+                lhs as TupleValue
             } else {
                 assert_eq!(column, 2);
-                *rhs as TupleValue
+                rhs as TupleValue
             }
         }
         Knot(id) => {
             assert_eq!(column, 1);
-            *id as TupleValue
+            id as TupleValue
         }
     }
 }

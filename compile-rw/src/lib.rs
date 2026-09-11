@@ -3,6 +3,7 @@ lalrpop_mod!(grammar);
 use core::fmt::{Display, Formatter, Result};
 
 use hashbrown::{HashMap, HashSet};
+use itertools::Itertools;
 use lalrpop_util::lalrpop_mod;
 use prettyplease::unparse;
 use proc_macro2::{Ident, Span, TokenStream};
@@ -37,13 +38,20 @@ struct Query {
     atoms: Vec<Atom>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Atom {
-    relation: Symbol,
-    terms: Vec<Term>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Relation {
+    Constant,
+    Unary(Symbol),
+    Binary(Symbol),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct Atom {
+    relation: Relation,
+    terms: Vec<Term>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Term {
     Variable(Symbol),
     Constant(Constant),
@@ -52,11 +60,21 @@ enum Term {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct NeededTrie {
-    relation: Symbol,
+    relation: Relation,
     is_delta: bool,
     constants: Vec<(usize, Constant)>,
     // For each step in the order, store a set of columns that must hold the same value.
     column_order: Vec<Vec<usize>>,
+}
+
+impl Display for Relation {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        use Relation::*;
+        match self {
+            Constant => write!(f, "Constant"),
+            Unary(op) | Binary(op) => write!(f, "{}", op),
+        }
+    }
 }
 
 impl Atom {
@@ -107,7 +125,7 @@ fn pattern_to_query(pattern: &Pattern) -> Query {
             Pattern::Constant(cons) => {
                 let var = format!("_cons_{cons}").into();
                 let atom = Atom {
-                    relation: "Constant".into(),
+                    relation: Relation::Constant,
                     terms: vec![Term::Variable(var), Term::Constant(*cons)],
                 };
                 atoms.push(atom);
@@ -118,7 +136,7 @@ fn pattern_to_query(pattern: &Pattern) -> Query {
                 let input = pattern_to_query_helper(input, atoms);
                 let var = format!("_root_{}", atoms.len()).into();
                 let atom = Atom {
-                    relation: *op,
+                    relation: Relation::Unary(*op),
                     terms: vec![Term::Variable(var), input],
                 };
                 atoms.push(atom);
@@ -129,7 +147,7 @@ fn pattern_to_query(pattern: &Pattern) -> Query {
                 let rhs = pattern_to_query_helper(rhs, atoms);
                 let var = format!("_root_{}", atoms.len()).into();
                 let atom = Atom {
-                    relation: *op,
+                    relation: Relation::Binary(*op),
                     terms: vec![Term::Variable(var), lhs, rhs],
                 };
                 atoms.push(atom);
@@ -197,7 +215,7 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
             quote! { *#var_iden as SSAId }
         }
         Pattern::Constant(cons) => quote! {
-            saturator.make(SSA::Constant(#cons))
+            make(SSA::Constant(#cons))
         },
         Pattern::Wildcard => panic!(),
         Pattern::Unary(op, input) => {
@@ -206,7 +224,7 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
             quote! {
                 {
                     let input = #input;
-                    saturator.make(SSA::Unary(UnaryOp::#op_iden, input))
+                    make(SSA::Unary(UnaryOp::#op_iden, input))
                 }
             }
         }
@@ -218,7 +236,7 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
                 {
                     let lhs = #lhs;
                     let rhs = #rhs;
-                    saturator.make(SSA::Binary(BinaryOp::#op_iden, lhs, rhs))
+                    make(SSA::Binary(BinaryOp::#op_iden, lhs, rhs))
                 }
             }
         }
@@ -302,7 +320,7 @@ fn emit_wcoj(
             let root_lhs = format_ident!("{}", query.root.as_str());
             quote! {
                 let root_rhs = #build_rhs;
-                saturator.union(*#root_lhs as SSAId, root_rhs);
+                union(*#root_lhs as SSAId, root_rhs);
             }
         }
     }
@@ -321,6 +339,52 @@ fn emit_wcoj(
             #init
             #block
         }
+    }
+}
+
+// Emit the code that tries to insert a node into a trie. This emits both the consistency checks
+// needed and the code that actually inserts the node into the trie.
+fn emit_insert_into_trie(trie: &NeededTrie) -> TokenStream {
+    let check_constants = trie
+        .constants
+        .iter()
+        .map(|(idx, cons)| quote! { tuple_field(canon_id, node, #idx) == #cons as TupleValue });
+    let check_column_identities = trie
+        .column_order
+        .iter()
+        .map(|columns| {
+            let first = columns.first().unwrap();
+            columns[1..].into_iter().map(move |other| {
+                quote! {
+                    tuple_field(canon_id, node, #first) == tuple_field(canon_id, node, #other)
+                }
+            })
+        })
+        .flatten();
+    let condition: TokenStream = Itertools::intersperse(
+        check_constants.chain(check_column_identities),
+        quote! { && },
+    )
+    .collect();
+    let column_indices: TokenStream = Itertools::intersperse(
+        trie.column_order.iter().map(|columns| {
+            let column = columns[0];
+            quote! { #column }
+        }),
+        quote! { , },
+    )
+    .collect();
+    let insert = quote! {
+        self.#trie.insert_tuple([#column_indices].into_iter().map(|idx| tuple_field(canon_id, node, idx)), non_canon_id)
+    };
+    if trie.is_delta && condition.is_empty() {
+        quote! { if is_delta { #insert } }
+    } else if trie.is_delta {
+        quote! { if is_delta && #condition { #insert } }
+    } else if condition.is_empty() {
+        quote! { #insert }
+    } else {
+        quote! { if #condition { #insert } }
     }
 }
 
@@ -381,16 +445,71 @@ pub fn compile_rw(contents: &str) -> String {
     }
 
     // Third, emit the code that constructs the tries.
-    let mut trie_struct = quote! {};
-    trie_struct.extend(needed_tries.iter().map(|trie| {
-        quote! {
-            #trie: Trie,
-        }
-    }));
-    trie_struct = quote! {
+    let trie_fields: TokenStream = needed_tries
+        .iter()
+        .map(|trie| {
+            quote! {
+                #trie: Trie,
+            }
+        })
+        .collect();
+    let trie_constant_insert: TokenStream = needed_tries
+        .iter()
+        .map(|trie| {
+            if let Relation::Constant = trie.relation {
+                emit_insert_into_trie(trie)
+            } else {
+                quote! {}
+            }
+        })
+        .collect();
+    let trie_unary_insert: TokenStream = needed_tries
+        .iter()
+        .map(|trie| {
+            if let Relation::Unary(op) = trie.relation {
+                let op_iden = format_ident!("{}", op.as_str());
+                let insert = emit_insert_into_trie(trie);
+                quote! { if op == UnaryOp::#op_iden { #insert } }
+            } else {
+                quote! {}
+            }
+        })
+        .collect();
+    let trie_binary_insert: TokenStream = needed_tries
+        .iter()
+        .map(|trie| {
+            if let Relation::Binary(op) = trie.relation {
+                let op_iden = format_ident!("{}", op.as_str());
+                let insert = emit_insert_into_trie(trie);
+                quote! { if op == BinaryOp::#op_iden { #insert } }
+            } else {
+                quote! {}
+            }
+        })
+        .collect();
+    let trie_struct = quote! {
         #[derive(Default)]
-        struct Tries {
-            #trie_struct
+        pub struct Tries {
+            #trie_fields
+        }
+
+        impl Tries {
+            pub fn insert_tuple(&mut self, canon_id: SSAId, node: SSA, non_canon_id: SSAId, is_delta: bool) {
+                use SSA::*;
+                match node {
+                    Constant(_) => {
+                        #trie_constant_insert
+                    }
+                    Param(_) => {}
+                    Unary(op, _) => {
+                        #trie_unary_insert
+                    }
+                    Binary(op, _, _) => {
+                        #trie_binary_insert
+                    }
+                    Knot(_) => {}
+                }
+            }
         }
     };
 
@@ -416,14 +535,18 @@ pub fn compile_rw(contents: &str) -> String {
     // Finally, emit the top level rewriting function.
     let rw_fn = quote! {
         use crate::nonssa::{BinaryOp, UnaryOp};
-        use crate::saturator::Saturator;
         use crate::ssa::{SSA, SSAId};
-        use crate::trie::Trie;
+        use crate::trie::{Trie, TupleValue, tuple_field};
 
         #trie_struct
 
-        fn apply_rws(saturator: &mut Saturator) {
-            let tries: Tries = todo!();
+        pub fn apply_rws<'a, T, M, U>(get_tries: T, mut make: M, mut union: U)
+        where
+            T: FnOnce() -> &'a Tries,
+            M: FnMut(SSA) -> SSAId,
+            U: FnMut(SSAId, SSAId),
+        {
+            let tries = get_tries();
 
             #wcojs
         }
@@ -449,11 +572,11 @@ mod tests {
                 root: "_root_1".into(),
                 atoms: vec![
                     Atom {
-                        relation: "Constant".into(),
+                        relation: Relation::Constant,
                         terms: vec![Term::Variable("_cons_0".into()), Term::Constant(0)]
                     },
                     Atom {
-                        relation: "Add".into(),
+                        relation: Relation::Binary("Add".into()),
                         terms: vec![
                             Term::Variable("_root_1".into()),
                             Term::Variable("a".into()),

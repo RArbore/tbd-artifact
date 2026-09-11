@@ -9,6 +9,7 @@ path = "src/lib.rs"
 
 [dependencies]
 hashbrown = "*"
+itertools = "*"
 lalrpop-util = { version = "*", features = ["lexer", "unicode"] }
 prettyplease = "*"
 proc-macro2 = "*"
