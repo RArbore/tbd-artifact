@@ -410,12 +410,8 @@ pub fn compile_rw(contents: &str) -> String {
         .map(|query| atoms_containing(query))
         .collect();
 
-    // Second, we need to determine the set of tries that are needed. Each trie is identified by:
-    // 1. A relation the trie is indexing (an identifier + is delta or not).
-    // 2. An order to index the columns of the relation in - each step of the order is a set of
-    //    column indices, not just a single column index, because a query may want to index multiple
-    //    columns simultaneously, enforcing the constraint that their values are equal.
-    // The set of needed tries is shared across all rewrites.
+    // Second, we need to determine the set of tries that are needed. The set of needed tries is
+    // shared across all rewrites.
     let mut needed_tries = HashSet::new();
     let mut query_tries = vec![];
     for query_idx in 0..queries.len() {
