@@ -1,0 +1,8 @@
+fn basic_rw(x, y) {
+	if x + y == y + x {
+		z = 42;
+	} else {
+		z = 7;
+	}
+	return z;
+}

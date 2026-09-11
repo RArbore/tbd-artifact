@@ -4,9 +4,11 @@ use crate::rw::{Tries, apply_rws};
 use crate::ssa::{SSA, SSAId, SSAProgram};
 use crate::version::Version;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Saturator {
-    ssa: SSAProgram,
+    // `Saturator` only deals with the data flow graph - allow direct access to `SSAProgram` for
+    // other things like the control flow graph.
+    pub ssa: SSAProgram,
     version: Version,
 
     // What nodes have either been:
@@ -19,7 +21,7 @@ pub struct Saturator {
 impl Saturator {
     pub fn intern(&mut self, ssa: SSA) -> SSAId {
         let before = self.ssa.num_nodes();
-        let id = self.ssa.intern(ssa);
+        let id = self.version.find_mut(self.ssa.intern(ssa));
         let after = self.ssa.num_nodes();
         if before != after {
             self.delta.insert(id);
@@ -31,6 +33,22 @@ impl Saturator {
         self.version.union_with(x, y, |id| {
             self.delta.insert(id);
         });
+    }
+
+    pub fn find(&mut self, id: SSAId) -> SSAId {
+        self.version.find_mut(id)
+    }
+
+    pub fn is_always_false(&mut self, id: SSAId) -> bool {
+        assert_eq!(id, self.version.find_mut(id));
+        let zero_id = self.intern(SSA::Constant(0));
+        zero_id == id
+    }
+
+    pub fn is_always_true(&mut self, id: SSAId) -> bool {
+        assert_eq!(id, self.version.find_mut(id));
+        let one_id = self.intern(SSA::Constant(1));
+        one_id == id
     }
 
     pub fn saturate(&mut self) {
@@ -87,7 +105,7 @@ impl Saturator {
 #[cfg(test)]
 mod tests {
     use crate::nonssa::BinaryOp;
-    
+
     use super::*;
 
     #[test]

@@ -25,4 +25,11 @@
 (rw (Mul a 1) a)
 (rw (Add a a) (Mul a 2))
 (rw (Mul a 2) (Add a a))
+
+(rw (EE a a) 1)
+(rw (NE a a) 0)
+(rw (LT a a) 0)
+(rw (LE a a) 1)
+(rw (GT a a) 0)
+(rw (GE a a) 1)
 (rw (EE (Sub a b) 0) (EE a b))

@@ -1,12 +1,13 @@
-use std::collections::{HashMap, HashSet};
 use core::assert_matches;
+use std::collections::{HashMap, HashSet};
 
 use symbol_table::GlobalSymbol as Symbol;
 
 use crate::nonssa::{Block, BlockId, Expr, NonSSAFunc};
-use crate::ssa::{SSA, SSABlock, SSABlockId, SSAId, SSAProgram};
+use crate::saturator::Saturator;
+use crate::ssa::{SSA, SSABlock, SSABlockId, SSAId};
 
-pub fn abstract_interpret(ssa: &mut SSAProgram, name: Symbol, nonssa: &NonSSAFunc) {
+pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonSSAFunc) {
     use Block::*;
     assert_matches!(nonssa.cfg[0], Entry);
     let mut deps: HashMap<BlockId, HashSet<BlockId>> = HashMap::new();
@@ -28,7 +29,7 @@ pub fn abstract_interpret(ssa: &mut SSAProgram, name: Symbol, nonssa: &NonSSAFun
         name,
         vars: Default::default(),
         blocks: Default::default(),
-        ssa,
+        saturator,
     };
     // A faster interpreter would walk the non-SSA CFG in WTO. We use a worklist for two reasons.
     // 1. Laziness.
@@ -56,7 +57,7 @@ struct AIContext<'a> {
     // want to do this once, so the analysis terminates.
     blocks: HashMap<BlockId, (SSABlockId, bool)>,
 
-    ssa: &'a mut SSAProgram,
+    saturator: &'a mut Saturator,
 }
 
 impl<'a> AIContext<'a> {
@@ -84,13 +85,15 @@ impl<'a> AIContext<'a> {
     fn update_new_block(&mut self, block_id: BlockId, new_ssa_block: SSABlock) -> SSABlockId {
         if let Some((old_ssa_block_id, true)) = self.blocks.get(&block_id) {
             // If we already created a new SSA block for this non-SSA block, re-use the SSABlockId.
-            self.ssa.set_block(new_ssa_block, *old_ssa_block_id);
+            self.saturator
+                .ssa
+                .set_block(new_ssa_block, *old_ssa_block_id);
             *old_ssa_block_id
         } else {
             // If we haven't created a new SSA block for this non-SSA block (either because we
             // haven't visited this non-SSA block yet or because we have and previously assigned it
             // a non-fresh SSA block), then create a new SSABlockId and map the non-SSA block to it.
-            let new_ssa_block_id = self.ssa.add_block(new_ssa_block);
+            let new_ssa_block_id = self.saturator.ssa.add_block(new_ssa_block);
             self.blocks.insert(block_id, (new_ssa_block_id, true));
             new_ssa_block_id
         }
@@ -134,17 +137,22 @@ impl<'a> AIContext<'a> {
             .params
             .iter()
             .enumerate()
-            .map(|(idx, param)| (*param, self.ssa.intern(SSA::Param(idx))))
+            .map(|(idx, param)| (*param, self.saturator.intern(SSA::Param(idx))))
             .collect();
         self.update_vars(block, vars)
     }
 
     fn visit_guard(&mut self, block: BlockId, pred: BlockId, cond: &Expr) -> bool {
-        let value = visit_expr(&mut self.ssa, cond, &self.vars[&pred]);
-        if self.ssa.is_always_false(value) {
+        let value = visit_expr(&mut self.saturator, cond, &self.vars[&pred]);
+
+        // Saturate so that the condition is analyzed.
+        self.saturator.saturate();
+        let value = self.saturator.find(value);
+        
+        if self.saturator.is_always_false(value) {
             false
         } else {
-            if self.ssa.is_always_true(value) {
+            if self.saturator.is_always_true(value) {
                 self.update_block(block, self.to_ssa_block(pred));
             } else {
                 self.update_new_block(block, SSABlock::Guard(self.to_ssa_block(pred), value));
@@ -157,7 +165,7 @@ impl<'a> AIContext<'a> {
     fn visit_assign(&mut self, block: BlockId, pred: BlockId, var: Symbol, expr: &Expr) -> bool {
         self.update_block(block, self.to_ssa_block(pred));
         let mut vars = self.vars[&pred].clone();
-        let value = visit_expr(&mut self.ssa, expr, &vars);
+        let value = visit_expr(&mut self.saturator, expr, &vars);
         vars.insert(var, value);
         self.update_vars(block, vars)
     }
@@ -182,15 +190,22 @@ impl<'a> AIContext<'a> {
                 let ssa_pred2 = self.to_ssa_block(pred2);
                 let mut new_vars = HashMap::new();
                 let mut knot_values = HashMap::new();
+
+                // Saturate because discovered equalities may help us avoid making knots.
+                self.saturator.saturate();
+
+                // At this point, the variable mappings may no longer be canonical, so fix that.
                 for (var, value1) in vars1 {
                     if let Some(value2) = vars2.get(var) {
+                        let value1 = self.saturator.find(*value1);
+                        let value2 = self.saturator.find(*value2);
                         if value1 == value2 {
-                            new_vars.insert(*var, *value1);
+                            new_vars.insert(*var, value1);
                         } else {
-                            let knot_id = self.ssa.intern_knot(block, *var);
-                            let knot = self.ssa.intern(SSA::Knot(knot_id));
+                            let knot_id = self.saturator.ssa.intern_knot(block, *var);
+                            let knot = self.saturator.intern(SSA::Knot(knot_id));
                             new_vars.insert(*var, knot);
-                            knot_values.insert(knot_id, (*value1, *value2));
+                            knot_values.insert(knot_id, (value1, value2));
                         }
                     }
                 }
@@ -202,32 +217,41 @@ impl<'a> AIContext<'a> {
 
     fn visit_return(&mut self, block: BlockId, pred: BlockId, exprs: &[Expr]) -> bool {
         let pred_vars = &self.vars[&pred];
-        let values = exprs
+        let values: Vec<_> = exprs
             .into_iter()
-            .map(|expr| visit_expr(&mut self.ssa, expr, pred_vars))
+            .map(|expr| visit_expr(&mut self.saturator, expr, pred_vars))
+            .collect();
+
+        // Saturate so that the returned SSAIds are analyzed.
+        self.saturator.saturate();
+
+        // Re-collect the values so that they are canonical SSAIds.
+        let values = values
+            .into_iter()
+            .map(|id| self.saturator.find(id))
             .collect();
         let return_block_id =
             self.update_new_block(block, SSABlock::Return(self.to_ssa_block(pred), values));
-        self.ssa.add_exit(self.name, return_block_id);
+        self.saturator.ssa.add_exit(self.name, return_block_id);
         // Returns have no successors;
         false
     }
 }
 
 // Can't be a member of AIContext because we don't have field borrows.
-fn visit_expr(ssa: &mut SSAProgram, expr: &Expr, vars: &VarMap) -> SSAId {
+fn visit_expr(saturator: &mut Saturator, expr: &Expr, vars: &VarMap) -> SSAId {
     use Expr::*;
     match expr {
-        Number { num } => ssa.intern(SSA::Constant(*num)),
-        Variable { var } => vars[var],
+        Number { num } => saturator.intern(SSA::Constant(*num)),
+        Variable { var } => saturator.find(vars[var]),
         Unary { op, input } => {
-            let input = visit_expr(ssa, input, vars);
-            ssa.intern(SSA::Unary(*op, input))
+            let input = visit_expr(saturator, input, vars);
+            saturator.intern(SSA::Unary(*op, input))
         }
         Binary { op, lhs, rhs } => {
-            let lhs = visit_expr(ssa, lhs, vars);
-            let rhs = visit_expr(ssa, rhs, vars);
-            ssa.intern(SSA::Binary(*op, lhs, rhs))
+            let lhs = visit_expr(saturator, lhs, vars);
+            let rhs = visit_expr(saturator, rhs, vars);
+            saturator.intern(SSA::Binary(*op, lhs, rhs))
         }
     }
 }

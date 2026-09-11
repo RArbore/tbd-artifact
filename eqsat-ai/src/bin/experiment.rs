@@ -7,7 +7,7 @@ use clap::Parser;
 use eqsat_ai::ai::abstract_interpret;
 use eqsat_ai::imp::ast::convert_to_cfg;
 use eqsat_ai::imp::grammar::ProgramParser;
-use eqsat_ai::ssa::SSAProgram;
+use eqsat_ai::saturator::Saturator;
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -20,10 +20,10 @@ fn main() {
     let mut contents = "".to_string();
     file.read_to_string(&mut contents).unwrap();
     let parsed = ProgramParser::new().parse(&contents).unwrap();
-    let mut ssa = SSAProgram::default();
+    let mut saturator = Saturator::default();
     for (name, ast) in parsed {
         let nonssa = convert_to_cfg(ast);
-        abstract_interpret(&mut ssa, name, &nonssa);
+        abstract_interpret(&mut saturator, name, &nonssa);
     }
-    println!("{:?}", ssa);
+    println!("{:?}", saturator);
 }

@@ -111,14 +111,6 @@ impl SSAProgram {
         &self.cfg[id]
     }
 
-    pub fn is_always_false(&self, id: SSAId) -> bool {
-        self.ssa.get(id) == SSA::Constant(0)
-    }
-
-    pub fn is_always_true(&self, id: SSAId) -> bool {
-        self.ssa.get(id) == SSA::Constant(1)
-    }
-
     pub fn intern_knot(&mut self, block: BlockId, var: Symbol) -> KnotId {
         let new_id = self.knot_map.len();
         let entry = self.knot_map.entry((block, var));
