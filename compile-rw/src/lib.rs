@@ -188,8 +188,46 @@ fn atoms_containing(query: &Query) -> AtomsContaining {
     atoms_containing
 }
 
+// Emit code to build e-nodes corresponding to the RHS of a rewrite. Assumes that pattern variables
+// are already in scope.
+fn build_pattern(rhs: &Pattern) -> TokenStream {
+    match rhs {
+        Pattern::Variable(var) => {
+            let var_iden = format_ident!("{}", var.as_str());
+            quote! { *#var_iden as SSAId }
+        }
+        Pattern::Constant(cons) => quote! {
+            saturator.make(SSA::Constant(#cons))
+        },
+        Pattern::Wildcard => panic!(),
+        Pattern::Unary(op, input) => {
+            let op_iden = format_ident!("{}", op.as_str());
+            let input = build_pattern(input);
+            quote! {
+                {
+                    let input = #input;
+                    saturator.make(SSA::Unary(UnaryOp::#op_iden, input))
+                }
+            }
+        }
+        Pattern::Binary(op, lhs, rhs) => {
+            let op_iden = format_ident!("{}", op.as_str());
+            let lhs = build_pattern(lhs);
+            let rhs = build_pattern(rhs);
+            quote! {
+                {
+                    let lhs = #lhs;
+                    let rhs = #rhs;
+                    saturator.make(SSA::Binary(BinaryOp::#op_iden, lhs, rhs))
+                }
+            }
+        }
+    }
+}
+
 fn emit_wcoj(
     query: &Query,
+    rhs: &Pattern,
     delta_idx: usize,
     atoms_containing: &AtomsContaining,
     var_order: &Vec<Symbol>,
@@ -198,13 +236,14 @@ fn emit_wcoj(
     // Emits one nested loop of the WCOJ.
     fn emit_wcoj_helper(
         query: &Query,
+        rhs: &Pattern,
         delta_idx: usize,
         atoms_containing: &AtomsContaining,
         var_order: &[Symbol],
     ) -> TokenStream {
         if let Some((var, rest)) = var_order.split_first() {
             let var_iden = format_ident!("{}", var.as_str());
-            
+
             // Figure out which involved trie is smallest.
             let mut smallest = quote! {};
             let mut first = true;
@@ -247,17 +286,24 @@ fn emit_wcoj(
                 .collect();
 
             // Emit the rest of the WCOJ.
-            let nested = emit_wcoj_helper(query, delta_idx, atoms_containing, rest);
+            let nested = emit_wcoj_helper(query, rhs, delta_idx, atoms_containing, rest);
 
             quote! {
-                #smallest
-                for (#var_iden, child_of_smallest) in smallest_trie.try_internal().unwrap() {
-                    #probe
-                    #nested
-                } }
+            #smallest
+            for (#var_iden, child_of_smallest) in smallest_trie.try_internal().unwrap() {
+                #probe
+                #nested
+            } }
         } else {
-            // Construct the nodes in the e-graph for the RHS.
-            quote! { todo!() }
+            // Make the nodes in the e-graph for the RHS.
+            let build_rhs = build_pattern(rhs);
+
+            // Union the built RHS with the root of the LHS.
+            let root_lhs = format_ident!("{}", query.root.as_str());
+            quote! {
+                let root_rhs = #build_rhs;
+                saturator.union(*#root_lhs as SSAId, root_rhs);
+            }
         }
     }
 
@@ -269,7 +315,7 @@ fn emit_wcoj(
             quote! { let #trievar = &tries.#needed_trie; }
         })
         .collect();
-    let block = emit_wcoj_helper(query, delta_idx, atoms_containing, var_order);
+    let block = emit_wcoj_helper(query, rhs, delta_idx, atoms_containing, var_order);
     quote! {
         {
             #init
@@ -358,6 +404,7 @@ pub fn compile_rw(contents: &str) -> String {
             let rule_tries = &query_tries[query_idx][delta_idx];
             wcojs.extend(emit_wcoj(
                 query,
+                &rws[query_idx].rhs,
                 delta_idx,
                 atoms_containing,
                 var_order,
@@ -368,7 +415,9 @@ pub fn compile_rw(contents: &str) -> String {
 
     // Finally, emit the top level rewriting function.
     let rw_fn = quote! {
+        use crate::nonssa::{BinaryOp, UnaryOp};
         use crate::saturator::Saturator;
+        use crate::ssa::{SSA, SSAId};
         use crate::trie::Trie;
 
         #trie_struct
