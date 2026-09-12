@@ -77,25 +77,22 @@ impl<'a> AIContext<'a> {
         }
     }
 
-    // The transfer function of a block does not depend on the kind of block of a predecessor, and
-    // since SSABlockIds are stable, we will never need to re-interpret a successor block just
-    // because a block gets re-interpreted as a new SSA block (however, if this re-interpretation
-    // also results in an update in variables, see `update_vars`, then a re-interpretation of
-    // successor blocks is warranted).
-    fn update_new_block(&mut self, block_id: BlockId, new_ssa_block: SSABlock) -> SSABlockId {
+    fn update_new_block(&mut self, block_id: BlockId, new_ssa_block: SSABlock) -> bool {
         if let Some((old_ssa_block_id, true)) = self.blocks.get(&block_id) {
             // If we already created a new SSA block for this non-SSA block, re-use the SSABlockId.
             self.saturator
                 .ssa
                 .set_block(new_ssa_block, *old_ssa_block_id);
-            *old_ssa_block_id
+            // Since we re-used the SSABlockId, we don't need to update successors.
+            false
         } else {
             // If we haven't created a new SSA block for this non-SSA block (either because we
             // haven't visited this non-SSA block yet or because we have and previously assigned it
             // a non-fresh SSA block), then create a new SSABlockId and map the non-SSA block to it.
             let new_ssa_block_id = self.saturator.ssa.add_block(new_ssa_block);
             self.blocks.insert(block_id, (new_ssa_block_id, true));
-            new_ssa_block_id
+            // Since we changed the SSABlockId, we need to update successors.
+            true
         }
     }
 
@@ -132,14 +129,13 @@ impl<'a> AIContext<'a> {
     }
 
     fn visit_entry(&mut self, nonssa: &NonSSAFunc, block: BlockId) -> bool {
-        self.update_new_block(block, SSABlock::Entry);
         let vars = nonssa
             .params
             .iter()
             .enumerate()
             .map(|(idx, param)| (*param, self.saturator.intern(SSA::Param(idx))))
             .collect();
-        self.update_vars(block, vars)
+        self.update_new_block(block, SSABlock::Entry) | self.update_vars(block, vars)
     }
 
     fn visit_guard(&mut self, block: BlockId, pred: BlockId, cond: &Expr) -> bool {
@@ -148,17 +144,19 @@ impl<'a> AIContext<'a> {
         // Saturate so that the condition is analyzed.
         self.saturator.saturate();
         let value = self.saturator.find(value);
-        
+
         if self.saturator.is_always_false(value) {
             false
         } else {
+            let mut block_changed = false;
             if self.saturator.is_always_true(value) {
                 self.update_block(block, self.to_ssa_block(pred));
             } else {
-                self.update_new_block(block, SSABlock::Guard(self.to_ssa_block(pred), value));
+                block_changed =
+                    self.update_new_block(block, SSABlock::Guard(self.to_ssa_block(pred), value));
             }
             // Guards make no assignments.
-            self.update_vars(block, self.vars[&pred].clone())
+            block_changed | self.update_vars(block, self.vars[&pred].clone())
         }
     }
 
@@ -209,8 +207,8 @@ impl<'a> AIContext<'a> {
                         }
                     }
                 }
-                self.update_new_block(block, SSABlock::Merge(ssa_pred1, ssa_pred2, knot_values));
-                self.update_vars(block, new_vars)
+                self.update_new_block(block, SSABlock::Merge(ssa_pred1, ssa_pred2, knot_values))
+                    | self.update_vars(block, new_vars)
             }
         }
     }
@@ -230,9 +228,10 @@ impl<'a> AIContext<'a> {
             .into_iter()
             .map(|id| self.saturator.find(id))
             .collect();
-        let return_block_id =
-            self.update_new_block(block, SSABlock::Return(self.to_ssa_block(pred), values));
-        self.saturator.ssa.add_exit(self.name, return_block_id);
+        self.update_new_block(block, SSABlock::Return(self.to_ssa_block(pred), values));
+        self.saturator
+            .ssa
+            .add_exit(self.name, self.blocks[&block].0);
         // Returns have no successors;
         false
     }
