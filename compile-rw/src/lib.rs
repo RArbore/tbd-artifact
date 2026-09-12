@@ -11,7 +11,7 @@ use symbol_table::GlobalSymbol as Symbol;
 
 use grammar::RewritesParser;
 
-type Constant = i32;
+type Literal = i32;
 
 #[derive(Debug, Clone)]
 struct Rewrite {
@@ -22,9 +22,10 @@ struct Rewrite {
 #[derive(Debug, Clone)]
 enum Pattern {
     Variable(Symbol),
-    Constant(Constant),
+    Literal(Literal),
     RustExpr(Symbol),
     Wildcard,
+    Constant(Box<Pattern>),
     Unary(Symbol, Box<Pattern>),
     Binary(Symbol, Box<Pattern>, Box<Pattern>),
 }
@@ -53,7 +54,7 @@ struct Atom {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Term {
     Variable(Symbol),
-    Constant(Constant),
+    Constant(Literal),
     Wildcard,
 }
 
@@ -61,7 +62,7 @@ enum Term {
 struct NeededTrie {
     relation: Relation,
     is_delta: bool,
-    constants: Vec<(usize, Constant)>,
+    constants: Vec<(usize, Literal)>,
     // For each step in the order, store a set of columns that must hold the same value.
     column_order: Vec<Vec<usize>>,
 }
@@ -77,7 +78,7 @@ impl Display for Relation {
 }
 
 impl Atom {
-    fn constants(&self) -> Vec<(usize, Constant)> {
+    fn constants(&self) -> Vec<(usize, Literal)> {
         let mut constants = vec![];
         for (term_idx, term) in self.terms.iter().enumerate() {
             if let Term::Constant(cons) = term {
@@ -121,20 +122,26 @@ fn pattern_to_query(pattern: &Pattern) -> Query {
     fn pattern_to_query_helper(pattern: &Pattern, atoms: &mut Vec<Atom>) -> Term {
         match pattern {
             Pattern::Variable(var) => Term::Variable(*var),
-            Pattern::Constant(cons) => Term::Constant(*cons),
+            Pattern::Literal(cons) => Term::Constant(*cons),
             Pattern::RustExpr(_) => {
                 panic!("can't evaluate Rust expression on left-hand side of rule")
             }
             Pattern::Wildcard => Term::Wildcard,
+            Pattern::Constant(input) => {
+                let input = pattern_to_query_helper(input, atoms);
+                let var = format!("_root_{}", atoms.len()).into();
+                let atom = Atom {
+                    relation: Relation::Constant,
+                    terms: vec![Term::Variable(var), input],
+                };
+                atoms.push(atom);
+                Term::Variable(var)
+            }
             Pattern::Unary(op, input) => {
                 let input = pattern_to_query_helper(input, atoms);
                 let var = format!("_root_{}", atoms.len()).into();
                 let atom = Atom {
-                    relation: if op.as_str() == "Constant" {
-                        Relation::Constant
-                    } else {
-                        Relation::Unary(*op)
-                    },
+                    relation: Relation::Unary(*op),
                     terms: vec![Term::Variable(var), input],
                 };
                 atoms.push(atom);
@@ -212,29 +219,28 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
             let var_iden = format_ident!("{}", var.as_str());
             quote! { *#var_iden as SSAId }
         }
-        Pattern::Constant(cons) => quote! { #cons },
+        Pattern::Literal(cons) => quote! { #cons },
         Pattern::RustExpr(expr) => {
             let expr = syn::parse_str::<syn::Expr>(expr.as_str()).unwrap();
             quote! { #expr }
         }
         Pattern::Wildcard => panic!(),
-        Pattern::Unary(op, input) => {
-            if op.as_str() == "Constant" {
-                let input = build_pattern(input);
-                quote! {
-                    {
-                        let input = #input;
-                        saturator.intern(SSA::Constant(input))
-                    }
+        Pattern::Constant(input) => {
+            let input = build_pattern(input);
+            quote! {
+                {
+                    let input = #input;
+                    saturator.intern(SSA::Constant(input))
                 }
-            } else {
-                let op_iden = format_ident!("{}", op.as_str());
-                let input = build_pattern(input);
-                quote! {
-                    {
-                        let input = #input;
-                        saturator.intern(SSA::Unary(UnaryOp::#op_iden, input))
-                    }
+            }
+        }
+        Pattern::Unary(op, input) => {
+            let op_iden = format_ident!("{}", op.as_str());
+            let input = build_pattern(input);
+            quote! {
+                {
+                    let input = #input;
+                    saturator.intern(SSA::Unary(UnaryOp::#op_iden, input))
                 }
             }
         }

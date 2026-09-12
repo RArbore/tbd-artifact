@@ -16,9 +16,10 @@ Rewrite: Rewrite = {
 
 Pattern: Pattern = {
     Iden => Pattern::Variable(<>),
-    Num => Pattern::Constant(<>),
+    Num => Pattern::Literal(<>),
     RustExpr => Pattern::RustExpr(<>),
     "_" => Pattern::Wildcard,
+    "(" "Constant" <cons:Pattern> ")" => Pattern::Constant(Box::new(cons)),
     "(" <op:Iden> <inp:Pattern> ")" => Pattern::Unary(op, Box::new(inp)),
     "(" <op:Iden> <lhs:Pattern> <rhs:Pattern> ")" => Pattern::Binary(op, Box::new(lhs), Box::new(rhs)),
 }
