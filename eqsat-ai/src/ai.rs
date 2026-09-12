@@ -33,7 +33,8 @@ pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonS
     };
     // A faster interpreter would walk the non-SSA CFG in WTO. We use a worklist for two reasons.
     // 1. Laziness.
-    // 2. We could randomize the order of blocks in the worklist to stress test the interpreter.
+    // 2. We could randomize the order of blocks in the worklist to stress test the interpreter,
+    //    because the order shouldn't affect the final results.
     let mut worklist = vec![0];
     while let Some(block) = worklist.pop() {
         if context.visit_block(nonssa, block) {
@@ -280,13 +281,38 @@ fn basic() {
             abstract_interpret(&mut saturator, name, &nonssa);
         }
         assert_eq!(saturator.ssa.get_block(0), &SSABlock::Entry);
-        let SSABlock::Return(0, values) = saturator.ssa.get_block(1) else { panic!() };
+        let SSABlock::Return(0, values) = saturator.ssa.get_block(1) else { panic!("{:?}", saturator.ssa) };
         assert_eq!(values.len(), 1);
         let value = values[0];
         let five = saturator.intern(SSA::Constant(5));
         let seven = saturator.intern(SSA::Constant(7));
         let add = saturator.intern(SSA::Binary(BinaryOp::Add, five, seven));
         let correct = saturator.intern(SSA::Binary(BinaryOp::Add, add, add));
+        assert_eq!(correct, value);
+    }
+    
+    #[test]
+    fn ai2() {
+        let text = r#"
+fn branch() {
+	x = 5;
+    if x {
+        x = 9;
+    }
+	return x;
+}
+"#;
+        let parsed = ProgramParser::new().parse(&text).unwrap();
+        let mut saturator = Saturator::default();
+        for (name, ast) in parsed {
+            let nonssa = convert_to_cfg(ast);
+            abstract_interpret(&mut saturator, name, &nonssa);
+        }
+        assert_eq!(saturator.ssa.get_block(0), &SSABlock::Entry);
+        let SSABlock::Return(0, values) = saturator.ssa.get_block(1) else { panic!("{:?}", saturator.ssa) };
+        assert_eq!(values.len(), 1);
+        let value = values[0];
+        let correct = saturator.intern(SSA::Constant(5));
         assert_eq!(correct, value);
     }
 }

@@ -47,8 +47,13 @@ impl Saturator {
 
     pub fn is_always_true(&mut self, id: SSAId) -> bool {
         assert_eq!(id, self.version.find_mut(id));
-        let one_id = self.intern(SSA::Constant(1));
-        one_id == id
+        // TODO: This is kind of silly. We should either bake constants or use intervals or both.
+        self.version.set(id).any(|id| {
+            let SSA::Constant(cons) = self.ssa.get(id) else {
+                return false;
+            };
+            cons != 0
+        })
     }
 
     pub fn saturate(&mut self) {
