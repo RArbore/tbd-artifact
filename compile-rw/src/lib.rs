@@ -5,11 +5,9 @@ use std::collections::{HashMap, HashSet};
 
 use itertools::Itertools;
 use lalrpop_util::lalrpop_mod;
-use prettyplease::unparse;
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{ToTokens, TokenStreamExt, format_ident, quote};
 use symbol_table::GlobalSymbol as Symbol;
-use syn::parse2;
 
 use grammar::RewritesParser;
 
@@ -25,6 +23,7 @@ struct Rewrite {
 enum Pattern {
     Variable(Symbol),
     Constant(Constant),
+    RustExpr(Symbol),
     Wildcard,
     Unary(Symbol, Box<Pattern>),
     Binary(Symbol, Box<Pattern>, Box<Pattern>),
@@ -122,21 +121,20 @@ fn pattern_to_query(pattern: &Pattern) -> Query {
     fn pattern_to_query_helper(pattern: &Pattern, atoms: &mut Vec<Atom>) -> Term {
         match pattern {
             Pattern::Variable(var) => Term::Variable(*var),
-            Pattern::Constant(cons) => {
-                let var = format!("_cons_{cons}").into();
-                let atom = Atom {
-                    relation: Relation::Constant,
-                    terms: vec![Term::Variable(var), Term::Constant(*cons)],
-                };
-                atoms.push(atom);
-                Term::Variable(var)
+            Pattern::Constant(cons) => Term::Constant(*cons),
+            Pattern::RustExpr(_) => {
+                panic!("can't evaluate Rust expression on left-hand side of rule")
             }
             Pattern::Wildcard => Term::Wildcard,
             Pattern::Unary(op, input) => {
                 let input = pattern_to_query_helper(input, atoms);
                 let var = format!("_root_{}", atoms.len()).into();
                 let atom = Atom {
-                    relation: Relation::Unary(*op),
+                    relation: if op.as_str() == "Constant" {
+                        Relation::Constant
+                    } else {
+                        Relation::Unary(*op)
+                    },
                     terms: vec![Term::Variable(var), input],
                 };
                 atoms.push(atom);
@@ -214,17 +212,29 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
             let var_iden = format_ident!("{}", var.as_str());
             quote! { *#var_iden as SSAId }
         }
-        Pattern::Constant(cons) => quote! {
-            saturator.intern(SSA::Constant(#cons))
-        },
+        Pattern::Constant(cons) => quote! { #cons },
+        Pattern::RustExpr(expr) => {
+            let expr = syn::parse_str::<syn::Expr>(expr.as_str()).unwrap();
+            quote! { #expr }
+        }
         Pattern::Wildcard => panic!(),
         Pattern::Unary(op, input) => {
-            let op_iden = format_ident!("{}", op.as_str());
-            let input = build_pattern(input);
-            quote! {
-                {
-                    let input = #input;
-                    saturator.intern(SSA::Unary(UnaryOp::#op_iden, input))
+            if op.as_str() == "Constant" {
+                let input = build_pattern(input);
+                quote! {
+                    {
+                        let input = #input;
+                        saturator.intern(SSA::Constant(input))
+                    }
+                }
+            } else {
+                let op_iden = format_ident!("{}", op.as_str());
+                let input = build_pattern(input);
+                quote! {
+                    {
+                        let input = #input;
+                        saturator.intern(SSA::Unary(UnaryOp::#op_iden, input))
+                    }
                 }
             }
         }
@@ -542,7 +552,7 @@ pub fn compile_rw(contents: &str) -> String {
         }
     };
     // Format the Rust code so it's (more) pretty to look at.
-    unparse(&parse2(rw_fn).unwrap())
+    prettyplease::unparse(&syn::parse2(rw_fn).unwrap())
 }
 
 #[cfg(test)]
@@ -553,7 +563,7 @@ mod tests {
 
     #[test]
     fn pattern_to_query1() {
-        let rw = "(rw (Add a 0) a)";
+        let rw = "(rw (Add a (Constant 0)) a)";
         let rw = RewritesParser::new().parse(rw).unwrap();
         let query = pattern_to_query(&rw[0].lhs);
         assert_eq!(
@@ -563,14 +573,14 @@ mod tests {
                 atoms: vec![
                     Atom {
                         relation: Relation::Constant,
-                        terms: vec![Term::Variable("_cons_0".into()), Term::Constant(0)]
+                        terms: vec![Term::Variable("_root_0".into()), Term::Constant(0)]
                     },
                     Atom {
                         relation: Relation::Binary("Add".into()),
                         terms: vec![
                             Term::Variable("_root_1".into()),
                             Term::Variable("a".into()),
-                            Term::Variable("_cons_0".into())
+                            Term::Variable("_root_0".into())
                         ]
                     }
                 ]

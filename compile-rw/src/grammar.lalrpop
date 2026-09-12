@@ -17,6 +17,7 @@ Rewrite: Rewrite = {
 Pattern: Pattern = {
     Iden => Pattern::Variable(<>),
     Num => Pattern::Constant(<>),
+    RustExpr => Pattern::RustExpr(<>),
     "_" => Pattern::Wildcard,
     "(" <op:Iden> <inp:Pattern> ")" => Pattern::Unary(op, Box::new(inp)),
     "(" <op:Iden> <lhs:Pattern> <rhs:Pattern> ")" => Pattern::Binary(op, Box::new(lhs), Box::new(rhs)),
@@ -24,6 +25,7 @@ Pattern: Pattern = {
 
 Iden: Symbol = r"[a-zA-Z][a-zA-Z0-9_]*" => Symbol::from(<>);
 Num: i32 = r"-?[0-9]+" => i32::from_str(<>).unwrap();
+RustExpr: Symbol = <re:r#"`(\\\\|\\`|[^`\\])*`"#> => re[1..re.len() - 1].into();
 
 List<T>: Vec<T> = {
     <mut v:(<T> ",")*> <e:T?> => match e {
