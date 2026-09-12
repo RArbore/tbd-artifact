@@ -254,3 +254,39 @@ fn visit_expr(saturator: &mut Saturator, expr: &Expr, vars: &VarMap) -> SSAId {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::imp::ast::convert_to_cfg;
+    use crate::imp::grammar::ProgramParser;
+    use crate::nonssa::BinaryOp;
+    
+    use super::*;
+    
+    #[test]
+    fn ai1() {
+        let text = r#"
+fn basic() {
+	x = 5;
+	y = x + 7;
+	z = x + 7;
+	return y + z;
+}
+"#;
+        let parsed = ProgramParser::new().parse(&text).unwrap();
+        let mut saturator = Saturator::default();
+        for (name, ast) in parsed {
+            let nonssa = convert_to_cfg(ast);
+            abstract_interpret(&mut saturator, name, &nonssa);
+        }
+        assert_eq!(saturator.ssa.get_block(0), &SSABlock::Entry);
+        let SSABlock::Return(0, values) = saturator.ssa.get_block(1) else { panic!() };
+        assert_eq!(values.len(), 1);
+        let value = values[0];
+        let five = saturator.intern(SSA::Constant(5));
+        let seven = saturator.intern(SSA::Constant(7));
+        let add = saturator.intern(SSA::Binary(BinaryOp::Add, five, seven));
+        let correct = saturator.intern(SSA::Binary(BinaryOp::Add, add, add));
+        assert_eq!(correct, value);
+    }
+}
