@@ -35,6 +35,9 @@ enum Pattern {
 struct Query {
     // The variable for the root ID of the pattern. Needed so we know what to union with.
     root: Symbol,
+    // We need to record the types of variables when building the query so that we can use those
+    // variables as their proper types in the RHS of each rule.
+    types: HashMap<Symbol, Symbol>,
     atoms: Vec<Atom>,
 }
 
@@ -119,7 +122,17 @@ impl ToTokens for NeededTrie {
 
 // Flatten a nested pattern into a relational qeury - see "Relational E-matching" by Zhang et al.
 fn pattern_to_query(pattern: &Pattern) -> Query {
-    fn pattern_to_query_helper(pattern: &Pattern, atoms: &mut Vec<Atom>) -> Term {
+    fn record_type(term: Term, ty: Symbol, types: &mut HashMap<Symbol, Symbol>) {
+        if let Term::Variable(var) = term {
+            types.insert(var, ty);
+        }
+    }
+
+    fn pattern_to_query_helper(
+        pattern: &Pattern,
+        atoms: &mut Vec<Atom>,
+        types: &mut HashMap<Symbol, Symbol>,
+    ) -> Term {
         match pattern {
             Pattern::Variable(var) => Term::Variable(*var),
             Pattern::Literal(cons) => Term::Constant(*cons),
@@ -128,43 +141,54 @@ fn pattern_to_query(pattern: &Pattern) -> Query {
             }
             Pattern::Wildcard => Term::Wildcard,
             Pattern::Constant(input) => {
-                let input = pattern_to_query_helper(input, atoms);
+                let input = pattern_to_query_helper(input, atoms, types);
                 let var = format!("_root_{}", atoms.len()).into();
+                let root = Term::Variable(var);
                 let atom = Atom {
                     relation: Relation::Constant,
-                    terms: vec![Term::Variable(var), input],
+                    terms: vec![root, input],
                 };
                 atoms.push(atom);
-                Term::Variable(var)
+                record_type(root, "SSAId".into(), types);
+                record_type(input, "i32".into(), types);
+                root
             }
             Pattern::Unary(op, input) => {
-                let input = pattern_to_query_helper(input, atoms);
+                let input = pattern_to_query_helper(input, atoms, types);
                 let var = format!("_root_{}", atoms.len()).into();
+                let root = Term::Variable(var);
                 let atom = Atom {
                     relation: Relation::Unary(*op),
-                    terms: vec![Term::Variable(var), input],
+                    terms: vec![root, input],
                 };
                 atoms.push(atom);
-                Term::Variable(var)
+                record_type(root, "SSAId".into(), types);
+                record_type(input, "SSAId".into(), types);
+                root
             }
             Pattern::Binary(op, lhs, rhs) => {
-                let lhs = pattern_to_query_helper(lhs, atoms);
-                let rhs = pattern_to_query_helper(rhs, atoms);
+                let lhs = pattern_to_query_helper(lhs, atoms, types);
+                let rhs = pattern_to_query_helper(rhs, atoms, types);
                 let var = format!("_root_{}", atoms.len()).into();
+                let root = Term::Variable(var);
                 let atom = Atom {
                     relation: Relation::Binary(*op),
-                    terms: vec![Term::Variable(var), lhs, rhs],
+                    terms: vec![root, lhs, rhs],
                 };
                 atoms.push(atom);
-                Term::Variable(var)
+                record_type(root, "SSAId".into(), types);
+                record_type(lhs, "SSAId".into(), types);
+                record_type(rhs, "SSAId".into(), types);
+                root
             }
         }
     }
 
     let mut atoms = vec![];
-    let root = pattern_to_query_helper(pattern, &mut atoms);
+    let mut types = HashMap::new();
+    let root = pattern_to_query_helper(pattern, &mut atoms, &mut types);
     let Term::Variable(root) = root else { panic!() };
-    Query { root, atoms }
+    Query { root, types, atoms }
 }
 
 // Determine the variable order for the WCOJ over a query.
@@ -217,12 +241,12 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
     match rhs {
         Pattern::Variable(var) => {
             let var_iden = format_ident!("{}", var.as_str());
-            quote! { *#var_iden as SSAId }
+            quote! { #var_iden }
         }
         Pattern::Literal(cons) => quote! { #cons },
         Pattern::RustExpr(expr) => {
             let expr = syn::parse_str::<syn::Expr>(expr.as_str()).unwrap();
-            quote! { #expr }
+            quote! { { #expr } }
         }
         Pattern::Wildcard => panic!(),
         Pattern::Constant(input) => {
@@ -319,6 +343,11 @@ fn emit_wcoj(
                 })
                 .collect();
 
+            // Cast the variable to its Rust type, so that the code for the RHS of the rule can use
+            // the variable as its proper type.
+            let rust_ty = format_ident!("{}", query.types[var].as_str());
+            let cast = quote! { let #var_iden = *#var_iden as #rust_ty; };
+
             // Emit the rest of the WCOJ.
             let nested = emit_wcoj_helper(query, rhs, delta_idx, atoms_containing, rest);
 
@@ -326,6 +355,7 @@ fn emit_wcoj(
             #smallest
             for (#var_iden, child_of_smallest) in smallest_trie.try_internal().unwrap() {
                 #probe
+                #cast
                 #nested
             } }
         } else {
@@ -336,7 +366,7 @@ fn emit_wcoj(
             let root_lhs = format_ident!("{}", query.root.as_str());
             quote! {
                 let root_rhs = #build_rhs;
-                saturator.union(*#root_lhs as SSAId, root_rhs);
+                saturator.union(#root_lhs, root_rhs);
             }
         }
     }
@@ -391,7 +421,7 @@ fn emit_insert_into_trie(trie: &NeededTrie) -> TokenStream {
     )
     .collect();
     let insert = quote! {
-        self.#trie.insert_tuple([#column_indices].into_iter().map(|idx| tuple_field(canon_id, node, idx)), non_canon_id)
+        self.#trie.insert_tuple([#column_indices].into_iter().map(|idx| tuple_field(canon_id, node, idx)), non_canon_id);
     };
     if trie.is_delta && condition.is_empty() {
         quote! { if is_delta { #insert } }
@@ -558,7 +588,7 @@ pub fn compile_rw(contents: &str) -> String {
         }
     };
     // Format the Rust code so it's (more) pretty to look at.
-    prettyplease::unparse(&syn::parse2(rw_fn).unwrap())
+    prettyplease::unparse(&syn::parse2(rw_fn.clone()).expect(&format!("{}", rw_fn)))
 }
 
 #[cfg(test)]
@@ -576,6 +606,11 @@ mod tests {
             query,
             Query {
                 root: "_root_1".into(),
+                types: HashMap::from_iter([
+                    ("_root_0".into(), "SSAId".into()),
+                    ("_root_1".into(), "SSAId".into()),
+                    ("a".into(), "SSAId".into())
+                ]),
                 atoms: vec![
                     Atom {
                         relation: Relation::Constant,

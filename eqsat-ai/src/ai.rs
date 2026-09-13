@@ -315,4 +315,27 @@ fn branch() {
         let correct = saturator.intern(SSA::Constant(5));
         assert_eq!(correct, value);
     }
+
+    #[test]
+    fn ai3() {
+        let text = r#"
+fn add() {
+	x = 5;
+    y = 9;
+	return x + y;
+}
+"#;
+        let parsed = ProgramParser::new().parse(&text).unwrap();
+        let mut saturator = Saturator::default();
+        for (name, ast) in parsed {
+            let nonssa = convert_to_cfg(ast);
+            abstract_interpret(&mut saturator, name, &nonssa);
+        }
+        assert_eq!(saturator.ssa.get_block(0), &SSABlock::Entry);
+        let SSABlock::Return(0, values) = saturator.ssa.get_block(1) else { panic!("{:?}", saturator.ssa) };
+        assert_eq!(values.len(), 1);
+        let value = values[0];
+        let correct = saturator.intern(SSA::Constant(14));
+        assert_eq!(correct, value);
+    }
 }

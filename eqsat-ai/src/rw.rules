@@ -33,3 +33,5 @@
 (rw (GT a a) (Constant 0))
 (rw (GE a a) (Constant 1))
 (rw (EE (Sub a b) (Constant 0)) (EE a b))
+
+(rw (Add (Constant a) (Constant b)) (Constant `a + b`))
