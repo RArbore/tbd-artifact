@@ -261,9 +261,24 @@ mod tests {
     use crate::imp::ast::convert_to_cfg;
     use crate::imp::grammar::ProgramParser;
     use crate::nonssa::BinaryOp;
-    
+
     use super::*;
-    
+
+    fn check_no_control_flow(text: &str) -> (SSAId, Saturator) {
+        let parsed = ProgramParser::new().parse(text).unwrap();
+        let mut saturator = Saturator::default();
+        for (name, ast) in parsed {
+            let nonssa = convert_to_cfg(ast);
+            abstract_interpret(&mut saturator, name, &nonssa);
+        }
+        assert_eq!(saturator.ssa.get_block(0), &SSABlock::Entry);
+        let SSABlock::Return(0, values) = saturator.ssa.get_block(1) else {
+            panic!("{:?}", saturator.ssa)
+        };
+        assert_eq!(values.len(), 1);
+        (values[0], saturator)
+    }
+
     #[test]
     fn ai1() {
         let text = r#"
@@ -274,23 +289,14 @@ fn basic() {
 	return y + z;
 }
 "#;
-        let parsed = ProgramParser::new().parse(&text).unwrap();
-        let mut saturator = Saturator::default();
-        for (name, ast) in parsed {
-            let nonssa = convert_to_cfg(ast);
-            abstract_interpret(&mut saturator, name, &nonssa);
-        }
-        assert_eq!(saturator.ssa.get_block(0), &SSABlock::Entry);
-        let SSABlock::Return(0, values) = saturator.ssa.get_block(1) else { panic!("{:?}", saturator.ssa) };
-        assert_eq!(values.len(), 1);
-        let value = values[0];
+        let (value, mut saturator) = check_no_control_flow(text);
         let five = saturator.intern(SSA::Constant(5));
         let seven = saturator.intern(SSA::Constant(7));
         let add = saturator.intern(SSA::Binary(BinaryOp::Add, five, seven));
         let correct = saturator.intern(SSA::Binary(BinaryOp::Add, add, add));
         assert_eq!(correct, value);
     }
-    
+
     #[test]
     fn ai2() {
         let text = r#"
@@ -302,16 +308,7 @@ fn branch() {
 	return x;
 }
 "#;
-        let parsed = ProgramParser::new().parse(&text).unwrap();
-        let mut saturator = Saturator::default();
-        for (name, ast) in parsed {
-            let nonssa = convert_to_cfg(ast);
-            abstract_interpret(&mut saturator, name, &nonssa);
-        }
-        assert_eq!(saturator.ssa.get_block(0), &SSABlock::Entry);
-        let SSABlock::Return(0, values) = saturator.ssa.get_block(1) else { panic!("{:?}", saturator.ssa) };
-        assert_eq!(values.len(), 1);
-        let value = values[0];
+        let (value, mut saturator) = check_no_control_flow(text);
         let correct = saturator.intern(SSA::Constant(9));
         assert_eq!(correct, value);
     }
@@ -325,17 +322,27 @@ fn add() {
 	return x + y;
 }
 "#;
-        let parsed = ProgramParser::new().parse(&text).unwrap();
-        let mut saturator = Saturator::default();
-        for (name, ast) in parsed {
-            let nonssa = convert_to_cfg(ast);
-            abstract_interpret(&mut saturator, name, &nonssa);
-        }
-        assert_eq!(saturator.ssa.get_block(0), &SSABlock::Entry);
-        let SSABlock::Return(0, values) = saturator.ssa.get_block(1) else { panic!("{:?}", saturator.ssa) };
-        assert_eq!(values.len(), 1);
-        let value = values[0];
+        let (value, mut saturator) = check_no_control_flow(text);
         let correct = saturator.intern(SSA::Constant(14));
+        assert_eq!(correct, value);
+    }
+
+    #[test]
+    fn ai4() {
+        let text = r#"
+fn loop() {
+	x = 5;
+    while x < 10 {
+        if x > 4 {
+            return x;
+        }
+        x = x + 3;
+    }
+    return 7;
+}
+"#;
+        let (value, mut saturator) = check_no_control_flow(text);
+        let correct = saturator.intern(SSA::Constant(5));
         assert_eq!(correct, value);
     }
 }
