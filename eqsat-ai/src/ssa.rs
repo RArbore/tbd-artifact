@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use symbol_table::GlobalSymbol as Symbol;
 
-use crate::nonssa::{BinaryOp, BlockId, UnaryOp};
+use crate::nonssa::{BinaryOp, UnaryOp};
 
 pub type SSAId = usize;
 pub type SSABlockId = usize;
@@ -40,9 +40,6 @@ pub struct SSAProgram {
     ssa: SSAHashCons,
     cfg: Vec<SSABlock>,
     exits: HashMap<Symbol, SSABlockId>,
-
-    // Intern tuples of BlockId and variable name to KnotId.
-    knot_map: HashMap<(BlockId, Symbol), KnotId>,
 }
 
 impl SSAHashCons {
@@ -111,10 +108,8 @@ impl SSAProgram {
         &self.cfg[id]
     }
 
-    pub fn intern_knot(&mut self, block: BlockId, var: Symbol) -> KnotId {
-        let new_id = self.knot_map.len();
-        let entry = self.knot_map.entry((block, var));
-        *entry.or_insert(new_id)
+    pub fn exit(&self, name: Symbol) -> SSABlockId {
+        self.exits[&name]
     }
 
     pub fn add_exit(&mut self, name: Symbol, return_block: SSABlockId) {

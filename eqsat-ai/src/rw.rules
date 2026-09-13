@@ -25,6 +25,7 @@
 (rw (Mul a (Constant 1)) a)
 (rw (Add a a) (Mul a (Constant 2)))
 (rw (Mul a (Constant 2)) (Add a a))
+(rw (Sub a a) (Constant 0))
 
 (rw (EE a a) (Constant 1))
 (rw (NE a a) (Constant 0))
@@ -33,6 +34,7 @@
 (rw (GT a a) (Constant 0))
 (rw (GE a a) (Constant 1))
 (rw (EE (Sub a b) (Constant 0)) (EE a b))
+(rw (NE (Sub a b) (Constant 0)) (NE a b))
 
 (rw (Neg (Constant a)) (Constant `-a`))
 (rw (Not (Constant a)) (Constant `(a == 0) as i32`))

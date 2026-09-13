@@ -1,11 +1,11 @@
 use core::assert_matches;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use symbol_table::GlobalSymbol as Symbol;
 
 use crate::nonssa::{Block, BlockId, Expr, NonSSAFunc};
 use crate::saturator::Saturator;
-use crate::ssa::{SSA, SSABlock, SSABlockId, SSAId};
+use crate::ssa::{KnotId, SSA, SSABlock, SSABlockId, SSAId};
 
 pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonSSAFunc) {
     use Block::*;
@@ -27,8 +27,9 @@ pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonS
 
     let mut context = AIContext {
         name,
-        vars: Default::default(),
-        blocks: Default::default(),
+        vars: HashMap::new(),
+        blocks: HashMap::new(),
+        knot_map: KnotMap::default(),
         saturator,
     };
     // A faster interpreter would walk the non-SSA CFG in WTO. We use a worklist for two reasons.
@@ -46,6 +47,18 @@ pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonS
 // This is the data type that we would want to change to Okasaki maps to follow Lemerre's advice.
 type VarMap = HashMap<Symbol, SSAId>;
 
+// Intern tuples of BlockId and variable sets to KnotId.
+#[derive(Debug, Default)]
+struct KnotMap(HashMap<(BlockId, BTreeSet<Symbol>), KnotId>);
+
+impl KnotMap {
+    fn intern_knot(&mut self, block: BlockId, var: BTreeSet<Symbol>) -> KnotId {
+        let new_id = self.0.len();
+        let entry = self.0.entry((block, var));
+        *entry.or_insert(new_id)
+    }
+}
+
 #[derive(Debug)]
 struct AIContext<'a> {
     name: Symbol,
@@ -57,6 +70,7 @@ struct AIContext<'a> {
     // this happens, we need to allocate a fresh SSABlockId for the created SSA block, but we only
     // want to do this once, so the analysis terminates.
     blocks: HashMap<BlockId, (SSABlockId, bool)>,
+    knot_map: KnotMap,
 
     saturator: &'a mut Saturator,
 }
@@ -188,26 +202,41 @@ impl<'a> AIContext<'a> {
                 let ssa_pred1 = self.to_ssa_block(pred1);
                 let ssa_pred2 = self.to_ssa_block(pred2);
                 let mut new_vars = HashMap::new();
+                let mut pair_to_vars: HashMap<(SSAId, SSAId), HashSet<Symbol>> = HashMap::new();
                 let mut knot_values = HashMap::new();
 
                 // Saturate because discovered equalities may help us avoid making knots.
                 self.saturator.saturate();
 
-                // At this point, the variable mappings may no longer be canonical, so fix that.
                 for (var, value1) in vars1 {
                     if let Some(value2) = vars2.get(var) {
+                        // At this point, the variable mappings may no longer be canonical, so fix that.
                         let value1 = self.saturator.find(*value1);
                         let value2 = self.saturator.find(*value2);
                         if value1 == value2 {
                             new_vars.insert(*var, value1);
                         } else {
-                            let knot_id = self.saturator.ssa.intern_knot(block, *var);
-                            let knot = self.saturator.intern(SSA::Knot(knot_id));
-                            new_vars.insert(*var, knot);
-                            knot_values.insert(knot_id, (value1, value2));
+                            // Just collect the variables where a knot must be made, because...
+                            pair_to_vars
+                                .entry((value1, value2))
+                                .or_default()
+                                .insert(*var);
                         }
                     }
                 }
+
+                // ...we want to create a single knot per set of variables sharing values.
+                for ((value1, value2), vars) in pair_to_vars {
+                    let knot_id = self
+                        .knot_map
+                        .intern_knot(block, vars.iter().cloned().collect());
+                    let knot = self.saturator.intern(SSA::Knot(knot_id));
+                    for var in vars {
+                        new_vars.insert(var, knot);
+                    }
+                    knot_values.insert(knot_id, (value1, value2));
+                }
+
                 self.update_new_block(block, SSABlock::Merge(ssa_pred1, ssa_pred2, knot_values))
                     | self.update_vars(block, new_vars)
             }
@@ -264,8 +293,9 @@ mod tests {
 
     use super::*;
 
-    fn check_no_control_flow(text: &str) -> (SSAId, Saturator) {
+    fn get_return_no_control_flow(text: &str) -> (SSAId, Saturator) {
         let parsed = ProgramParser::new().parse(text).unwrap();
+        assert_eq!(parsed.len(), 1);
         let mut saturator = Saturator::default();
         for (name, ast) in parsed {
             let nonssa = convert_to_cfg(ast);
@@ -279,6 +309,24 @@ mod tests {
         (values[0], saturator)
     }
 
+    fn get_return(text: &str) -> (SSAId, Saturator) {
+        let parsed = ProgramParser::new().parse(text).unwrap();
+        assert_eq!(parsed.len(), 1);
+        let mut saturator = Saturator::default();
+        for (name, ast) in parsed {
+            let nonssa = convert_to_cfg(ast);
+            abstract_interpret(&mut saturator, name, &nonssa);
+            assert_eq!(saturator.ssa.get_block(0), &SSABlock::Entry);
+            let SSABlock::Return(_, values) = saturator.ssa.get_block(saturator.ssa.exit(name))
+            else {
+                panic!("{:?}", saturator.ssa)
+            };
+            assert_eq!(values.len(), 1);
+            return (values[0], saturator);
+        }
+        panic!()
+    }
+
     #[test]
     fn ai1() {
         let text = r#"
@@ -289,7 +337,7 @@ fn basic() {
 	return y + z;
 }
 "#;
-        let (value, mut saturator) = check_no_control_flow(text);
+        let (value, mut saturator) = get_return_no_control_flow(text);
         let five = saturator.intern(SSA::Constant(5));
         let seven = saturator.intern(SSA::Constant(7));
         let add = saturator.intern(SSA::Binary(BinaryOp::Add, five, seven));
@@ -308,7 +356,7 @@ fn branch() {
 	return x;
 }
 "#;
-        let (value, mut saturator) = check_no_control_flow(text);
+        let (value, mut saturator) = get_return_no_control_flow(text);
         let correct = saturator.intern(SSA::Constant(9));
         assert_eq!(correct, value);
     }
@@ -322,7 +370,7 @@ fn add() {
 	return x + y;
 }
 "#;
-        let (value, mut saturator) = check_no_control_flow(text);
+        let (value, mut saturator) = get_return_no_control_flow(text);
         let correct = saturator.intern(SSA::Constant(14));
         assert_eq!(correct, value);
     }
@@ -341,8 +389,25 @@ fn loop() {
     return 7;
 }
 "#;
-        let (value, mut saturator) = check_no_control_flow(text);
+        let (value, mut saturator) = get_return_no_control_flow(text);
         let correct = saturator.intern(SSA::Constant(5));
+        assert_eq!(correct, value);
+    }
+
+    #[test]
+    fn ai5() {
+        let text = r#"
+fn gvn(x) {
+	y = x;
+	while x > 0 {
+		x = x - 1;
+		y = y - 1;
+	}
+	return x - y;
+}
+"#;
+        let (value, mut saturator) = get_return(text);
+        let correct = saturator.intern(SSA::Constant(0));
         assert_eq!(correct, value);
     }
 }
