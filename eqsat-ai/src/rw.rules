@@ -34,4 +34,15 @@
 (rw (GE a a) (Constant 1))
 (rw (EE (Sub a b) (Constant 0)) (EE a b))
 
+(rw (Neg (Constant a)) (Constant `-a`))
+(rw (Not (Constant a)) (Constant `(a == 0) as i32`))
+
 (rw (Add (Constant a) (Constant b)) (Constant `a + b`))
+(rw (Sub (Constant a) (Constant b)) (Constant `a - b`))
+(rw (Mul (Constant a) (Constant b)) (Constant `a * b`))
+(rw (EE (Constant a) (Constant b)) (Constant `(a == b) as i32`))
+(rw (NE (Constant a) (Constant b)) (Constant `(a != b) as i32`))
+(rw (LT (Constant a) (Constant b)) (Constant `(a < b) as i32`))
+(rw (LE (Constant a) (Constant b)) (Constant `(a <= b) as i32`))
+(rw (GT (Constant a) (Constant b)) (Constant `(a > b) as i32`))
+(rw (GE (Constant a) (Constant b)) (Constant `(a >= b) as i32`))

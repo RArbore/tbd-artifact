@@ -312,7 +312,7 @@ fn branch() {
         let SSABlock::Return(0, values) = saturator.ssa.get_block(1) else { panic!("{:?}", saturator.ssa) };
         assert_eq!(values.len(), 1);
         let value = values[0];
-        let correct = saturator.intern(SSA::Constant(5));
+        let correct = saturator.intern(SSA::Constant(9));
         assert_eq!(correct, value);
     }
 
