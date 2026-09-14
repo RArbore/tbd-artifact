@@ -64,7 +64,7 @@ impl Trie {
             Leaf(set) => Some(set),
         }
     }
-    
+
     pub fn insert_tuple<I>(&mut self, mut iter: I, id: SSAId)
     where
         I: Iterator<Item = TupleValue>,
