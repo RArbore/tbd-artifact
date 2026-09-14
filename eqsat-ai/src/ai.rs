@@ -3,6 +3,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use symbol_table::GlobalSymbol as Symbol;
 
+use crate::dom::DomTree;
 use crate::nonssa::{Block, BlockId, Expr, NonSSAFunc};
 use crate::saturator::Saturator;
 use crate::ssa::{KnotId, SSA, SSABlock, SSABlockId, SSAId};
@@ -30,7 +31,7 @@ pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonS
         vars: HashMap::new(),
         blocks: HashMap::new(),
         knot_map: KnotMap::default(),
-        dom_tree: HashMap::new(),
+        dom_tree: DomTree::default(),
         saturator,
     };
     // A faster interpreter would walk the non-SSA CFG in WTO. We use a worklist for two reasons.
@@ -74,9 +75,8 @@ struct AIContext<'a> {
     // Intern sets of variables and locations to KnotIds (knots are our name for "symbolic variables"
     // from Lemerre's paper).
     knot_map: KnotMap,
-    // Store immediate dominators among SSA blocks, as well as level in the dominator tree (to assist
-    // in computing LCAs).
-    dom_tree: HashMap<SSABlockId, (SSABlockId, usize)>,
+    // Incrementally maintain dominator analysis.
+    dom_tree: DomTree,
     // All building of the SSA program goes through the Saturator.
     saturator: &'a mut Saturator,
 }
@@ -117,42 +117,9 @@ impl<'a> AIContext<'a> {
                 (new_ssa_block_id, true)
             };
 
-        // We incrementally maintain dominance information among created SSA blocks, so that we can
-        // create the version hierarchy properly. Dominance information for any given block may be
-        // out of date, just like any other analysis, but that's fine as long as 1. we eventually
-        // visit every block s.t. updates stop happening and 2. incorrect dominance info only flows
-        // "downward" to dependent blocks, which is true.
-        let idom = |id| self.dom_tree.get(&id).cloned().unwrap_or((id, 0));
-        use SSABlock::*;
-        match *self.saturator.ssa.get_block(ssa_block_id) {
-            Entry => {}
-            Guard(pred, _) | Return(pred, _) => {
-                let level = idom(pred).1;
-                self.dom_tree.insert(ssa_block_id, (pred, level + 1));
-            }
-            Merge(pred1, pred2, _) => {
-                let (mut parent1, mut level1) = idom(pred1);
-                let (mut parent2, mut level2) = idom(pred2);
-                // Traverse up the dominator tree until we find a common ancestor. This traversal
-                // goes bottom up, so this is the least common ancestor.
-                let dom = loop {
-                    if level1 < level2 {
-                        (parent2, level2) = idom(parent2);
-                    } else if level1 > level2 {
-                        (parent1, level1) = idom(parent1);
-                    } else if parent1 != parent2 {
-                        assert_ne!(level1, 1);
-                        assert_ne!(level2, 1);
-                        (parent1, level1) = idom(parent1);
-                        (parent2, level2) = idom(parent2);
-                    } else {
-                        break (parent1, level1);
-                    }
-                };
-                self.dom_tree.insert(ssa_block_id, dom);
-            }
-        }
-
+        // Update the dominator tree incrementally when adding new SSA blocks.
+        self.dom_tree
+            .visit_block(ssa_block_id, self.saturator.ssa.get_block(ssa_block_id));
         is_new
     }
 
@@ -246,6 +213,7 @@ impl<'a> AIContext<'a> {
                 let vars2 = &self.vars[&pred2];
                 let ssa_pred1 = self.to_ssa_block(pred1);
                 let ssa_pred2 = self.to_ssa_block(pred2);
+                assert_ne!(ssa_pred1, ssa_pred2);
                 let mut new_vars = HashMap::new();
                 let mut pair_to_vars: HashMap<(SSAId, SSAId), HashSet<Symbol>> = HashMap::new();
                 let mut knot_values = HashMap::new();
@@ -306,7 +274,7 @@ impl<'a> AIContext<'a> {
         self.update_new_block(block, SSABlock::Return(self.to_ssa_block(pred), values));
         self.saturator
             .ssa
-            .add_exit(self.name, self.blocks[&block].0);
+            .add_exit(self.name, self.to_ssa_block(block));
         // Returns have no successors;
         false
     }

@@ -31,6 +31,8 @@ impl Saturator {
 
     pub fn union(&mut self, x: SSAId, y: SSAId) {
         self.version.union_with(x, y, |id| {
+            // Record any SSAId whose canonical SSAId changed as a delta ID. Notably, the SSAId
+            // inserted here is itself *not* canonical.
             self.delta.insert(id);
         });
     }
