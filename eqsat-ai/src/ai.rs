@@ -30,6 +30,7 @@ pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonS
         vars: HashMap::new(),
         blocks: HashMap::new(),
         knot_map: KnotMap::default(),
+        dom_tree: HashMap::new(),
         saturator,
     };
     // A faster interpreter would walk the non-SSA CFG in WTO. We use a worklist for two reasons.
@@ -70,8 +71,13 @@ struct AIContext<'a> {
     // this happens, we need to allocate a fresh SSABlockId for the created SSA block, but we only
     // want to do this once, so the analysis terminates.
     blocks: HashMap<BlockId, (SSABlockId, bool)>,
+    // Intern sets of variables and locations to KnotIds (knots are our name for "symbolic variables"
+    // from Lemerre's paper).
     knot_map: KnotMap,
-
+    // Store immediate dominators among SSA blocks, as well as level in the dominator tree (to assist
+    // in computing LCAs).
+    dom_tree: HashMap<SSABlockId, (SSABlockId, usize)>,
+    // All building of the SSA program goes through the Saturator.
     saturator: &'a mut Saturator,
 }
 
@@ -93,22 +99,61 @@ impl<'a> AIContext<'a> {
     }
 
     fn update_new_block(&mut self, block_id: BlockId, new_ssa_block: SSABlock) -> bool {
-        if let Some((old_ssa_block_id, true)) = self.blocks.get(&block_id) {
-            // If we already created a new SSA block for this non-SSA block, re-use the SSABlockId.
-            self.saturator
-                .ssa
-                .set_block(new_ssa_block, *old_ssa_block_id);
-            // Since we re-used the SSABlockId, we don't need to update successors.
-            false
-        } else {
-            // If we haven't created a new SSA block for this non-SSA block (either because we
-            // haven't visited this non-SSA block yet or because we have and previously assigned it
-            // a non-fresh SSA block), then create a new SSABlockId and map the non-SSA block to it.
-            let new_ssa_block_id = self.saturator.ssa.add_block(new_ssa_block);
-            self.blocks.insert(block_id, (new_ssa_block_id, true));
-            // Since we changed the SSABlockId, we need to update successors.
-            true
+        let (ssa_block_id, is_new) =
+            if let Some((old_ssa_block_id, true)) = self.blocks.get(&block_id) {
+                // If we already created a new SSA block for this non-SSA block, re-use the SSABlockId.
+                self.saturator
+                    .ssa
+                    .set_block(new_ssa_block, *old_ssa_block_id);
+                // Since we re-used the SSABlockId, we don't need to update successors.
+                (*old_ssa_block_id, false)
+            } else {
+                // If we haven't created a new SSA block for this non-SSA block (either because we
+                // haven't visited this non-SSA block yet or because we have and previously assigned it
+                // a non-fresh SSA block), then create a new SSABlockId and map the non-SSA block to it.
+                let new_ssa_block_id = self.saturator.ssa.add_block(new_ssa_block);
+                self.blocks.insert(block_id, (new_ssa_block_id, true));
+                // Since we changed the SSABlockId, we need to update successors.
+                (new_ssa_block_id, true)
+            };
+
+        // We incrementally maintain dominance information among created SSA blocks, so that we can
+        // create the version hierarchy properly. Dominance information for any given block may be
+        // out of date, just like any other analysis, but that's fine as long as 1. we eventually
+        // visit every block s.t. updates stop happening and 2. incorrect dominance info only flows
+        // "downward" to dependent blocks, which is true.
+        let idom = |id| self.dom_tree.get(&id).cloned().unwrap_or((id, 0));
+        use SSABlock::*;
+        match *self.saturator.ssa.get_block(ssa_block_id) {
+            Entry => {}
+            Guard(pred, _) | Return(pred, _) => {
+                let level = idom(pred).1;
+                self.dom_tree.insert(ssa_block_id, (pred, level + 1));
+            }
+            Merge(pred1, pred2, _) => {
+                let (mut parent1, mut level1) = idom(pred1);
+                let (mut parent2, mut level2) = idom(pred2);
+                // Traverse up the dominator tree until we find a common ancestor. This traversal
+                // goes bottom up, so this is the least common ancestor.
+                let dom = loop {
+                    if level1 < level2 {
+                        (parent2, level2) = idom(parent2);
+                    } else if level1 > level2 {
+                        (parent1, level1) = idom(parent1);
+                    } else if parent1 != parent2 {
+                        assert_ne!(level1, 1);
+                        assert_ne!(level2, 1);
+                        (parent1, level1) = idom(parent1);
+                        (parent2, level2) = idom(parent2);
+                    } else {
+                        break (parent1, level1);
+                    }
+                };
+                self.dom_tree.insert(ssa_block_id, dom);
+            }
         }
+
+        is_new
     }
 
     fn update_block(&mut self, block_id: BlockId, ssa_block_id: SSABlockId) {
