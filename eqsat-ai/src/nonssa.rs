@@ -61,6 +61,7 @@ pub enum Block {
     Guard {
         pred: BlockId,
         cond: Expr,
+        direction: bool,
     },
     Assign {
         pred: BlockId,

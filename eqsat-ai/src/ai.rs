@@ -148,7 +148,11 @@ impl<'a> AIContext<'a> {
         use Block::*;
         match &nonssa.cfg[block] {
             Entry => self.visit_entry(nonssa, block),
-            Guard { pred, cond } => self.visit_guard(block, *pred, cond),
+            Guard {
+                pred,
+                cond,
+                direction,
+            } => self.visit_guard(block, *pred, cond, *direction),
             Assign { pred, var, expr } => self.visit_assign(block, *pred, *var, expr),
             Merge { pred1, pred2 } => self.visit_merge(block, *pred1, *pred2),
             Return { pred, exprs } => self.visit_return(block, *pred, exprs),
@@ -165,22 +169,26 @@ impl<'a> AIContext<'a> {
         self.update_new_block(block, SSABlock::Entry) | self.update_vars(block, vars)
     }
 
-    fn visit_guard(&mut self, block: BlockId, pred: BlockId, cond: &Expr) -> bool {
+    fn visit_guard(&mut self, block: BlockId, pred: BlockId, cond: &Expr, direction: bool) -> bool {
         let value = visit_expr(&mut self.saturator, cond, &self.vars[&pred]);
 
         // Saturate so that the condition is analyzed.
         self.saturator.saturate();
         let value = self.saturator.find(value);
+        let always_false = self.saturator.is_always_false(value);
+        let always_true = self.saturator.is_always_true(value);
 
-        if self.saturator.is_always_false(value) {
+        if always_false && direction || always_true && !direction {
             false
         } else {
             let mut block_changed = false;
-            if self.saturator.is_always_true(value) {
+            if always_false && !direction || always_true && direction {
                 self.update_block(block, self.to_ssa_block(pred));
             } else {
-                block_changed =
-                    self.update_new_block(block, SSABlock::Guard(self.to_ssa_block(pred), value));
+                block_changed = self.update_new_block(
+                    block,
+                    SSABlock::Guard(self.to_ssa_block(pred), value, direction),
+                );
             }
             // Guards make no assignments.
             block_changed | self.update_vars(block, self.vars[&pred].clone())

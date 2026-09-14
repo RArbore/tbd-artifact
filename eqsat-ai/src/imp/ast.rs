@@ -2,7 +2,7 @@ use core::fmt::{Display, Formatter, Result};
 
 use symbol_table::GlobalSymbol as Symbol;
 
-use crate::nonssa::{Block, BlockId, Expr, NonSSAFunc, UnaryOp};
+use crate::nonssa::{Block, BlockId, Expr, NonSSAFunc};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImpFunc {
@@ -99,13 +99,12 @@ impl ConvertContext {
                 let then_guard = self.add_block(Block::Guard {
                     pred,
                     cond: cond.clone(),
+                    direction: true,
                 });
                 let else_guard = self.add_block(Block::Guard {
                     pred,
-                    cond: Expr::Unary {
-                        op: UnaryOp::Not,
-                        input: Box::new(cond),
-                    },
+                    cond,
+                    direction: false,
                 });
                 let then_block = self.convert(then_guard, *then_body);
                 let else_block = self.convert(else_guard, *else_body);
@@ -121,13 +120,12 @@ impl ConvertContext {
                 let then_guard = self.add_block(Block::Guard {
                     pred: header,
                     cond: cond.clone(),
+                    direction: true,
                 });
                 let else_guard = self.add_block(Block::Guard {
                     pred: header,
-                    cond: Expr::Unary {
-                        op: UnaryOp::Not,
-                        input: Box::new(cond),
-                    },
+                    cond,
+                    direction: false,
                 });
                 let body_block = self.convert(then_guard, *body);
                 self.cfg[header] = if let Some(body_block) = body_block {
@@ -139,6 +137,7 @@ impl ConvertContext {
                     Block::Guard {
                         pred,
                         cond: Expr::Number { num: 1 },
+                        direction: true,
                     }
                 };
                 Some(else_guard)

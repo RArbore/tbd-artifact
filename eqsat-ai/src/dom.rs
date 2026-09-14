@@ -21,7 +21,7 @@ impl DomTree {
         use SSABlock::*;
         match block {
             Entry => {}
-            Guard(pred, _) | Return(pred, _) => {
+            Guard(pred, _, _) | Return(pred, _) => {
                 let level = idom(*pred).1;
                 self.0.insert(id, (*pred, level + 1));
             }
@@ -59,8 +59,8 @@ mod tests {
         use SSABlock::*;
         let mut dom = DomTree::default();
         dom.visit_block(0, &Entry);
-        dom.visit_block(1, &Guard(0, 0));
-        dom.visit_block(2, &Guard(0, 0));
+        dom.visit_block(1, &Guard(0, 0, true));
+        dom.visit_block(2, &Guard(0, 0, true));
         dom.visit_block(3, &Merge(1, 2, HashMap::new()));
         dom.visit_block(4, &Return(3, vec![]));
         assert_eq!(
@@ -79,11 +79,11 @@ mod tests {
         use SSABlock::*;
         let mut dom = DomTree::default();
         dom.visit_block(0, &Entry);
-        dom.visit_block(1, &Guard(0, 0));
+        dom.visit_block(1, &Guard(0, 0, true));
         dom.visit_block(2, &Merge(0, 1, HashMap::new()));
-        dom.visit_block(1, &Guard(2, 0));
+        dom.visit_block(1, &Guard(2, 0, true));
         dom.visit_block(2, &Merge(0, 1, HashMap::new()));
-        dom.visit_block(3, &Guard(2, 0));
+        dom.visit_block(3, &Guard(2, 0, true));
         dom.visit_block(4, &Return(3, vec![]));
         assert_eq!(
             dom,

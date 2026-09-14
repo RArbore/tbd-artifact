@@ -21,7 +21,7 @@ pub enum SSA {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SSABlock {
     Entry,
-    Guard(SSABlockId, SSAId),
+    Guard(SSABlockId, SSAId, bool),
     // The third field maps knots to SSA values corresponding to the two predecessors (think of these
     // like the inputs to a phi function).
     Merge(SSABlockId, SSABlockId, HashMap<KnotId, (SSAId, SSAId)>),
