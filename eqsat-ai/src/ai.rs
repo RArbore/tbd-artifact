@@ -7,8 +7,9 @@ use crate::dom::DomTree;
 use crate::nonssa::{Block, BlockId, Expr, NonSSAFunc};
 use crate::saturator::Saturator;
 use crate::ssa::{KnotId, SSA, SSABlock, SSABlockId, SSAId};
+use crate::version::Version;
 
-pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonSSAFunc) {
+pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonSSAFunc) -> Version {
     use Block::*;
     assert_matches!(nonssa.cfg[0], Entry);
     let mut deps: HashMap<BlockId, HashSet<BlockId>> = HashMap::new();
@@ -32,6 +33,7 @@ pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonS
         blocks: HashMap::new(),
         knot_map: KnotMap::default(),
         dom_tree: DomTree::default(),
+        version: Version::default(),
         saturator,
     };
     // A faster interpreter would walk the non-SSA CFG in WTO. We use a worklist for two reasons.
@@ -44,6 +46,7 @@ pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonS
             worklist.extend(deps[&block].iter());
         }
     }
+    context.version
 }
 
 // This is the data type that we would want to change to Okasaki maps to follow Lemerre's advice.
@@ -77,6 +80,8 @@ struct AIContext<'a> {
     knot_map: KnotMap,
     // Incrementally maintain dominator analysis.
     dom_tree: DomTree,
+    // Store the version outside of the saturator.
+    version: Version,
     // All building of the SSA program goes through the Saturator.
     saturator: &'a mut Saturator,
 }
@@ -164,19 +169,24 @@ impl<'a> AIContext<'a> {
             .params
             .iter()
             .enumerate()
-            .map(|(idx, param)| (*param, self.saturator.intern(SSA::Param(idx))))
+            .map(|(idx, param)| {
+                (
+                    *param,
+                    self.saturator.intern(SSA::Param(idx), &self.version),
+                )
+            })
             .collect();
         self.update_new_block(block, SSABlock::Entry) | self.update_vars(block, vars)
     }
 
     fn visit_guard(&mut self, block: BlockId, pred: BlockId, cond: &Expr, direction: bool) -> bool {
-        let value = visit_expr(&mut self.saturator, cond, &self.vars[&pred]);
+        let value = visit_expr(&mut self.saturator, &self.version, cond, &self.vars[&pred]);
 
         // Saturate so that the condition is analyzed.
-        self.saturator.saturate();
-        let value = self.saturator.find(value);
-        let always_false = self.saturator.is_always_false(value);
-        let always_true = self.saturator.is_always_true(value);
+        self.saturator.saturate(&mut self.version);
+        let value = self.version.find(value);
+        let always_false = self.saturator.is_always_false(value, &self.version);
+        let always_true = self.saturator.is_always_true(value, &self.version);
 
         if always_false && direction || always_true && !direction {
             false
@@ -198,7 +208,7 @@ impl<'a> AIContext<'a> {
     fn visit_assign(&mut self, block: BlockId, pred: BlockId, var: Symbol, expr: &Expr) -> bool {
         self.update_block(block, self.to_ssa_block(pred));
         let mut vars = self.vars[&pred].clone();
-        let value = visit_expr(&mut self.saturator, expr, &vars);
+        let value = visit_expr(&mut self.saturator, &self.version, expr, &vars);
         vars.insert(var, value);
         self.update_vars(block, vars)
     }
@@ -227,13 +237,13 @@ impl<'a> AIContext<'a> {
                 let mut knot_values = HashMap::new();
 
                 // Saturate because discovered equalities may help us avoid making knots.
-                self.saturator.saturate();
+                self.saturator.saturate(&mut self.version);
 
                 for (var, value1) in vars1 {
                     if let Some(value2) = vars2.get(var) {
                         // At this point, the variable mappings may no longer be canonical, so fix that.
-                        let value1 = self.saturator.find(*value1);
-                        let value2 = self.saturator.find(*value2);
+                        let value1 = self.version.find(*value1);
+                        let value2 = self.version.find(*value2);
                         if value1 == value2 {
                             new_vars.insert(*var, value1);
                         } else {
@@ -251,7 +261,7 @@ impl<'a> AIContext<'a> {
                     let knot_id = self
                         .knot_map
                         .intern_knot(block, vars.iter().cloned().collect());
-                    let knot = self.saturator.intern(SSA::Knot(knot_id));
+                    let knot = self.saturator.intern(SSA::Knot(knot_id), &self.version);
                     for var in vars {
                         new_vars.insert(var, knot);
                     }
@@ -268,17 +278,14 @@ impl<'a> AIContext<'a> {
         let pred_vars = &self.vars[&pred];
         let values: Vec<_> = exprs
             .into_iter()
-            .map(|expr| visit_expr(&mut self.saturator, expr, pred_vars))
+            .map(|expr| visit_expr(&mut self.saturator, &self.version, expr, pred_vars))
             .collect();
 
         // Saturate so that the returned SSAIds are analyzed.
-        self.saturator.saturate();
+        self.saturator.saturate(&mut self.version);
 
         // Re-collect the values so that they are canonical SSAIds.
-        let values = values
-            .into_iter()
-            .map(|id| self.saturator.find(id))
-            .collect();
+        let values = values.into_iter().map(|id| self.version.find(id)).collect();
         self.update_new_block(block, SSABlock::Return(self.to_ssa_block(pred), values));
         self.saturator
             .ssa
@@ -289,19 +296,19 @@ impl<'a> AIContext<'a> {
 }
 
 // Can't be a member of AIContext because we don't have field borrows.
-fn visit_expr(saturator: &mut Saturator, expr: &Expr, vars: &VarMap) -> SSAId {
+fn visit_expr(saturator: &mut Saturator, version: &Version, expr: &Expr, vars: &VarMap) -> SSAId {
     use Expr::*;
     match expr {
-        Number { num } => saturator.intern(SSA::Constant(*num)),
-        Variable { var } => saturator.find(vars[var]),
+        Number { num } => saturator.intern(SSA::Constant(*num), version),
+        Variable { var } => version.find(vars[var]),
         Unary { op, input } => {
-            let input = visit_expr(saturator, input, vars);
-            saturator.intern(SSA::Unary(*op, input))
+            let input = visit_expr(saturator, version, input, vars);
+            saturator.intern(SSA::Unary(*op, input), version)
         }
         Binary { op, lhs, rhs } => {
-            let lhs = visit_expr(saturator, lhs, vars);
-            let rhs = visit_expr(saturator, rhs, vars);
-            saturator.intern(SSA::Binary(*op, lhs, rhs))
+            let lhs = visit_expr(saturator, version, lhs, vars);
+            let rhs = visit_expr(saturator, version, rhs, vars);
+            saturator.intern(SSA::Binary(*op, lhs, rhs), version)
         }
     }
 }
@@ -314,36 +321,37 @@ mod tests {
 
     use super::*;
 
-    fn get_return_no_control_flow(text: &str) -> (SSAId, Saturator) {
+    fn get_return_no_control_flow(text: &str) -> (SSAId, Saturator, Version) {
         let parsed = ProgramParser::new().parse(text).unwrap();
         assert_eq!(parsed.len(), 1);
         let mut saturator = Saturator::default();
         for (name, ast) in parsed {
             let nonssa = convert_to_cfg(ast);
-            abstract_interpret(&mut saturator, name, &nonssa);
+            let version = abstract_interpret(&mut saturator, name, &nonssa);
+            assert_eq!(saturator.ssa.get_block(0), &SSABlock::Entry);
+            let SSABlock::Return(0, values) = saturator.ssa.get_block(1) else {
+                panic!("{:?}", saturator.ssa)
+            };
+            assert_eq!(values.len(), 1);
+            return (values[0], saturator, version);
         }
-        assert_eq!(saturator.ssa.get_block(0), &SSABlock::Entry);
-        let SSABlock::Return(0, values) = saturator.ssa.get_block(1) else {
-            panic!("{:?}", saturator.ssa)
-        };
-        assert_eq!(values.len(), 1);
-        (values[0], saturator)
+        panic!()
     }
 
-    fn get_return(text: &str) -> (SSAId, Saturator) {
+    fn get_return(text: &str) -> (SSAId, Saturator, Version) {
         let parsed = ProgramParser::new().parse(text).unwrap();
         assert_eq!(parsed.len(), 1);
         let mut saturator = Saturator::default();
         for (name, ast) in parsed {
             let nonssa = convert_to_cfg(ast);
-            abstract_interpret(&mut saturator, name, &nonssa);
+            let version = abstract_interpret(&mut saturator, name, &nonssa);
             assert_eq!(saturator.ssa.get_block(0), &SSABlock::Entry);
             let SSABlock::Return(_, values) = saturator.ssa.get_block(saturator.ssa.exit(name))
             else {
                 panic!("{:?}", saturator.ssa)
             };
             assert_eq!(values.len(), 1);
-            return (values[0], saturator);
+            return (values[0], saturator, version);
         }
         panic!()
     }
@@ -358,11 +366,11 @@ fn basic() {
 	return y + z;
 }
 "#;
-        let (value, mut saturator) = get_return_no_control_flow(text);
-        let five = saturator.intern(SSA::Constant(5));
-        let seven = saturator.intern(SSA::Constant(7));
-        let add = saturator.intern(SSA::Binary(BinaryOp::Add, five, seven));
-        let correct = saturator.intern(SSA::Binary(BinaryOp::Add, add, add));
+        let (value, mut saturator, version) = get_return_no_control_flow(text);
+        let five = saturator.intern(SSA::Constant(5), &version);
+        let seven = saturator.intern(SSA::Constant(7), &version);
+        let add = saturator.intern(SSA::Binary(BinaryOp::Add, five, seven), &version);
+        let correct = saturator.intern(SSA::Binary(BinaryOp::Add, add, add), &version);
         assert_eq!(correct, value);
     }
 
@@ -377,8 +385,8 @@ fn branch() {
 	return x;
 }
 "#;
-        let (value, mut saturator) = get_return_no_control_flow(text);
-        let correct = saturator.intern(SSA::Constant(9));
+        let (value, mut saturator, version) = get_return_no_control_flow(text);
+        let correct = saturator.intern(SSA::Constant(9), &version);
         assert_eq!(correct, value);
     }
 
@@ -391,8 +399,8 @@ fn add() {
 	return x + y;
 }
 "#;
-        let (value, mut saturator) = get_return_no_control_flow(text);
-        let correct = saturator.intern(SSA::Constant(14));
+        let (value, mut saturator, version) = get_return_no_control_flow(text);
+        let correct = saturator.intern(SSA::Constant(14), &version);
         assert_eq!(correct, value);
     }
 
@@ -410,8 +418,8 @@ fn loop() {
     return 7;
 }
 "#;
-        let (value, mut saturator) = get_return_no_control_flow(text);
-        let correct = saturator.intern(SSA::Constant(5));
+        let (value, mut saturator, version) = get_return_no_control_flow(text);
+        let correct = saturator.intern(SSA::Constant(5), &version);
         assert_eq!(correct, value);
     }
 
@@ -427,8 +435,8 @@ fn gvn(x) {
 	return x - y;
 }
 "#;
-        let (value, mut saturator) = get_return(text);
-        let correct = saturator.intern(SSA::Constant(0));
+        let (value, mut saturator, version) = get_return(text);
+        let correct = saturator.intern(SSA::Constant(0), &version);
         assert_eq!(correct, value);
     }
 }

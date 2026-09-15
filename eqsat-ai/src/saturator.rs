@@ -9,7 +9,6 @@ pub struct Saturator {
     // `Saturator` only deals with the data flow graph - allow direct access to `SSAProgram` for
     // other things like the control flow graph.
     pub ssa: SSAProgram,
-    version: Version,
 
     // What nodes have either been:
     // 1. Added to the hash-cons...
@@ -19,9 +18,9 @@ pub struct Saturator {
 }
 
 impl Saturator {
-    pub fn intern(&mut self, ssa: SSA) -> SSAId {
+    pub fn intern(&mut self, ssa: SSA, version: &Version) -> SSAId {
         let before = self.ssa.num_nodes();
-        let id = self.version.find_mut(self.ssa.intern(ssa));
+        let id = version.find(self.ssa.intern(ssa));
         let after = self.ssa.num_nodes();
         if before != after {
             self.delta.insert(id);
@@ -29,28 +28,24 @@ impl Saturator {
         id
     }
 
-    pub fn union(&mut self, x: SSAId, y: SSAId) {
-        self.version.union_with(x, y, |id| {
+    pub fn union(&mut self, x: SSAId, y: SSAId, version: &mut Version) {
+        version.union_with(x, y, |id| {
             // Record any SSAId whose canonical SSAId changed as a delta ID. Notably, the SSAId
             // inserted here is itself *not* canonical.
             self.delta.insert(id);
         });
     }
 
-    pub fn find(&mut self, id: SSAId) -> SSAId {
-        self.version.find_mut(id)
-    }
-
-    pub fn is_always_false(&mut self, id: SSAId) -> bool {
-        assert_eq!(id, self.version.find_mut(id));
-        let zero_id = self.intern(SSA::Constant(0));
+    pub fn is_always_false(&mut self, id: SSAId, version: &Version) -> bool {
+        assert_eq!(id, version.find(id));
+        let zero_id = self.intern(SSA::Constant(0), version);
         zero_id == id
     }
 
-    pub fn is_always_true(&mut self, id: SSAId) -> bool {
-        assert_eq!(id, self.version.find_mut(id));
+    pub fn is_always_true(&mut self, id: SSAId, version: &Version) -> bool {
+        assert_eq!(id, version.find(id));
         // TODO: This is kind of silly. We should either bake constants or use intervals or both.
-        self.version.set(id).any(|id| {
+        version.set(id).any(|id| {
             let SSA::Constant(cons) = self.ssa.get(id) else {
                 return false;
             };
@@ -58,35 +53,35 @@ impl Saturator {
         })
     }
 
-    pub fn saturate(&mut self) {
+    pub fn saturate(&mut self, version: &mut Version) {
         while !self.delta.is_empty() {
-            self.rebuild();
+            self.rebuild(version);
 
             // TODO: This rebuilds the tries from scratch. Do incremental trie construction!
             let mut tries = Tries::default();
             for id in 0..self.ssa.num_nodes() {
                 let node = self.ssa.get(id);
-                if self.version.is_canonical(node) {
-                    tries.insert_tuple(self.version.find_mut(id), node, id, false);
+                if version.is_canonical(node) {
+                    tries.insert_tuple(version.find_mut(id), node, id, false);
                 }
             }
             for id in &self.delta {
                 let node = self.ssa.get(*id);
-                if self.version.is_canonical(node) {
-                    tries.insert_tuple(self.version.find_mut(*id), node, *id, true);
+                if version.is_canonical(node) {
+                    tries.insert_tuple(version.find_mut(*id), node, *id, true);
                 }
             }
             self.delta.clear();
 
-            apply_rws(&tries, self);
+            apply_rws(&tries, self, version);
         }
     }
 
-    fn rebuild(&mut self) {
+    fn rebuild(&mut self, version: &mut Version) {
         let mut worklist = VecDeque::new();
         for id in &self.delta {
             // The only nodes in `delta` that should fail this check are new nodes.
-            if *id != self.version.find_mut(*id) {
+            if *id != version.find_mut(*id) {
                 for user in self.ssa.users(*id) {
                     worklist.push_back(*user);
                 }
@@ -95,11 +90,11 @@ impl Saturator {
 
         while let Some(id) = worklist.pop_front() {
             let old_ssa = self.ssa.get(id);
-            let new_ssa = self.version.canonicalize(old_ssa);
+            let new_ssa = version.canonicalize(old_ssa);
             // We should only ever insert a node into the worklist if it's non-canonical.
             assert_ne!(old_ssa, new_ssa);
             let new_id = self.ssa.intern(new_ssa);
-            self.version.union_with(id, new_id, |id| {
+            version.union_with(id, new_id, |id| {
                 self.delta.insert(id);
                 for user in self.ssa.users(id) {
                     worklist.push_back(*user);
@@ -117,24 +112,25 @@ mod tests {
 
     #[test]
     fn saturator1() {
+        let mut version = Version::default();
         let mut saturator = Saturator::default();
-        saturator.saturate();
+        saturator.saturate(&mut version);
         assert_eq!(saturator.ssa.num_nodes(), 0);
 
         use SSA::*;
-        let p1 = saturator.intern(Param(0));
-        let p2 = saturator.intern(Param(1));
-        saturator.saturate();
+        let p1 = saturator.intern(Param(0), &version);
+        let p2 = saturator.intern(Param(1), &version);
+        saturator.saturate(&mut version);
         // Param(0), Param(1)
         assert_eq!(saturator.ssa.num_nodes(), 2);
 
-        saturator.intern(Binary(BinaryOp::Add, p1, p2));
-        saturator.saturate();
+        saturator.intern(Binary(BinaryOp::Add, p1, p2), &version);
+        saturator.saturate(&mut version);
         // Param(0), Param(1), Add(p1, p2), Add(p2, p1)
         assert_eq!(saturator.ssa.num_nodes(), 4);
 
-        saturator.union(p1, p2);
-        saturator.saturate();
+        saturator.union(p1, p2, &mut version);
+        saturator.saturate(&mut version);
         // Param(0), Param(1), Add(p1, p2), Add(p2, p1), Add(p1, p1), Constant(2), Mul(c, p1), Mul(p1, c)
         assert_eq!(saturator.ssa.num_nodes(), 8);
     }
