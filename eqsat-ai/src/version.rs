@@ -35,6 +35,7 @@ struct SparseUnionFindSet<'a> {
 struct VersionSet<'a> {
     set_stack: Vec<SparseUnionFindSet<'a>>,
     version_stack: Vec<&'a Version>,
+    up_to: Option<Rc<Version>>,
 }
 
 impl SparseUnionFind {
@@ -234,7 +235,7 @@ impl Version {
             // current layer* (the `outer_id`s), but we want to call it on all IDs in the *multi-
             // layer* set of the losing ID.
             if let Some(parent) = self.parent.as_ref() {
-                for id in parent.set(outer_id) {
+                for id in parent.set(outer_id, None) {
                     fn_for_changed_set(id);
                 }
             } else {
@@ -243,10 +244,11 @@ impl Version {
         })
     }
 
-    pub fn set(&self, id: SSAId) -> impl Iterator<Item = SSAId> + '_ {
+    pub fn set(&self, id: SSAId, up_to: Option<Rc<Version>>) -> impl Iterator<Item = SSAId> + '_ {
         VersionSet {
             set_stack: vec![self.uf.set(self.find(id))],
             version_stack: vec![self],
+            up_to,
         }
     }
 
@@ -279,12 +281,22 @@ impl Iterator for VersionSet<'_> {
             let last_set = self.set_stack.last_mut()?;
             let last_version = *self.version_stack.last().unwrap();
             if let Some(id) = last_set.next() {
-                if let Some(parent_version) = last_version.parent.as_ref() {
+                if let Some(parent_version) = last_version.parent.as_ref()
+                    // If the `up_to` is some version, then only enumerate IDs that are canonical in
+                    // that version (assuming that version is an ancestor of the original version).
+                    && self
+                        .up_to
+                        .as_ref()
+                        .map(|up_to| !Rc::ptr_eq(up_to, parent_version))
+                        .unwrap_or(true)
+                {
                     self.set_stack.push(parent_version.uf.set(id));
                     self.version_stack.push(parent_version);
                 } else {
-                    // Yield the ID if we've traversed all the way to the root version - there are no
-                    // more layers to call `set` on the ID with.
+                    // If we reached the root without running into `up_to`, then `up_to` is not an
+                    // ancestor of the original version.
+                    assert!(last_version.parent.is_some() || self.up_to.is_none());
+                    // Yield the ID if we've traversed all the way to the root (or up to) version.
                     break Some(id);
                 }
             } else {
@@ -388,11 +400,11 @@ mod tests {
         assert_ne!(parent.find_mut(0), parent.find_mut(2));
         assert_eq!(
             HashSet::from_iter([0, 1]),
-            parent.set(1).collect::<HashSet<_>>()
+            parent.set(1, None).collect::<HashSet<_>>()
         );
         assert_eq!(
             HashSet::from_iter([2, 3]),
-            parent.set(2).collect::<HashSet<_>>()
+            parent.set(2, None).collect::<HashSet<_>>()
         );
 
         let parent = Rc::new(parent);
@@ -403,29 +415,33 @@ mod tests {
         assert_eq!(child.find(0), child.find(2));
         assert_eq!(child.find(0), child.find(3));
         assert_ne!(parent.find(0), parent.find(3));
-        assert_eq!(
-            HashSet::from_iter([0, 1, 2, 3]),
-            child.set(0).collect::<HashSet<_>>()
-        );
-        assert_eq!(
-            HashSet::from_iter([0, 1, 2, 3]),
-            child.set(1).collect::<HashSet<_>>()
-        );
-        assert_eq!(
-            HashSet::from_iter([0, 1, 2, 3]),
-            child.set(2).collect::<HashSet<_>>()
-        );
-        assert_eq!(
-            HashSet::from_iter([0, 1, 2, 3]),
-            child.set(3).collect::<HashSet<_>>()
-        );
+        for i in [0, 1, 2, 3] {
+            assert_eq!(
+                HashSet::from_iter([0, 1, 2, 3]),
+                child.set(i, None).collect::<HashSet<_>>()
+            );
+        }
         assert_eq!(
             HashSet::from_iter([0, 1]),
-            parent.set(1).collect::<HashSet<_>>()
+            parent.set(1, None).collect::<HashSet<_>>()
         );
         assert_eq!(
             HashSet::from_iter([2, 3]),
-            parent.set(2).collect::<HashSet<_>>()
+            parent.set(2, None).collect::<HashSet<_>>()
+        );
+        for i in [0, 1, 2, 3] {
+            assert_eq!(
+                HashSet::from_iter([0, 2]),
+                child
+                    .set(i, Some(Rc::clone(&parent)))
+                    .collect::<HashSet<_>>()
+            );
+        }
+        assert_eq!(
+            HashSet::from_iter([5]),
+            child
+                .set(5, Some(Rc::clone(&parent)))
+                .collect::<HashSet<_>>()
         );
     }
 

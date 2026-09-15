@@ -332,12 +332,12 @@ impl<'a> AIContext<'a> {
                     if let Some(value2) = vars2.get(var) {
                         // TODO: we should have a primitive to enumerate the set of canonical IDs
                         // with respect to some parent version. This is because the two predecessor
-                        // versions likely share some parents, and we don't need to enumerate down
-                        // into the shared parents.
+                        // versions likely share some ancestors, and we don't need to enumerate down
+                        // into the shared ancestors.
                         let value1 = pred1_version.as_ref().find(*value1);
                         let value2 = pred2_version.as_ref().find(*value2);
-                        let set1: HashSet<_> = pred1_version.as_ref().set(value1).collect();
-                        let set2: HashSet<_> = pred2_version.as_ref().set(value1).collect();
+                        let set1: HashSet<_> = pred1_version.as_ref().set(value1, None).collect();
+                        let set2: HashSet<_> = pred2_version.as_ref().set(value1, None).collect();
                         if !set1.is_disjoint(&set2) {
                             new_vars.insert(*var, value1);
                         } else {
