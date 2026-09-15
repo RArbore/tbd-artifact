@@ -183,14 +183,21 @@ impl<'a> AIContext<'a> {
         (is_new, ssa_block_id)
     }
 
-    fn update_block(&mut self, block_id: BlockId, ssa_block_id: SSABlockId) {
+    fn update_block(&mut self, block_id: BlockId, ssa_block_id: SSABlockId) -> bool {
         assert!(
             self.blocks
                 .get(&block_id)
                 .map(|(_, fresh)| !fresh)
                 .unwrap_or(true)
         );
-        self.blocks.insert(block_id, (ssa_block_id, false));
+        if let Some((old_ssa_block_id, old_is_specific)) =
+            self.blocks.insert(block_id, (ssa_block_id, false))
+        {
+            assert!(!old_is_specific);
+            old_ssa_block_id != ssa_block_id
+        } else {
+            true
+        }
     }
 
     fn is_bottom(&self, block_id: BlockId) -> bool {
@@ -256,13 +263,11 @@ impl<'a> AIContext<'a> {
         if always_false && direction || always_true && !direction {
             false
         } else {
-            let mut block_changed = false;
-            if always_false && !direction || always_true && direction {
-                self.update_block(block, ssa_pred);
+            let block_changed = if always_false && !direction || always_true && direction {
+                self.update_block(block, ssa_pred)
             } else {
                 let new_block =
                     self.update_new_block(block, SSABlock::Guard(ssa_pred, value, direction));
-                block_changed = new_block.0;
                 // When the guard is necessary, we want to assume the guard condition is either true
                 // or false (depending on `direction`) in the created version.
                 assume(
@@ -271,7 +276,8 @@ impl<'a> AIContext<'a> {
                     &mut self.saturator,
                     self.versions.get_mut(&new_block.1).unwrap(),
                 );
-            }
+                new_block.0
+            };
             // Guards make no assignments.
             block_changed | self.update_vars(block, self.vars[&pred].clone())
         }
@@ -279,7 +285,6 @@ impl<'a> AIContext<'a> {
 
     fn visit_assign(&mut self, block: BlockId, pred: BlockId, var: Symbol, expr: &Expr) -> bool {
         let ssa_pred = self.to_ssa_block(pred);
-        self.update_block(block, ssa_pred);
         let mut vars = self.vars[&pred].clone();
         let value = visit_expr(
             &mut self.saturator,
@@ -288,7 +293,7 @@ impl<'a> AIContext<'a> {
             &vars,
         );
         vars.insert(var, value);
-        self.update_vars(block, vars)
+        self.update_block(block, ssa_pred) | self.update_vars(block, vars)
     }
 
     fn visit_merge(&mut self, block: BlockId, pred1: BlockId, pred2: BlockId) -> bool {
@@ -297,12 +302,12 @@ impl<'a> AIContext<'a> {
         match (self.is_bottom(pred1), self.is_bottom(pred2)) {
             (true, true) => false,
             (false, true) => {
-                self.update_block(block, self.to_ssa_block(pred1));
-                self.update_vars(block, self.vars[&pred1].clone())
+                self.update_block(block, self.to_ssa_block(pred1))
+                    | self.update_vars(block, self.vars[&pred1].clone())
             }
             (true, false) => {
-                self.update_block(block, self.to_ssa_block(pred2));
-                self.update_vars(block, self.vars[&pred2].clone())
+                self.update_block(block, self.to_ssa_block(pred2))
+                    | self.update_vars(block, self.vars[&pred2].clone())
             }
             (false, false) => {
                 let vars1 = &self.vars[&pred1];
@@ -361,9 +366,11 @@ impl<'a> AIContext<'a> {
                     knot_values.insert(knot_id, (value1, value2));
                 }
 
-                self.update_new_block(block, SSABlock::Merge(ssa_pred1, ssa_pred2, knot_values))
+                let changed = self
+                    .update_new_block(block, SSABlock::Merge(ssa_pred1, ssa_pred2, knot_values))
                     .0
-                    | self.update_vars(block, new_vars)
+                    | self.update_vars(block, new_vars);
+                changed
             }
         }
     }
