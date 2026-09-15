@@ -58,8 +58,8 @@ pub fn abstract_interpret(
         .versions
         .into_iter()
         .map(|(block, state)| match state {
-            VersionState::Unanalyzed(version) => (block, Rc::new(version)),
-            VersionState::Analyzed(rc) => (block, rc),
+            VersionState::Mutable(version) => (block, Rc::new(version)),
+            VersionState::Immutable(rc) => (block, rc),
         })
         .collect()
 }
@@ -81,18 +81,18 @@ impl KnotMap {
 
 #[derive(Debug)]
 enum VersionState {
-    // If the version is un-analyzed, it needs to be owned directly so that it can be mutated.
-    Unanalyzed(Version),
-    // If the version is analyzed, it is stored in an Rc so its ownership is shared with children.
-    Analyzed(Rc<Version>),
+    // If the version is mutable, it is a leaf version.
+    Mutable(Version),
+    // If the version is immutable, it is a parent version of some child version.
+    Immutable(Rc<Version>),
 }
 
 impl AsRef<Version> for VersionState {
     fn as_ref(&self) -> &Version {
         use VersionState::*;
         match self {
-            Unanalyzed(version) => version,
-            Analyzed(version) => version,
+            Mutable(version) => version,
+            Immutable(version) => version,
         }
     }
 }
@@ -159,19 +159,22 @@ impl<'a> AIContext<'a> {
         self.dom_tree
             .visit_block(ssa_block_id, self.saturator.ssa.get_block(ssa_block_id));
         let unanalyzed = if let Some(idom) = self.dom_tree.idom(ssa_block_id) {
-            // All traversals of a CFG visit dominators before dominated blocks, and Guard, Merge,
-            // and Return blocks all analyze their predecessor versions before creating themselves,
-            // so the immediate dominator of this block should have an analyzed version.
-            let VersionState::Analyzed(idom_version) = self.versions.get(&idom).unwrap() else {
-                panic!()
-            };
-            Version::child(Rc::clone(idom_version))
+            let state = self.versions.get_mut(&idom).unwrap();
+            use VersionState::*;
+            match state {
+                Mutable(version) => {
+                    let rc = Rc::new(take(version));
+                    *state = Immutable(Rc::clone(&rc));
+                    Version::child(rc)
+                }
+                Immutable(rc) => Version::child(Rc::clone(rc)),
+            }
         } else {
             // The entry block gets the root version.
             Version::default()
         };
         self.versions
-            .insert(ssa_block_id, VersionState::Unanalyzed(unanalyzed));
+            .insert(ssa_block_id, VersionState::Mutable(unanalyzed));
 
         is_new
     }
@@ -245,18 +248,14 @@ impl<'a> AIContext<'a> {
         let always_false = self.saturator.is_always_false(value, pred_version.as_ref());
         let always_true = self.saturator.is_always_true(value, pred_version.as_ref());
         assert!(!always_false || !always_true);
-        println!("{} ({}): {} {}", cond, direction, always_false, always_true);
 
         if always_false && direction || always_true && !direction {
-            println!("guard unreachable");
             false
         } else {
             let mut block_changed = false;
             if always_false && !direction || always_true && direction {
-                println!("guard unnecessary");
                 self.update_block(block, ssa_pred);
             } else {
-                println!("guard necessary");
                 block_changed =
                     self.update_new_block(block, SSABlock::Guard(ssa_pred, value, direction));
             }
@@ -398,12 +397,8 @@ fn visit_expr(saturator: &mut Saturator, version: &Version, expr: &Expr, vars: &
 fn ensure_analyzed(saturator: &mut Saturator, version_state: &mut VersionState) {
     use VersionState::*;
     match version_state {
-        Unanalyzed(version) => {
-            saturator.saturate(version);
-            let rc = Rc::new(take(version));
-            *version_state = Analyzed(rc);
-        }
-        Analyzed(_) => {}
+        Mutable(version) => saturator.saturate(version),
+        Immutable(_) => {}
     }
 }
 
