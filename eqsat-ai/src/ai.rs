@@ -6,7 +6,7 @@ use std::rc::Rc;
 use symbol_table::GlobalSymbol as Symbol;
 
 use crate::dom::DomTree;
-use crate::nonssa::{Block, BlockId, Expr, NonSSAFunc};
+use crate::nonssa::{Block, BlockId, Expr, NonSSAFunc, UnaryOp};
 use crate::saturator::Saturator;
 use crate::ssa::{KnotId, SSA, SSABlock, SSABlockId, SSAId};
 use crate::version::Version;
@@ -136,15 +136,19 @@ impl<'a> AIContext<'a> {
         }
     }
 
-    fn update_new_block(&mut self, block_id: BlockId, new_ssa_block: SSABlock) -> bool {
-        let (ssa_block_id, is_new) =
+    fn update_new_block(
+        &mut self,
+        block_id: BlockId,
+        new_ssa_block: SSABlock,
+    ) -> (bool, SSABlockId) {
+        let (is_new, ssa_block_id) =
             if let Some((old_ssa_block_id, true)) = self.blocks.get(&block_id) {
                 // If we already created a new SSA block for this non-SSA block, re-use the SSABlockId.
                 self.saturator
                     .ssa
                     .set_block(new_ssa_block, *old_ssa_block_id);
                 // Since we re-used the SSABlockId, we don't need to update successors.
-                (*old_ssa_block_id, false)
+                (false, *old_ssa_block_id)
             } else {
                 // If we haven't created a new SSA block for this non-SSA block (either because we
                 // haven't visited this non-SSA block yet or because we have and previously assigned it
@@ -152,7 +156,7 @@ impl<'a> AIContext<'a> {
                 let new_ssa_block_id = self.saturator.ssa.add_block(new_ssa_block);
                 self.blocks.insert(block_id, (new_ssa_block_id, true));
                 // Since we changed the SSABlockId, we need to update successors.
-                (new_ssa_block_id, true)
+                (true, new_ssa_block_id)
             };
 
         // Update the dominator tree incrementally when adding new SSA blocks.
@@ -176,7 +180,7 @@ impl<'a> AIContext<'a> {
         self.versions
             .insert(ssa_block_id, VersionState::Mutable(unanalyzed));
 
-        is_new
+        (is_new, ssa_block_id)
     }
 
     fn update_block(&mut self, block_id: BlockId, ssa_block_id: SSABlockId) {
@@ -229,7 +233,7 @@ impl<'a> AIContext<'a> {
                 )
             })
             .collect();
-        self.update_new_block(block, SSABlock::Entry) | self.update_vars(block, vars)
+        self.update_new_block(block, SSABlock::Entry).0 | self.update_vars(block, vars)
     }
 
     fn visit_guard(&mut self, block: BlockId, pred: BlockId, cond: &Expr, direction: bool) -> bool {
@@ -256,8 +260,17 @@ impl<'a> AIContext<'a> {
             if always_false && !direction || always_true && direction {
                 self.update_block(block, ssa_pred);
             } else {
-                block_changed =
+                let new_block =
                     self.update_new_block(block, SSABlock::Guard(ssa_pred, value, direction));
+                block_changed = new_block.0;
+                // When the guard is necessary, we want to assume the guard condition is either true
+                // or false (depending on `direction`) in the created version.
+                assume(
+                    value,
+                    direction,
+                    &mut self.saturator,
+                    self.versions.get_mut(&new_block.1).unwrap(),
+                );
             }
             // Guards make no assignments.
             block_changed | self.update_vars(block, self.vars[&pred].clone())
@@ -312,12 +325,15 @@ impl<'a> AIContext<'a> {
 
                 for (var, value1) in vars1 {
                     if let Some(value2) = vars2.get(var) {
-                        // TODO: We should really check if the sets in the respective versions have
-                        // any SSAIds in common, since there's no guarantee that each version would
-                        // pick the same canonical SSAId.
+                        // TODO: we should have a primitive to enumerate the set of canonical IDs
+                        // with respect to some parent version. This is because the two predecessor
+                        // versions likely share some parents, and we don't need to enumerate down
+                        // into the shared parents.
                         let value1 = pred1_version.as_ref().find(*value1);
                         let value2 = pred2_version.as_ref().find(*value2);
-                        if value1 == value2 {
+                        let set1: HashSet<_> = pred1_version.as_ref().set(value1).collect();
+                        let set2: HashSet<_> = pred2_version.as_ref().set(value1).collect();
+                        if !set1.is_disjoint(&set2) {
                             new_vars.insert(*var, value1);
                         } else {
                             // Just collect the variables where a knot must be made, because...
@@ -346,6 +362,7 @@ impl<'a> AIContext<'a> {
                 }
 
                 self.update_new_block(block, SSABlock::Merge(ssa_pred1, ssa_pred2, knot_values))
+                    .0
                     | self.update_vars(block, new_vars)
             }
         }
@@ -398,6 +415,22 @@ fn ensure_analyzed(saturator: &mut Saturator, version_state: &mut VersionState) 
     use VersionState::*;
     match version_state {
         Mutable(version) => saturator.saturate(version),
+        Immutable(_) => {}
+    }
+}
+
+fn assume(id: SSAId, direction: bool, saturator: &mut Saturator, version_state: &mut VersionState) {
+    use VersionState::*;
+    match version_state {
+        Mutable(version) => {
+            let zero = saturator.intern(SSA::Constant(0), version);
+            if direction {
+                let not = saturator.intern(SSA::Unary(UnaryOp::Not, id), version);
+                saturator.union(not, zero, version);
+            } else {
+                saturator.union(id, zero, version);
+            }
+        }
         Immutable(_) => {}
     }
 }
