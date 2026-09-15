@@ -396,7 +396,7 @@ mod tests {
         );
 
         let parent = Rc::new(parent);
-        let mut child = Version::child(parent.clone());
+        let mut child = Version::child(Rc::clone(&parent));
         child.union(0, 3);
         assert_eq!(child.find_mut(0), child.find_mut(1));
         assert_eq!(child.find_mut(2), child.find_mut(3));
@@ -436,7 +436,7 @@ mod tests {
         parent.union(2, 3);
 
         let parent = Rc::new(parent);
-        let mut child = Version::child(parent.clone());
+        let mut child = Version::child(Rc::clone(&parent));
         let mut set = HashSet::new();
         child.union_with(0, 3, |id| {
             set.insert(id);

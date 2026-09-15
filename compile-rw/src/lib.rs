@@ -70,6 +70,27 @@ struct NeededTrie {
     column_order: Vec<Vec<usize>>,
 }
 
+impl Display for Rewrite {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        write!(f, "(rw {} {})", self.lhs, self.rhs)
+    }
+}
+
+impl Display for Pattern {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        use Pattern::*;
+        match self {
+            Variable(var) => write!(f, "{}", var),
+            Literal(lit) => write!(f, "{}", lit),
+            RustExpr(expr) => write!(f, "`{}`", expr),
+            Wildcard => write!(f, "_"),
+            Constant(input) => write!(f, "(Constant {})", input),
+            Unary(op, input) => write!(f, "({} {})", op, input),
+            Binary(op, lhs, rhs) => write!(f, "({} {} {})", op, lhs, rhs),
+        }
+    }
+}
+
 impl Display for Relation {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         use Relation::*;
@@ -285,7 +306,7 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
 
 fn emit_wcoj(
     query: &Query,
-    rhs: &Pattern,
+    rewrite: &Rewrite,
     delta_idx: usize,
     atoms_containing: &AtomsContaining,
     var_order: &Vec<Symbol>,
@@ -294,18 +315,20 @@ fn emit_wcoj(
     // Emits one nested loop of the WCOJ.
     fn emit_wcoj_helper(
         query: &Query,
-        rhs: &Pattern,
+        rewrite: &Rewrite,
         delta_idx: usize,
         atoms_containing: &AtomsContaining,
         var_order: &[Symbol],
+        curr_var: usize,
     ) -> TokenStream {
-        if let Some((var, rest)) = var_order.split_first() {
+        if curr_var < var_order.len() {
+            let var = var_order[curr_var];
             let var_iden = format_ident!("{}", var.as_str());
 
             // Figure out which involved trie is smallest.
             let mut smallest = quote! {};
             let mut first = true;
-            for (atom_idx, _) in &atoms_containing[var] {
+            for (atom_idx, _) in &atoms_containing[&var] {
                 let trievar = format_ident!("trie_{}", atom_idx);
                 if first {
                     first = false;
@@ -327,7 +350,7 @@ fn emit_wcoj(
 
             // Check that the scanned value is in the other tries. At the same time, redefine
             // `trie_N` for the next level of the WCOJ.
-            let probe: TokenStream = atoms_containing[var]
+            let probe: TokenStream = atoms_containing[&var]
                 .iter()
                 .map(|(atom_idx, _)| {
                     let trievar = format_ident!("trie_{}", atom_idx);
@@ -345,11 +368,18 @@ fn emit_wcoj(
 
             // Cast the variable to its Rust type, so that the code for the RHS of the rule can use
             // the variable as its proper type.
-            let rust_ty = format_ident!("{}", query.types[var].as_str());
+            let rust_ty = format_ident!("{}", query.types[&var].as_str());
             let cast = quote! { let #var_iden = *#var_iden as #rust_ty; };
 
             // Emit the rest of the WCOJ.
-            let nested = emit_wcoj_helper(query, rhs, delta_idx, atoms_containing, rest);
+            let nested = emit_wcoj_helper(
+                query,
+                rewrite,
+                delta_idx,
+                atoms_containing,
+                var_order,
+                curr_var + 1,
+            );
 
             quote! {
             #smallest
@@ -359,12 +389,27 @@ fn emit_wcoj(
                 #nested
             } }
         } else {
+            // Log the rule application.
+            let rule_str = format!("{}", rewrite);
+            let dump_vars: TokenStream = var_order
+                .into_iter()
+                .map(|var| {
+                    let var_str = var.as_str();
+                    let var_iden = format_ident!("{}", var_str);
+                    quote! { println!("{}: {}", #var_str, #var_iden); }
+                })
+                .collect();
+
             // Make the nodes in the e-graph for the RHS.
-            let build_rhs = build_pattern(rhs);
+            let build_rhs = build_pattern(&rewrite.rhs);
 
             // Union the built RHS with the root of the LHS.
             let root_lhs = format_ident!("{}", query.root.as_str());
             quote! {
+                if DUMP {
+                    println!("Applied {}.", #rule_str);
+                    #dump_vars
+                }
                 let root_rhs = #build_rhs;
                 saturator.union(#root_lhs, root_rhs, version);
             }
@@ -379,7 +424,7 @@ fn emit_wcoj(
             quote! { let #trievar = &tries.#needed_trie; }
         })
         .collect();
-    let block = emit_wcoj_helper(query, rhs, delta_idx, atoms_containing, var_order);
+    let block = emit_wcoj_helper(query, rewrite, delta_idx, atoms_containing, var_order, 0);
     quote! {
         {
             #init
@@ -565,7 +610,7 @@ pub fn compile_rw(contents: &str) -> String {
             let rule_tries = &query_tries[query_idx][delta_idx];
             wcojs.extend(emit_wcoj(
                 query,
-                &rws[query_idx].rhs,
+                &rws[query_idx],
                 delta_idx,
                 atoms_containing,
                 var_order,
@@ -584,7 +629,7 @@ pub fn compile_rw(contents: &str) -> String {
 
         #trie_struct
 
-        pub fn apply_rws(tries: &Tries, saturator: &mut Saturator, version: &mut Version) {
+        pub fn apply_rws<const DUMP: bool>(tries: &Tries, saturator: &mut Saturator, version: &mut Version) {
             #wcojs
         }
     };

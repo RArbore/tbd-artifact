@@ -73,7 +73,7 @@ impl Saturator {
             }
             self.delta.clear();
 
-            apply_rws(&tries, self, version);
+            apply_rws::<false>(&tries, self, version);
         }
     }
 
