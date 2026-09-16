@@ -7,7 +7,7 @@ pub mod ssa;
 pub mod trie;
 pub mod version;
 
-#[allow(non_snake_case, unused_mut, unused_variables)]
+#[allow(non_snake_case, path_statements, unused_mut, unused_variables)]
 pub mod rw {
     include!(concat!(env!("OUT_DIR"), "/rw.rs"));
 }

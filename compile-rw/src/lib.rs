@@ -9,7 +9,7 @@ use proc_macro2::{Ident, Span, TokenStream};
 use quote::{ToTokens, TokenStreamExt, format_ident, quote};
 use symbol_table::GlobalSymbol as Symbol;
 
-use grammar::RewritesParser;
+use grammar::RulesParser;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Type {
@@ -24,9 +24,9 @@ enum Literal {
 }
 
 #[derive(Debug, Clone)]
-struct Rewrite {
-    lhs: Pattern,
-    rhs: Pattern,
+struct Rule {
+    lhs: Vec<Pattern>,
+    rhs: Vec<Pattern>,
 }
 
 #[derive(Debug, Clone)]
@@ -34,27 +34,29 @@ enum Pattern {
     Variable(Symbol),
     Literal(Literal),
     RustExpr(Symbol),
+    Union(Box<Pattern>, Box<Pattern>),
     Wildcard,
     Constant {
         ty: Type,
         input: Box<Pattern>,
+        label: Option<Symbol>,
     },
     Unary {
         op: Symbol,
         input: Box<Pattern>,
+        label: Option<Symbol>,
     },
     Binary {
         op: Symbol,
         lhs: Box<Pattern>,
         rhs: Box<Pattern>,
+        label: Option<Symbol>,
     },
 }
 
 // The LHS patterns of rewrites are converted into relational queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Query {
-    // The variable for the root ID of the pattern. Needed so we know what to union with.
-    root: Symbol,
     // We need to record the types of variables when building the query so that we can use those
     // variables as their proper types in the RHS of each rule.
     types: HashMap<Symbol, Symbol>,
@@ -124,23 +126,67 @@ impl ToTokens for Literal {
     }
 }
 
-impl Display for Rewrite {
+impl Display for Rule {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        write!(f, "(rw {} {})", self.lhs, self.rhs)
+        let mut lhs = String::new();
+        let mut rhs = String::new();
+        for pattern in &self.lhs {
+            if lhs.is_empty() {
+                lhs = format!("({}", pattern);
+            } else {
+                lhs = format!("{} {}", lhs, pattern);
+            }
+        }
+        for pattern in &self.rhs {
+            if rhs.is_empty() {
+                rhs = format!("({}", pattern);
+            } else {
+                rhs = format!("{} {}", rhs, pattern);
+            }
+        }
+        write!(f, "(rule {}) {}))", lhs, rhs)
+    }
+}
+
+impl Pattern {
+    fn label_mut(&mut self) -> &mut Option<Symbol> {
+        match self {
+            Pattern::Constant { label, .. }
+            | Pattern::Unary { label, .. }
+            | Pattern::Binary { label, .. } => label,
+            _ => panic!(),
+        }
     }
 }
 
 impl Display for Pattern {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        let label_colon = |label: &Option<Symbol>| {
+            label
+                .map(|label| format!("{}:", label))
+                .unwrap_or("".into())
+        };
         use Pattern::*;
         match self {
             Variable(var) => write!(f, "{}", var),
             Literal(lit) => write!(f, "{}", lit),
             RustExpr(expr) => write!(f, "`{}`", expr),
+            Union(lhs, rhs) => write!(f, "(union {} {})", lhs, rhs),
             Wildcard => write!(f, "_"),
-            Constant { ty, input } => write!(f, "(Constant[{}] {})", ty.rust_type(), input),
-            Unary { op, input } => write!(f, "({} {})", op, input),
-            Binary { op, lhs, rhs } => write!(f, "({} {} {})", op, lhs, rhs),
+            Constant { ty, input, label } => write!(
+                f,
+                "{}(Constant[{}] {})",
+                label_colon(label),
+                ty.rust_type(),
+                input
+            ),
+            Unary { op, input, label } => write!(f, "{}({} {})", label_colon(label), op, input),
+            Binary {
+                op,
+                lhs,
+                rhs,
+                label,
+            } => write!(f, "{}({} {} {})", label_colon(label), op, lhs, rhs),
         }
     }
 }
@@ -196,7 +242,7 @@ impl ToTokens for NeededTrie {
 }
 
 // Flatten a nested pattern into a relational qeury - see "Relational E-matching" by Zhang et al.
-fn pattern_to_query(pattern: &Pattern) -> Query {
+fn patterns_to_query(patterns: &[Pattern]) -> Query {
     fn record_type(term: Term, ty: Symbol, types: &mut HashMap<Symbol, Symbol>) {
         if let Term::Variable(var) = term {
             types.insert(var, ty);
@@ -214,10 +260,13 @@ fn pattern_to_query(pattern: &Pattern) -> Query {
             Pattern::RustExpr(_) => {
                 panic!("can't evaluate Rust expression on left-hand side of rule")
             }
+            Pattern::Union(_, _) => {
+                panic!("can't evaluate union on left-hand side of rule")
+            }
             Pattern::Wildcard => Term::Wildcard,
-            Pattern::Constant { ty, input } => {
+            Pattern::Constant { ty, input, label } => {
                 let input = pattern_to_query_helper(input, atoms, types);
-                let var = format!("_root_{}", atoms.len()).into();
+                let var = label.unwrap_or_else(|| format!("_root_{}", atoms.len()).into());
                 let root = Term::Variable(var);
                 let atom = Atom {
                     relation: Relation::Constant(*ty),
@@ -228,9 +277,9 @@ fn pattern_to_query(pattern: &Pattern) -> Query {
                 record_type(input, ty.rust_type(), types);
                 root
             }
-            Pattern::Unary { op, input } => {
+            Pattern::Unary { op, input, label } => {
                 let input = pattern_to_query_helper(input, atoms, types);
-                let var = format!("_root_{}", atoms.len()).into();
+                let var = label.unwrap_or_else(|| format!("_root_{}", atoms.len()).into());
                 let root = Term::Variable(var);
                 let atom = Atom {
                     relation: Relation::Unary(*op),
@@ -241,10 +290,15 @@ fn pattern_to_query(pattern: &Pattern) -> Query {
                 record_type(input, "SSAId".into(), types);
                 root
             }
-            Pattern::Binary { op, lhs, rhs } => {
+            Pattern::Binary {
+                op,
+                lhs,
+                rhs,
+                label,
+            } => {
                 let lhs = pattern_to_query_helper(lhs, atoms, types);
                 let rhs = pattern_to_query_helper(rhs, atoms, types);
-                let var = format!("_root_{}", atoms.len()).into();
+                let var = label.unwrap_or_else(|| format!("_root_{}", atoms.len()).into());
                 let root = Term::Variable(var);
                 let atom = Atom {
                     relation: Relation::Binary(*op),
@@ -261,9 +315,10 @@ fn pattern_to_query(pattern: &Pattern) -> Query {
 
     let mut atoms = vec![];
     let mut types = HashMap::new();
-    let root = pattern_to_query_helper(pattern, &mut atoms, &mut types);
-    let Term::Variable(root) = root else { panic!() };
-    Query { root, types, atoms }
+    for pattern in patterns {
+        pattern_to_query_helper(pattern, &mut atoms, &mut types);
+    }
+    Query { types, atoms }
 }
 
 // Determine the variable order for the WCOJ over a query.
@@ -326,8 +381,23 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
             let expr = syn::parse_str::<syn::Expr>(expr.as_str()).unwrap();
             quote! { { #expr } }
         }
+        Pattern::Union(lhs, rhs) => {
+            let lhs = build_pattern(lhs);
+            let rhs = build_pattern(rhs);
+            quote! {
+                {
+                    let lhs = #lhs;
+                    let rhs = #rhs;
+                    saturator.union(lhs, rhs, version)
+                }
+            }
+        }
         Pattern::Wildcard => panic!(),
-        Pattern::Constant { ty, input } => {
+        Pattern::Constant {
+            ty,
+            input,
+            label: _,
+        } => {
             let input = build_pattern(input);
             let cons_variant = format_ident!("{}", ty.compiler_type().as_str());
             quote! {
@@ -337,7 +407,11 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
                 }
             }
         }
-        Pattern::Unary { op, input } => {
+        Pattern::Unary {
+            op,
+            input,
+            label: _,
+        } => {
             let op_iden = format_ident!("{}", op.as_str());
             let input = build_pattern(input);
             quote! {
@@ -347,7 +421,12 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
                 }
             }
         }
-        Pattern::Binary { op, lhs, rhs } => {
+        Pattern::Binary {
+            op,
+            lhs,
+            rhs,
+            label: _,
+        } => {
             let op_iden = format_ident!("{}", op.as_str());
             let lhs = build_pattern(lhs);
             let rhs = build_pattern(rhs);
@@ -364,7 +443,7 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
 
 fn emit_wcoj(
     query: &Query,
-    rewrite: &Rewrite,
+    rewrite: &Rule,
     delta_idx: usize,
     atoms_containing: &AtomsContaining,
     var_order: &Vec<Symbol>,
@@ -373,7 +452,7 @@ fn emit_wcoj(
     // Emits one nested loop of the WCOJ.
     fn emit_wcoj_helper(
         query: &Query,
-        rewrite: &Rewrite,
+        rewrite: &Rule,
         delta_idx: usize,
         atoms_containing: &AtomsContaining,
         var_order: &[Symbol],
@@ -464,17 +543,19 @@ fn emit_wcoj(
                 .collect();
 
             // Make the nodes in the e-graph for the RHS.
-            let build_rhs = build_pattern(&rewrite.rhs);
+            let execute_rhs: TokenStream = rewrite
+                .rhs
+                .iter()
+                .map(|pattern| build_pattern(pattern))
+                .collect();
 
             // Union the built RHS with the root of the LHS.
-            let root_lhs = format_ident!("{}", query.root.as_str());
             quote! {
                 if DUMP {
                     println!("Applied {}.", #rule_str);
                     #dump_vars
                 }
-                let root_rhs = #build_rhs;
-                saturator.union(#root_lhs, root_rhs, version);
+                #execute_rhs;
             }
         }
     }
@@ -542,10 +623,10 @@ fn emit_insert_into_trie(trie: &NeededTrie) -> TokenStream {
 }
 
 pub fn compile_rw(contents: &str) -> String {
-    let rws = RewritesParser::new().parse(contents).unwrap();
+    let rws = RulesParser::new().parse(contents).unwrap();
 
     // Implementing the LHS matching of each rule is the "hard" part.
-    let queries: Vec<_> = rws.iter().map(|rw| pattern_to_query(&rw.lhs)).collect();
+    let queries: Vec<_> = rws.iter().map(|rw| patterns_to_query(&rw.lhs)).collect();
 
     // First, we need to determine the order that variables are matched in each query. We determine
     // this order differently for every delta query of each original query. Each delta query's order
@@ -709,15 +790,14 @@ mod tests {
     #[test]
     fn pattern_to_query1() {
         let rw = "(rw (Add a (Constant[i64] 0)) a)";
-        let rw = RewritesParser::new().parse(rw).unwrap();
-        let query = pattern_to_query(&rw[0].lhs);
+        let rw = RulesParser::new().parse(rw).unwrap();
+        let query = patterns_to_query(&rw[0].lhs);
         assert_eq!(
             query,
             Query {
-                root: "_root_1".into(),
                 types: HashMap::from_iter([
                     ("_root_0".into(), "SSAId".into()),
-                    ("_root_1".into(), "SSAId".into()),
+                    ("_root_lhs".into(), "SSAId".into()),
                     ("a".into(), "SSAId".into())
                 ]),
                 atoms: vec![
@@ -731,7 +811,7 @@ mod tests {
                     Atom {
                         relation: Relation::Binary("Add".into()),
                         terms: vec![
-                            Term::Variable("_root_1".into()),
+                            Term::Variable("_root_lhs".into()),
                             Term::Variable("a".into()),
                             Term::Variable("_root_0".into())
                         ]
@@ -744,12 +824,12 @@ mod tests {
     #[test]
     fn var_order1() {
         let rw = "(rw (Add a (Sub b a)) b)";
-        let rw = RewritesParser::new().parse(rw).unwrap();
-        let query = pattern_to_query(&rw[0].lhs);
+        let rw = RulesParser::new().parse(rw).unwrap();
+        let query = patterns_to_query(&rw[0].lhs);
         let var_order = variable_order(&query, 0);
         assert!(
-            var_order == vec!["a".into(), "_root_0".into(), "b".into(), "_root_1".into()]
-                || var_order == vec!["_root_0".into(), "a".into(), "b".into(), "_root_1".into()]
+            var_order == vec!["a".into(), "_root_0".into(), "b".into(), "_root_lhs".into()]
+                || var_order == vec!["_root_0".into(), "a".into(), "b".into(), "_root_lhs".into()]
         );
         let atoms_containing = atoms_containing(&query);
         assert_eq!(
@@ -773,7 +853,7 @@ mod tests {
             [2].into_iter().collect::<Vec<_>>()
         );
         assert_eq!(
-            atoms_containing[&Symbol::from("_root_1")][&1],
+            atoms_containing[&Symbol::from("_root_lhs")][&1],
             [0].into_iter().collect::<Vec<_>>()
         );
     }

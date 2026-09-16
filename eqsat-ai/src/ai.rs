@@ -652,6 +652,23 @@ fn flow(x: bool) {
     }
 
     #[test]
+    fn ai9() {
+        let text = r#"
+fn flow(x: bool) {
+    if !!!x {
+        y = x;
+    } else {
+        y = !x;
+    }
+    return y;
+}
+"#;
+        let (value, mut saturator, version) = get_return(text);
+        let correct = saturator.intern(SSA::Constant(Constant::Bool(false)), &version);
+        assert_eq!(correct, value);
+    }
+
+    #[test]
     #[should_panic]
     fn bad_types1() {
         let text = r#"

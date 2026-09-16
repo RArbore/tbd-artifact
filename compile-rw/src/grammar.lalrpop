@@ -2,16 +2,29 @@ use core::str::FromStr;
 
 use symbol_table::GlobalSymbol as Symbol;
 
-use crate::{Literal, Pattern, Rewrite, Type};
+use crate::{Literal, Pattern, Rule, Type};
 
 grammar();
 
-pub Rewrites: Vec<Rewrite> = {
-    Rewrite* => <>,
+pub Rules: Vec<Rule> = {
+    Rule* => <>,
 }
 
-Rewrite: Rewrite = {
-    "(" "rw" <lhs:Pattern> <rhs:Pattern> ")" => Rewrite { lhs, rhs },
+Rule: Rule = {
+    "(" "rw" <mut lhs:Pattern> <rhs:Pattern> ")" => {
+        let root_lhs = lhs.label_mut();
+        let label = match root_lhs {
+            Some(label) => *label,
+            None => {
+                 let label = "_root_lhs".into();
+                 *root_lhs = Some(label);
+                 label
+            }
+        };
+        let rhs = Pattern::Union(Box::new(Pattern::Variable(label)), Box::new(rhs));
+        Rule { lhs: vec![lhs], rhs: vec![rhs] }
+    },
+    "(" "rule" "(" <lhs:Pattern*> ")" "(" <rhs:Pattern*> ")" ")" => Rule { lhs, rhs },
 }
 
 Pattern: Pattern = {
@@ -19,10 +32,14 @@ Pattern: Pattern = {
     Num => Pattern::Literal(Literal::I64(<>)),
     Bool => Pattern::Literal(Literal::Bool(<>)),
     RustExpr => Pattern::RustExpr(<>),
+    "(" "union" <lhs:Pattern> <rhs:Pattern> ")" => Pattern::Union(Box::new(lhs), Box::new(rhs)),
     "_" => Pattern::Wildcard,
-    "(" "Constant" "[" <ty:Type> "]" <cons:Pattern> ")" => Pattern::Constant { ty, input: Box::new(cons) },
-    "(" <op:Iden> <inp:Pattern> ")" => Pattern::Unary { op, input: Box::new(inp) },
-    "(" <op:Iden> <lhs:Pattern> <rhs:Pattern> ")" => Pattern::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+    "(" "Constant" "[" <ty:Type> "]" <cons:Pattern> ")" => Pattern::Constant { ty, input: Box::new(cons), label: None },
+    "(" <op:Iden> <inp:Pattern> ")" => Pattern::Unary { op, input: Box::new(inp), label: None },
+    "(" <op:Iden> <lhs:Pattern> <rhs:Pattern> ")" => Pattern::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs), label: None },
+    <label:Iden> ":" "(" "Constant" "[" <ty:Type> "]" <cons:Pattern> ")" => Pattern::Constant { ty, input: Box::new(cons), label: Some(label) },
+    <label:Iden> ":" "(" <op:Iden> <inp:Pattern> ")" => Pattern::Unary { op, input: Box::new(inp), label: Some(label) },
+    <label:Iden> ":" "(" <op:Iden> <lhs:Pattern> <rhs:Pattern> ")" => Pattern::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs), label: Some(label) },
 }
 
 Type: Type = {
@@ -37,13 +54,3 @@ Bool: bool = {
     "true" => true,
 }
 RustExpr: Symbol = <re:r#"`(\\\\|\\`|[^`\\])*`"#> => re[1..re.len() - 1].into();
-
-List<T>: Vec<T> = {
-    <mut v:(<T> ",")*> <e:T?> => match e {
-        None => v,
-        Some(e) => {
-            v.push(e);
-            v
-        }
-    }
-};

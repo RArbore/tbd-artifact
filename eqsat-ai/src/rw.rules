@@ -46,3 +46,5 @@
 (rw (LE (Constant[i64] a) (Constant[i64] b)) (Constant[bool] `a <= b`))
 (rw (GT (Constant[i64] a) (Constant[i64] b)) (Constant[bool] `a > b`))
 (rw (GE (Constant[i64] a) (Constant[i64] b)) (Constant[bool] `a >= b`))
+
+(rule (a:(Constant[bool] b) a:(Not c)) ((union c (Constant[bool] `!b`))))
