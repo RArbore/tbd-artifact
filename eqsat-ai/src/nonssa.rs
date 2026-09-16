@@ -1,21 +1,14 @@
 use core::fmt::{Display, Formatter, Result};
 
-use derive_more::FromStr;
-use serde::Serialize;
-use spytial::SpytialDecorators;
 use symbol_table::GlobalSymbol as Symbol;
 
-#[derive(
-    Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, FromStr, Serialize, SpytialDecorators,
-)]
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub enum UnaryOp {
     Neg,
     Not,
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, FromStr, Serialize, SpytialDecorators,
-)]
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub enum BinaryOp {
     Add,
     Sub,
@@ -28,11 +21,7 @@ pub enum BinaryOp {
     GE,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, SpytialDecorators)]
-#[attribute(field = "num")]
-#[attribute(field = "op")]
-#[attribute(field = "var")]
-#[hide_atom(selector = "i32 + string + UnaryOp + BinaryOp")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
     Number {
         num: i32,
@@ -53,9 +42,7 @@ pub enum Expr {
 
 pub type BlockId = usize;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, SpytialDecorators)]
-#[attribute(field = "var")]
-#[hide_atom(selector = "u64")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Block {
     Entry,
     Guard {
@@ -78,9 +65,7 @@ pub enum Block {
     },
 }
 
-#[derive(Debug, Serialize, SpytialDecorators)]
-#[attribute(field = "name")]
-#[hide_atom(selector = "string")]
+#[derive(Debug)]
 pub struct NonSSAFunc {
     pub name: Symbol,
     pub params: Vec<Symbol>,

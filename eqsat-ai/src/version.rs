@@ -474,6 +474,10 @@ mod tests {
                 HashSet::from_iter([child.find(i)]),
                 child.set(i, Some(1)).collect::<HashSet<_>>()
             );
+            assert_eq!(
+                HashSet::from_iter([parent.find(i)]),
+                parent.set(i, Some(0)).collect::<HashSet<_>>()
+            );
         }
     }
 

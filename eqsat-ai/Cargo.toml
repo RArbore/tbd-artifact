@@ -12,10 +12,7 @@ name = "experiment"
 
 [dependencies]
 clap = { version = "*", features = ["derive"] }
-derive_more = { version = "*", features = ["from_str"] }
 lalrpop-util = { version = "*", features = ["lexer", "unicode"] }
-serde = { version = "*", features = ["derive"] }
-spytial = "*"
 symbol_table = { version = "*", features = ["global", "serde"] }
 
 [build-dependencies]

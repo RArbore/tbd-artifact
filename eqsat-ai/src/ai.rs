@@ -270,6 +270,7 @@ impl<'a> AIContext<'a> {
             } else {
                 let (block_changed, new_block) =
                     self.update_new_block(block, SSABlock::Guard(ssa_pred, value, direction));
+
                 // When the guard is necessary, we want to assume the guard condition is either true
                 // or false (depending on `direction`) in the created version.
                 assume(
