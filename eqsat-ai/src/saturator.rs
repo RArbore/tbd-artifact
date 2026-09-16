@@ -1,5 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 
+use crate::nonssa::Constant;
 use crate::rw::{Tries, apply_rws};
 use crate::ssa::{SSA, SSAId, SSAProgram};
 use crate::version::Version;
@@ -38,19 +39,12 @@ impl Saturator {
 
     pub fn is_always_false(&mut self, id: SSAId, version: &Version) -> bool {
         assert_eq!(id, version.find(id));
-        let zero_id = self.intern(SSA::Constant(0), version);
-        zero_id == id
+        self.intern(SSA::Constant(Constant::Bool(false)), version) == id
     }
 
     pub fn is_always_true(&mut self, id: SSAId, version: &Version) -> bool {
         assert_eq!(id, version.find(id));
-        // TODO: This is kind of silly. We should either bake constants or use intervals or both.
-        version.set(id, None).any(|id| {
-            let SSA::Constant(cons) = self.ssa.get(id) else {
-                return false;
-            };
-            cons != 0
-        })
+        self.intern(SSA::Constant(Constant::Bool(true)), version) == id
     }
 
     pub fn saturate(&mut self, version: &mut Version) {
@@ -106,7 +100,7 @@ impl Saturator {
 
 #[cfg(test)]
 mod tests {
-    use crate::nonssa::BinaryOp;
+    use crate::nonssa::{BinaryOp, Type};
 
     use super::*;
 
@@ -118,8 +112,8 @@ mod tests {
         assert_eq!(saturator.ssa.num_nodes(), 0);
 
         use SSA::*;
-        let p1 = saturator.intern(Param(0), &version);
-        let p2 = saturator.intern(Param(1), &version);
+        let p1 = saturator.intern(Param(0, Type::I64), &version);
+        let p2 = saturator.intern(Param(1, Type::I64), &version);
         saturator.saturate(&mut version);
         // Param(0), Param(1)
         assert_eq!(saturator.ssa.num_nodes(), 2);

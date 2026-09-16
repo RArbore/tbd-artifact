@@ -1,10 +1,20 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::nonssa::Constant;
 use crate::ssa::{SSA, SSAId};
 
 // The relational tuple representation is separate from the hashcons, so this doesn't have to be the
 // same type as SSAId.
 pub type TupleValue = u32;
+
+impl Into<TupleValue> for Constant {
+    fn into(self) -> TupleValue {
+        match self {
+            Constant::Bool(val) => val as TupleValue,
+            Constant::I64(val) => val as TupleValue,
+        }
+    }
+}
 
 pub fn tuple_field(id: SSAId, ssa: SSA, column: usize) -> TupleValue {
     if column == 0 {
@@ -14,9 +24,9 @@ pub fn tuple_field(id: SSAId, ssa: SSA, column: usize) -> TupleValue {
     match ssa {
         Constant(cons) => {
             assert_eq!(column, 1);
-            cons as TupleValue
+            cons.into()
         }
-        Param(idx) => {
+        Param(idx, _) => {
             assert_eq!(column, 1);
             idx as TupleValue
         }

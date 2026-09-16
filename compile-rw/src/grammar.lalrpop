@@ -2,7 +2,7 @@ use core::str::FromStr;
 
 use symbol_table::GlobalSymbol as Symbol;
 
-use crate::{Rewrite, Pattern};
+use crate::{Literal, Pattern, Rewrite, Type};
 
 grammar();
 
@@ -16,16 +16,26 @@ Rewrite: Rewrite = {
 
 Pattern: Pattern = {
     Iden => Pattern::Variable(<>),
-    Num => Pattern::Literal(<>),
+    Num => Pattern::Literal(Literal::I64(<>)),
+    Bool => Pattern::Literal(Literal::Bool(<>)),
     RustExpr => Pattern::RustExpr(<>),
     "_" => Pattern::Wildcard,
-    "(" "Constant" <cons:Pattern> ")" => Pattern::Constant(Box::new(cons)),
+    "(" "Constant" "[" <ty:Type> "]" <cons:Pattern> ")" => Pattern::Constant(ty, Box::new(cons)),
     "(" <op:Iden> <inp:Pattern> ")" => Pattern::Unary(op, Box::new(inp)),
     "(" <op:Iden> <lhs:Pattern> <rhs:Pattern> ")" => Pattern::Binary(op, Box::new(lhs), Box::new(rhs)),
 }
 
+Type: Type = {
+    "i64" => Type::I64,
+    "bool" => Type::Bool,
+}
+
 Iden: Symbol = r"[a-zA-Z][a-zA-Z0-9_]*" => Symbol::from(<>);
-Num: i32 = r"-?[0-9]+" => i32::from_str(<>).unwrap();
+Num: i64 = r"-?[0-9]+" => i64::from_str(<>).unwrap();
+Bool: bool = {
+    "false" => false,
+    "true" => true,
+}
 RustExpr: Symbol = <re:r#"`(\\\\|\\`|[^`\\])*`"#> => re[1..re.len() - 1].into();
 
 List<T>: Vec<T> = {

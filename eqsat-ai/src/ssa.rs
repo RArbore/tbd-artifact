@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use symbol_table::GlobalSymbol as Symbol;
 
-use crate::nonssa::{BinaryOp, UnaryOp};
+use crate::nonssa::{BinaryOp, Constant, Type, UnaryOp};
 
 pub type SSAId = usize;
 pub type SSABlockId = usize;
@@ -9,8 +9,8 @@ pub type KnotId = usize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SSA {
-    Constant(i32),
-    Param(usize),
+    Constant(Constant),
+    Param(usize, Type),
     Unary(UnaryOp, SSAId),
     Binary(BinaryOp, SSAId, SSAId),
     // Knots serve the function of phi functions in our SSA form. They can be thought of as block

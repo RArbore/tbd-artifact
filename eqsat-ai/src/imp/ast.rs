@@ -2,12 +2,12 @@ use core::fmt::{Display, Formatter, Result};
 
 use symbol_table::GlobalSymbol as Symbol;
 
-use crate::nonssa::{Block, BlockId, Expr, NonSSAFunc};
+use crate::nonssa::{Block, BlockId, Constant, Expr, NonSSAFunc, Type};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImpFunc {
     pub name: Symbol,
-    pub params: Vec<Symbol>,
+    pub params: Vec<(Symbol, Type)>,
     pub body: ImpStmt,
 }
 
@@ -136,7 +136,9 @@ impl ConvertContext {
                 } else {
                     Block::Guard {
                         pred,
-                        cond: Expr::Number { num: 1 },
+                        cond: Expr::Constant {
+                            val: Constant::Bool(true),
+                        },
                         direction: true,
                     }
                 };
@@ -167,7 +169,8 @@ impl Display for ImpFunc {
             if idx != 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{}", self.params[idx].as_str())?;
+            let param_decl = self.params[idx];
+            write!(f, "{}: {}", param_decl.0.as_str(), param_decl.1)?;
         }
         write!(f, ") {}", self.body)
     }
@@ -221,29 +224,29 @@ mod tests {
     #[test]
     fn parse1() {
         let program = r#"
-fn test1(x) return x;
-fn test2(y) { y = 3; return y + 1; }
+fn test1(x: bool) return x;
+fn test2(y: i64) { y = 3; return y + 1; }
 "#;
         let parsed = ProgramParser::new().parse(&program).unwrap();
         assert_eq!(
             format!("{}", parsed[&Symbol::from("test1")]),
-            "fn test1(x) return x;"
+            "fn test1(x: bool) return x;"
         );
         assert_eq!(
             format!("{}", parsed[&Symbol::from("test2")]),
-            "fn test2(y) { y = 3; return (y + 1); }"
+            "fn test2(y: i64) { y = 3; return (y + 1); }"
         );
     }
 
     #[test]
     fn parse2() {
         let program = r#"
-fn test(x, y) { while x < 7 { x = x + 1; } if y < x { return y; } return x + 9; }
+fn test(x: i64, y: i64) { while x < 7 { x = x + 1; } if y < x { return y; } return x + 9; }
 "#;
         let parsed = ProgramParser::new().parse(&program).unwrap();
         assert_eq!(
             format!("{}", parsed[&Symbol::from("test")]),
-            "fn test(x, y) { while (x < 7) { { x = (x + 1); } } if (y < x) { { return y; } } else { { } } return (x + 9); }"
+            "fn test(x: i64, y: i64) { while (x < 7) { { x = (x + 1); } } if (y < x) { { return y; } } else { { } } return (x + 9); }"
         );
     }
 }

@@ -3,6 +3,18 @@ use core::fmt::{Display, Formatter, Result};
 use symbol_table::GlobalSymbol as Symbol;
 
 #[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
+pub enum Type {
+    Bool,
+    I64,
+}
+
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
+pub enum Constant {
+    Bool(bool),
+    I64(i64),
+}
+
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub enum UnaryOp {
     Neg,
     Not,
@@ -23,8 +35,8 @@ pub enum BinaryOp {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
-    Number {
-        num: i32,
+    Constant {
+        val: Constant,
     },
     Variable {
         var: Symbol,
@@ -68,14 +80,32 @@ pub enum Block {
 #[derive(Debug)]
 pub struct NonSSAFunc {
     pub name: Symbol,
-    pub params: Vec<Symbol>,
+    pub params: Vec<(Symbol, Type)>,
     pub cfg: Vec<Block>,
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        match self {
+            Type::Bool => write!(f, "bool"),
+            Type::I64 => write!(f, "i64"),
+        }
+    }
+}
+
+impl Display for Constant {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        match self {
+            Constant::Bool(val) => val.fmt(f),
+            Constant::I64(val) => val.fmt(f),
+        }
+    }
 }
 
 impl Display for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
-            Expr::Number { num } => num.fmt(f),
+            Expr::Constant { val } => val.fmt(f),
             Expr::Variable { var } => var.as_str().fmt(f),
             Expr::Unary { op, input } => write!(f, "{}{}", op, input),
             Expr::Binary { op, lhs, rhs } => write!(f, "({} {} {})", lhs, op, rhs),

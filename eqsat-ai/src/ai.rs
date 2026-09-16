@@ -6,7 +6,7 @@ use std::rc::Rc;
 use symbol_table::GlobalSymbol as Symbol;
 
 use crate::dom::DomTree;
-use crate::nonssa::{Block, BlockId, Expr, NonSSAFunc, UnaryOp};
+use crate::nonssa::{Block, BlockId, Constant, Expr, NonSSAFunc};
 use crate::saturator::Saturator;
 use crate::ssa::{KnotId, SSA, SSABlock, SSABlockId, SSAId};
 use crate::version::Version;
@@ -233,12 +233,13 @@ impl<'a> AIContext<'a> {
             .params
             .iter()
             .enumerate()
-            .map(|(idx, param)| {
+            .map(|(idx, (param, ty))| {
                 (
                     *param,
                     // There is no version for before the entry. That's fine, because we won't have
                     // equated function parameters with anything yet.
-                    self.saturator.intern(SSA::Param(idx), &Version::root(0)),
+                    self.saturator
+                        .intern(SSA::Param(idx, *ty), &Version::root(0)),
                 )
             })
             .collect();
@@ -414,7 +415,7 @@ impl<'a> AIContext<'a> {
 fn visit_expr(saturator: &mut Saturator, version: &Version, expr: &Expr, vars: &VarMap) -> SSAId {
     use Expr::*;
     match expr {
-        Number { num } => saturator.intern(SSA::Constant(*num), version),
+        Constant { val } => saturator.intern(SSA::Constant(*val), version),
         Variable { var } => version.find(vars[var]),
         Unary { op, input } => {
             let input = visit_expr(saturator, version, input, vars);
@@ -440,13 +441,8 @@ fn assume(id: SSAId, direction: bool, saturator: &mut Saturator, version_state: 
     let VersionState::Mutable(version) = version_state else {
         panic!()
     };
-    let zero = saturator.intern(SSA::Constant(0), version);
-    if direction {
-        let not = saturator.intern(SSA::Unary(UnaryOp::Not, id), version);
-        saturator.union(not, zero, version);
-    } else {
-        saturator.union(id, zero, version);
-    }
+    let val = saturator.intern(SSA::Constant(Constant::Bool(direction)), version);
+    saturator.union(id, val, version);
 }
 
 fn union(a: SSAId, b: SSAId, saturator: &mut Saturator, version_state: &mut VersionState) -> SSAId {
@@ -510,8 +506,8 @@ fn basic() {
 }
 "#;
         let (value, mut saturator, version) = get_return_no_control_flow(text);
-        let five = saturator.intern(SSA::Constant(5), &version);
-        let seven = saturator.intern(SSA::Constant(7), &version);
+        let five = saturator.intern(SSA::Constant(Constant::I64(5)), &version);
+        let seven = saturator.intern(SSA::Constant(Constant::I64(7)), &version);
         let add = saturator.intern(SSA::Binary(BinaryOp::Add, five, seven), &version);
         let correct = saturator.intern(SSA::Binary(BinaryOp::Add, add, add), &version);
         assert_eq!(correct, value);
@@ -522,14 +518,14 @@ fn basic() {
         let text = r#"
 fn branch() {
 	x = 5;
-    if x {
+    if x == 5 {
         x = 9;
     }
 	return x;
 }
 "#;
         let (value, mut saturator, version) = get_return_no_control_flow(text);
-        let correct = saturator.intern(SSA::Constant(9), &version);
+        let correct = saturator.intern(SSA::Constant(Constant::I64(9)), &version);
         assert_eq!(correct, value);
     }
 
@@ -543,7 +539,7 @@ fn add() {
 }
 "#;
         let (value, mut saturator, version) = get_return_no_control_flow(text);
-        let correct = saturator.intern(SSA::Constant(14), &version);
+        let correct = saturator.intern(SSA::Constant(Constant::I64(14)), &version);
         assert_eq!(correct, value);
     }
 
@@ -562,14 +558,14 @@ fn loop() {
 }
 "#;
         let (value, mut saturator, version) = get_return_no_control_flow(text);
-        let correct = saturator.intern(SSA::Constant(5), &version);
+        let correct = saturator.intern(SSA::Constant(Constant::I64(5)), &version);
         assert_eq!(correct, value);
     }
 
     #[test]
     fn ai5() {
         let text = r#"
-fn gvn(x) {
+fn gvn(x: i64) {
 	y = x;
 	while x > 0 {
 		x = x - 1;
@@ -579,7 +575,7 @@ fn gvn(x) {
 }
 "#;
         let (value, mut saturator, version) = get_return(text);
-        let correct = saturator.intern(SSA::Constant(0), &version);
+        let correct = saturator.intern(SSA::Constant(Constant::I64(0)), &version);
         assert_eq!(correct, value);
     }
 
@@ -604,24 +600,32 @@ fn loop() {
 }
 "#;
         let (value, mut saturator, version) = get_return_no_control_flow(text);
-        let correct = saturator.intern(SSA::Constant(2), &version);
+        let correct = saturator.intern(SSA::Constant(Constant::I64(2)), &version);
         assert_eq!(correct, value);
     }
 
     #[test]
     fn ai7() {
         let text = r#"
-fn flow(x) {
+fn flow(x: bool) {
     if x {
-        y = !x;
+        if x {
+            y = 42;
+        } else {
+            y = 999;
+        }
     } else {
-        y = x;
+        if x {
+            y = 999;
+        } else {
+            y = 42;
+        }
     }
     return y;
 }
 "#;
         let (value, mut saturator, version) = get_return(text);
-        let correct = saturator.intern(SSA::Constant(0), &version);
+        let correct = saturator.intern(SSA::Constant(Constant::I64(42)), &version);
         assert_eq!(correct, value);
     }
 }

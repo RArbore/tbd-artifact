@@ -11,7 +11,17 @@ use symbol_table::GlobalSymbol as Symbol;
 
 use grammar::RewritesParser;
 
-type Literal = i32;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Type {
+    Bool,
+    I64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Literal {
+    Bool(bool),
+    I64(i64),
+}
 
 #[derive(Debug, Clone)]
 struct Rewrite {
@@ -25,7 +35,7 @@ enum Pattern {
     Literal(Literal),
     RustExpr(Symbol),
     Wildcard,
-    Constant(Box<Pattern>),
+    Constant(Type, Box<Pattern>),
     Unary(Symbol, Box<Pattern>),
     Binary(Symbol, Box<Pattern>, Box<Pattern>),
 }
@@ -43,7 +53,7 @@ struct Query {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Relation {
-    Constant,
+    Constant(Type),
     Unary(Symbol),
     Binary(Symbol),
 }
@@ -57,7 +67,7 @@ struct Atom {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Term {
     Variable(Symbol),
-    Constant(Literal),
+    Literal(Literal),
     Wildcard,
 }
 
@@ -68,6 +78,40 @@ struct NeededTrie {
     constants: Vec<(usize, Literal)>,
     // For each step in the order, store a set of columns that must hold the same value.
     column_order: Vec<Vec<usize>>,
+}
+
+impl Type {
+    fn rust_type(&self) -> Symbol {
+        match self {
+            Type::Bool => "bool".into(),
+            Type::I64 => "i64".into(),
+        }
+    }
+
+    fn compiler_type(&self) -> Symbol {
+        match self {
+            Type::Bool => "Bool".into(),
+            Type::I64 => "I64".into(),
+        }
+    }
+}
+
+impl Display for Literal {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        match self {
+            Literal::Bool(val) => val.fmt(f),
+            Literal::I64(val) => val.fmt(f),
+        }
+    }
+}
+
+impl ToTokens for Literal {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            Literal::Bool(val) => val.to_tokens(tokens),
+            Literal::I64(val) => val.to_tokens(tokens),
+        }
+    }
 }
 
 impl Display for Rewrite {
@@ -84,7 +128,7 @@ impl Display for Pattern {
             Literal(lit) => write!(f, "{}", lit),
             RustExpr(expr) => write!(f, "`{}`", expr),
             Wildcard => write!(f, "_"),
-            Constant(input) => write!(f, "(Constant {})", input),
+            Constant(ty, input) => write!(f, "(Constant[{}] {})", ty.rust_type(), input),
             Unary(op, input) => write!(f, "({} {})", op, input),
             Binary(op, lhs, rhs) => write!(f, "({} {} {})", op, lhs, rhs),
         }
@@ -95,7 +139,7 @@ impl Display for Relation {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         use Relation::*;
         match self {
-            Constant => write!(f, "Constant"),
+            Constant(ty) => write!(f, "Constant_{}", ty.compiler_type()),
             Unary(op) | Binary(op) => write!(f, "{}", op),
         }
     }
@@ -105,7 +149,7 @@ impl Atom {
     fn constants(&self) -> Vec<(usize, Literal)> {
         let mut constants = vec![];
         for (term_idx, term) in self.terms.iter().enumerate() {
-            if let Term::Constant(cons) = term {
+            if let Term::Literal(cons) = term {
                 constants.push((term_idx, *cons));
             }
         }
@@ -156,22 +200,22 @@ fn pattern_to_query(pattern: &Pattern) -> Query {
     ) -> Term {
         match pattern {
             Pattern::Variable(var) => Term::Variable(*var),
-            Pattern::Literal(cons) => Term::Constant(*cons),
+            Pattern::Literal(cons) => Term::Literal(*cons),
             Pattern::RustExpr(_) => {
                 panic!("can't evaluate Rust expression on left-hand side of rule")
             }
             Pattern::Wildcard => Term::Wildcard,
-            Pattern::Constant(input) => {
+            Pattern::Constant(ty, input) => {
                 let input = pattern_to_query_helper(input, atoms, types);
                 let var = format!("_root_{}", atoms.len()).into();
                 let root = Term::Variable(var);
                 let atom = Atom {
-                    relation: Relation::Constant,
+                    relation: Relation::Constant(*ty),
                     terms: vec![root, input],
                 };
                 atoms.push(atom);
                 record_type(root, "SSAId".into(), types);
-                record_type(input, "i32".into(), types);
+                record_type(input, ty.rust_type(), types);
                 root
             }
             Pattern::Unary(op, input) => {
@@ -264,18 +308,22 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
             let var_iden = format_ident!("{}", var.as_str());
             quote! { #var_iden }
         }
-        Pattern::Literal(cons) => quote! { #cons },
+        Pattern::Literal(cons) => match cons {
+            Literal::Bool(val) => quote! { #val },
+            Literal::I64(val) => quote! { #val },
+        },
         Pattern::RustExpr(expr) => {
             let expr = syn::parse_str::<syn::Expr>(expr.as_str()).unwrap();
             quote! { { #expr } }
         }
         Pattern::Wildcard => panic!(),
-        Pattern::Constant(input) => {
+        Pattern::Constant(ty, input) => {
             let input = build_pattern(input);
+            let cons_variant = format_ident!("{}", ty.compiler_type().as_str());
             quote! {
                 {
                     let input = #input;
-                    saturator.intern(SSA::Constant(input), version)
+                    saturator.intern(SSA::Constant(Constant::#cons_variant(input)), version)
                 }
             }
         }
@@ -436,10 +484,9 @@ fn emit_wcoj(
 // Emit the code that tries to insert a node into a trie. This emits both the consistency checks
 // needed and the code that actually inserts the node into the trie.
 fn emit_insert_into_trie(trie: &NeededTrie) -> TokenStream {
-    let check_constants = trie
-        .constants
-        .iter()
-        .map(|(idx, cons)| quote! { tuple_field(canon_id, node, #idx) == #cons as TupleValue });
+    let check_constants = trie.constants.iter().map(|(idx, cons)| {
+        quote! { tuple_field(canon_id, node, #idx) == #cons as TupleValue }
+    });
     let check_column_identities = trie
         .column_order
         .iter()
@@ -543,8 +590,10 @@ pub fn compile_rw(contents: &str) -> String {
     let trie_constant_insert: TokenStream = needed_tries
         .iter()
         .map(|trie| {
-            if let Relation::Constant = trie.relation {
-                emit_insert_into_trie(trie)
+            if let Relation::Constant(ty) = trie.relation {
+                let variant = format_ident!("{}", ty.compiler_type().as_str());
+                let insert = emit_insert_into_trie(trie);
+                quote! { if let Constant::#variant(_) = cons { #insert } }
             } else {
                 quote! {}
             }
@@ -582,19 +631,18 @@ pub fn compile_rw(contents: &str) -> String {
 
         impl Tries {
             pub fn insert_tuple(&mut self, canon_id: SSAId, node: SSA, non_canon_id: SSAId, is_delta: bool) {
-                use SSA::*;
                 match node {
-                    Constant(_) => {
+                    SSA::Constant(cons) => {
                         #trie_constant_insert
                     }
-                    Param(_) => {}
-                    Unary(op, _) => {
+                    SSA::Param(_, _) => {}
+                    SSA::Unary(op, _) => {
                         #trie_unary_insert
                     }
-                    Binary(op, _, _) => {
+                    SSA::Binary(op, _, _) => {
                         #trie_binary_insert
                     }
-                    Knot(_) => {}
+                    SSA::Knot(_) => {}
                 }
             }
         }
@@ -621,7 +669,7 @@ pub fn compile_rw(contents: &str) -> String {
 
     // Finally, emit the top level rewriting function.
     let rw_fn = quote! {
-        use crate::nonssa::{BinaryOp, UnaryOp};
+        use crate::nonssa::{BinaryOp, Constant, UnaryOp};
         use crate::saturator::Saturator;
         use crate::ssa::{SSA, SSAId};
         use crate::trie::{Trie, TupleValue, tuple_field};
@@ -645,7 +693,7 @@ mod tests {
 
     #[test]
     fn pattern_to_query1() {
-        let rw = "(rw (Add a (Constant 0)) a)";
+        let rw = "(rw (Add a (Constant[i64] 0)) a)";
         let rw = RewritesParser::new().parse(rw).unwrap();
         let query = pattern_to_query(&rw[0].lhs);
         assert_eq!(
@@ -659,8 +707,11 @@ mod tests {
                 ]),
                 atoms: vec![
                     Atom {
-                        relation: Relation::Constant,
-                        terms: vec![Term::Variable("_root_0".into()), Term::Constant(0)]
+                        relation: Relation::Constant(Type::I64),
+                        terms: vec![
+                            Term::Variable("_root_0".into()),
+                            Term::Literal(Literal::I64(0))
+                        ]
                     },
                     Atom {
                         relation: Relation::Binary("Add".into()),

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use symbol_table::GlobalSymbol as Symbol;
 
 use crate::imp::ast::{ImpFunc, ImpStmt};
-use crate::nonssa::{BinaryOp, Expr, UnaryOp};
+use crate::nonssa::{BinaryOp, Constant, Expr, UnaryOp, Type};
 
 grammar();
 
@@ -13,7 +13,11 @@ pub Program: HashMap<Symbol, ImpFunc> = {
 }
 
 Func: (Symbol, ImpFunc) = {
-    "fn" <name:Iden> "(" <params:List<Iden>> ")" <body:Stmt> => (name, ImpFunc { name, params, body }),
+    "fn" <name:Iden> "(" <params:List<Decl>> ")" <body:Stmt> => (name, ImpFunc { name, params, body }),
+}
+
+Decl: (Symbol, Type) = {
+    <name:Iden> ":" <ty:Type> => (name, ty),
 }
 
 Stmt: ImpStmt = {
@@ -50,13 +54,23 @@ UnaryExpr: Expr = {
 }
 
 Atomic: Expr = {
-    Num => Expr::Number { num: <> },
+    Num => Expr::Constant { val: Constant::I64(<>) },
+    Bool => Expr::Constant { val: Constant::Bool(<>) },
     Iden => Expr::Variable { var: <> },
     "(" <BinaryExpr> ")",
 }
 
+Type: Type = {
+    "bool" => Type::Bool,
+    "i64" => Type::I64,
+}
+
 Iden: Symbol = r"[a-zA-Z_][a-zA-Z0-9_]*" => Symbol::from(<>);
-Num: i32 = r"-?[0-9]+" => i32::from_str(<>).unwrap();
+Num: i64 = r"-?[0-9]+" => i64::from_str(<>).unwrap();
+Bool: bool = {
+    "false" => false,
+    "true" => true,
+}
 
 List<T>: Vec<T> = {
     <mut v:(<T> ",")*> <e:T?> => match e {
