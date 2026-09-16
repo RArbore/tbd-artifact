@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::ssa::{SSA, SSAId};
+use crate::ssa::{SSA, SSABlockId, SSAId};
 
 // We use a sparse representation for union finds, because in the majority of versions there are
 // relatively few unions compared to the number of SSAIds. We use Rem's algorithm for unions and
@@ -16,12 +16,14 @@ struct SparseUnionFind {
 // union find over the canonical IDs of the parent union find. Versions form a hierarchy. We get away
 // with using a layered union find, rather than the more complicated versioned union find, because we
 // only ever modify (at-the-moment) leaf versions.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Version {
     uf: SparseUnionFind,
     // Store a pointer to the parent version. This is ref-counted to simplify the code in the
     // saturator w.r.t. ownership of versions.
     parent: Option<Rc<Version>>,
+    // Track which SSA block this version corresponds to.
+    block: SSABlockId,
 }
 
 #[derive(Debug)]
@@ -32,10 +34,13 @@ struct SparseUnionFindSet<'a> {
 }
 
 #[derive(Debug)]
-struct VersionSet<'a> {
-    set_stack: Vec<SparseUnionFindSet<'a>>,
-    version_stack: Vec<&'a Version>,
-    up_to: Option<Rc<Version>>,
+enum VersionSet<'a> {
+    Trivial(Option<SSAId>),
+    NonTrivial {
+        set_stack: Vec<SparseUnionFindSet<'a>>,
+        version_stack: Vec<&'a Version>,
+        up_to: Option<SSABlockId>,
+    },
 }
 
 impl SparseUnionFind {
@@ -188,10 +193,19 @@ impl Iterator for SparseUnionFindSet<'_> {
 }
 
 impl Version {
-    pub fn child(parent: Rc<Version>) -> Self {
+    pub fn root(block: SSABlockId) -> Self {
+        Self {
+            uf: Default::default(),
+            parent: None,
+            block,
+        }
+    }
+
+    pub fn child(parent: Rc<Version>, block: SSABlockId) -> Self {
         Self {
             uf: Default::default(),
             parent: Some(parent),
+            block,
         }
     }
 
@@ -244,11 +258,18 @@ impl Version {
         })
     }
 
-    pub fn set(&self, id: SSAId, up_to: Option<Rc<Version>>) -> impl Iterator<Item = SSAId> + '_ {
-        VersionSet {
-            set_stack: vec![self.uf.set(self.find(id))],
-            version_stack: vec![self],
-            up_to,
+    pub fn set(&self, id: SSAId, up_to: Option<SSABlockId>) -> impl Iterator<Item = SSAId> + '_ {
+        let canon_id = self.find(id);
+        if let Some(up_to) = up_to
+            && self.block == up_to
+        {
+            VersionSet::Trivial(Some(canon_id))
+        } else {
+            VersionSet::NonTrivial {
+                set_stack: vec![self.uf.set(canon_id)],
+                version_stack: vec![self],
+                up_to,
+            }
         }
     }
 
@@ -275,33 +296,42 @@ impl Iterator for VersionSet<'_> {
     type Item = SSAId;
 
     fn next(&mut self) -> Option<SSAId> {
-        loop {
-            // Once all sets in the stack have been visited, this `?` will return `None`, breaking
-            // out of the loop.
-            let last_set = self.set_stack.last_mut()?;
-            let last_version = *self.version_stack.last().unwrap();
-            if let Some(id) = last_set.next() {
-                if let Some(parent_version) = last_version.parent.as_ref()
-                    // If the `up_to` is some version, then only enumerate IDs that are canonical in
-                    // that version (assuming that version is an ancestor of the original version).
-                    && self
-                        .up_to
-                        .as_ref()
-                        .map(|up_to| !Rc::ptr_eq(up_to, parent_version))
-                        .unwrap_or(true)
-                {
-                    self.set_stack.push(parent_version.uf.set(id));
-                    self.version_stack.push(parent_version);
-                } else {
-                    // If we reached the root without running into `up_to`, then `up_to` is not an
-                    // ancestor of the original version.
-                    assert!(last_version.parent.is_some() || self.up_to.is_none());
-                    // Yield the ID if we've traversed all the way to the root (or up to) version.
-                    break Some(id);
+        use VersionSet::*;
+        match self {
+            Trivial(id) => {
+                let old_id = *id;
+                *id = None;
+                old_id
+            }
+            NonTrivial {
+                set_stack,
+                version_stack,
+                up_to,
+            } => {
+                loop {
+                    // Once all sets in the stack have been visited, this `?` will return `None`,
+                    // breaking out of the loop.
+                    let last_set = set_stack.last_mut()?;
+                    let last_version = *version_stack.last().unwrap();
+                    if let Some(id) = last_set.next() {
+                        // If `up_to` is some version, then only enumerate IDs that are canonical in
+                        // that version (version must be an ancestor of the original version).
+                        if let Some(parent_version) = last_version.parent.as_ref()
+                            && up_to
+                                .map(|up_to| up_to != parent_version.block)
+                                .unwrap_or(true)
+                        {
+                            set_stack.push(parent_version.uf.set(id));
+                            version_stack.push(parent_version);
+                        } else {
+                            // Yield the ID if we've traversed all the way to the root (or `up_to`).
+                            break Some(id);
+                        }
+                    } else {
+                        set_stack.pop();
+                        version_stack.pop();
+                    }
                 }
-            } else {
-                self.set_stack.pop();
-                self.version_stack.pop();
             }
         }
     }
@@ -392,7 +422,7 @@ mod tests {
 
     #[test]
     fn luf1() {
-        let mut parent = Version::default();
+        let mut parent = Version::root(0);
         parent.union(0, 1);
         parent.union(2, 3);
         assert_eq!(parent.find_mut(0), parent.find_mut(1));
@@ -408,7 +438,7 @@ mod tests {
         );
 
         let parent = Rc::new(parent);
-        let mut child = Version::child(Rc::clone(&parent));
+        let mut child = Version::child(Rc::clone(&parent), 1);
         child.union(0, 3);
         assert_eq!(child.find_mut(0), child.find_mut(1));
         assert_eq!(child.find_mut(2), child.find_mut(3));
@@ -432,27 +462,29 @@ mod tests {
         for i in [0, 1, 2, 3] {
             assert_eq!(
                 HashSet::from_iter([0, 2]),
-                child
-                    .set(i, Some(Rc::clone(&parent)))
-                    .collect::<HashSet<_>>()
+                child.set(i, Some(0)).collect::<HashSet<_>>()
             );
         }
         assert_eq!(
             HashSet::from_iter([5]),
-            child
-                .set(5, Some(Rc::clone(&parent)))
-                .collect::<HashSet<_>>()
+            child.set(5, Some(0)).collect::<HashSet<_>>()
         );
+        for i in [0, 1, 2, 3] {
+            assert_eq!(
+                HashSet::from_iter([child.find(i)]),
+                child.set(i, Some(1)).collect::<HashSet<_>>()
+            );
+        }
     }
 
     #[test]
     fn luf2() {
-        let mut parent = Version::default();
+        let mut parent = Version::root(0);
         parent.union(0, 1);
         parent.union(2, 3);
 
         let parent = Rc::new(parent);
-        let mut child = Version::child(Rc::clone(&parent));
+        let mut child = Version::child(Rc::clone(&parent), 1);
         let mut set = HashSet::new();
         child.union_with(0, 3, |id| {
             set.insert(id);

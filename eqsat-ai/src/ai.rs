@@ -1,5 +1,5 @@
 use core::assert_matches;
-use core::mem::take;
+use core::mem::replace;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
@@ -162,23 +162,25 @@ impl<'a> AIContext<'a> {
         // Update the dominator tree incrementally when adding new SSA blocks.
         self.dom_tree
             .visit_block(ssa_block_id, self.saturator.ssa.get_block(ssa_block_id));
-        let unanalyzed = if let Some(idom) = self.dom_tree.idom(ssa_block_id) {
+        let version = if let Some(idom) = self.dom_tree.idom(ssa_block_id) {
             let state = self.versions.get_mut(&idom).unwrap();
             use VersionState::*;
-            match state {
+            let rc = match state {
                 Mutable(version) => {
-                    let rc = Rc::new(take(version));
+                    // Why isn't there a core::mem primitive for this?
+                    let rc = Rc::new(replace(version, Version::root(0)));
                     *state = Immutable(Rc::clone(&rc));
-                    Version::child(rc)
+                    rc
                 }
-                Immutable(rc) => Version::child(Rc::clone(rc)),
-            }
+                Immutable(rc) => Rc::clone(rc),
+            };
+            Version::child(rc, ssa_block_id)
         } else {
             // The entry block gets the root version.
-            Version::default()
+            Version::root(ssa_block_id)
         };
         self.versions
-            .insert(ssa_block_id, VersionState::Mutable(unanalyzed));
+            .insert(ssa_block_id, VersionState::Mutable(version));
 
         (is_new, ssa_block_id)
     }
@@ -236,7 +238,7 @@ impl<'a> AIContext<'a> {
                     *param,
                     // There is no version for before the entry. That's fine, because we won't have
                     // equated function parameters with anything yet.
-                    self.saturator.intern(SSA::Param(idx), &Version::default()),
+                    self.saturator.intern(SSA::Param(idx), &Version::root(0)),
                 )
             })
             .collect();
@@ -320,24 +322,27 @@ impl<'a> AIContext<'a> {
                 let mut knot_values = HashMap::new();
 
                 // Saturate because discovered equalities may help us avoid making knots.
-                let pred1_version = self.versions.get_mut(&ssa_pred1).unwrap();
-                ensure_analyzed(&mut self.saturator, pred1_version);
-                let pred2_version = self.versions.get_mut(&ssa_pred2).unwrap();
-                ensure_analyzed(&mut self.saturator, pred2_version);
-                // Re-borrow because Rust.
+                ensure_analyzed(
+                    &mut self.saturator,
+                    self.versions.get_mut(&ssa_pred1).unwrap(),
+                );
+                ensure_analyzed(
+                    &mut self.saturator,
+                    self.versions.get_mut(&ssa_pred2).unwrap(),
+                );
+
                 let pred1_version = &self.versions[&ssa_pred1];
                 let pred2_version = &self.versions[&ssa_pred2];
+                let lca = self.dom_tree.lca(ssa_pred1, ssa_pred2);
 
                 for (var, value1) in vars1 {
                     if let Some(value2) = vars2.get(var) {
-                        // TODO: we should have a primitive to enumerate the set of canonical IDs
-                        // with respect to some parent version. This is because the two predecessor
-                        // versions likely share some ancestors, and we don't need to enumerate down
-                        // into the shared ancestors.
                         let value1 = pred1_version.as_ref().find(*value1);
                         let value2 = pred2_version.as_ref().find(*value2);
-                        let set1: HashSet<_> = pred1_version.as_ref().set(value1, None).collect();
-                        let set2: HashSet<_> = pred2_version.as_ref().set(value1, None).collect();
+                        let set1: HashSet<_> =
+                            pred1_version.as_ref().set(value1, Some(lca)).collect();
+                        let set2: HashSet<_> =
+                            pred2_version.as_ref().set(value1, Some(lca)).collect();
                         if !set1.is_disjoint(&set2) {
                             new_vars.insert(*var, value1);
                         } else {
@@ -357,9 +362,7 @@ impl<'a> AIContext<'a> {
                         .intern_knot(block, vars.iter().cloned().collect());
                     // Knots can't be unioned with anything in a version above the block they are
                     // defined in.
-                    let knot = self
-                        .saturator
-                        .intern(SSA::Knot(knot_id), &Version::default());
+                    let knot = self.saturator.intern(SSA::Knot(knot_id), &Version::root(0));
                     for var in vars {
                         new_vars.insert(var, knot);
                     }

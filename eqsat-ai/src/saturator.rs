@@ -112,7 +112,7 @@ mod tests {
 
     #[test]
     fn saturator1() {
-        let mut version = Version::default();
+        let mut version = Version::root(0);
         let mut saturator = Saturator::default();
         saturator.saturate(&mut version);
         assert_eq!(saturator.ssa.num_nodes(), 0);

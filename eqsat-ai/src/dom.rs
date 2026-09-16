@@ -17,36 +17,44 @@ impl DomTree {
     // create the version hierarchy properly. Dominance information for any given block may be out of
     // date, just like any other analysis.
     pub fn visit_block(&mut self, id: SSABlockId, block: &SSABlock) {
-        let idom = |id| self.0.get(&id).cloned().unwrap_or((id, 0));
         use SSABlock::*;
         match block {
             Entry => {}
             Guard(pred, _, _) | Return(pred, _) => {
-                let level = idom(*pred).1;
+                let level = self.0.get(pred).map(|(_, level)| *level).unwrap_or(0);
                 self.0.insert(id, (*pred, level + 1));
             }
             Merge(pred1, pred2, _) => {
-                let (mut parent1, mut level1) = idom(*pred1);
-                let (mut parent2, mut level2) = idom(*pred2);
-                // Traverse up the dominator tree until we find a common ancestor. This traversal
-                // goes bottom up, so this is the least common ancestor.
-                let dom = loop {
-                    if level1 < level2 {
-                        (parent2, level2) = idom(parent2);
-                    } else if level1 > level2 {
-                        (parent1, level1) = idom(parent1);
-                    } else if parent1 != parent2 {
-                        assert_ne!(level1, 1);
-                        assert_ne!(level2, 1);
-                        (parent1, level1) = idom(parent1);
-                        (parent2, level2) = idom(parent2);
-                    } else {
-                        break (parent1, max(level1, 1));
-                    }
-                };
-                self.0.insert(id, dom);
+                self.0.insert(id, self.lca_and_level(*pred1, *pred2));
             }
         }
+    }
+
+    fn lca_and_level(&self, a: SSABlockId, b: SSABlockId) -> (SSABlockId, usize) {
+        let idom = |id| self.0.get(&id).cloned().unwrap_or((id, 0));
+        let (mut parent1, mut level1) = idom(a);
+        let (mut parent2, mut level2) = idom(b);
+
+        // Traverse up the dominator tree until we find a common ancestor. This traversal goes bottom
+        // up, so this is the least common ancestor.
+        loop {
+            if level1 < level2 {
+                (parent2, level2) = idom(parent2);
+            } else if level1 > level2 {
+                (parent1, level1) = idom(parent1);
+            } else if parent1 != parent2 {
+                assert_ne!(level1, 1);
+                assert_ne!(level2, 1);
+                (parent1, level1) = idom(parent1);
+                (parent2, level2) = idom(parent2);
+            } else {
+                break (parent1, max(level1, 1));
+            }
+        }
+    }
+
+    pub fn lca(&self, a: SSABlockId, b: SSABlockId) -> SSABlockId {
+        self.lca_and_level(a, b).0
     }
 }
 
