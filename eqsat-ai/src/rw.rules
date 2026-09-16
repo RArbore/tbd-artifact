@@ -7,6 +7,14 @@
 (rw (Add a (Neg b)) (Sub a b))
 (rw (Add (Neg a) b) (Sub b a))
 
+(rw (And a b) (And b a))
+(rw (Or a b) (Or b a))
+(rw (Xor a b) (Xor b a))
+(rw (Not (And a b)) (Or (Not a) (Not b)))
+(rw (Not (Or a b)) (And (Not a) (Not b)))
+(rw (Not (Xor a b)) (Xor (Not a) b))
+(rw (Not (Xor a b)) (Xor a (Not b)))
+
 (rw (Not (EE a b)) (NE a b))
 (rw (Not (NE a b)) (EE a b))
 (rw (Not (LT a b)) (GE a b))
@@ -19,11 +27,13 @@
 (rw (GE a b) (LE b a))
 
 (rw (Add a (Constant[i64] 0)) a)
+(rw (Add a a) (Mul a (Constant[i64] 2)))
+(rw (Sub a a) (Constant[i64] 0))
+(rw (Sub (Constant[i64] 0) a) (Neg a))
+(rw (Sub a (Constant[i64] 0)) a)
 (rw (Mul _ (Constant[i64] 0)) (Constant[i64] 0))
 (rw (Mul a (Constant[i64] 1)) a)
-(rw (Add a a) (Mul a (Constant[i64] 2)))
 (rw (Mul a (Constant[i64] 2)) (Add a a))
-(rw (Sub a a) (Constant[i64] 0))
 
 (rw (EE a a) (Constant[bool] true))
 (rw (NE a a) (Constant[bool] false))
@@ -48,3 +58,8 @@
 (rw (GE (Constant[i64] a) (Constant[i64] b)) (Constant[bool] `a >= b`))
 
 (rule (a:(Constant[bool] b) a:(Not c)) ((union c (Constant[bool] `!b`))))
+(rule (a:(Constant[i64] b) a:(Neg c)) ((union c (Constant[i64] `-b`))))
+(rule (a:(Constant[bool] true) a:(And b c)) ((union a (union b c))))
+(rule (a:(Constant[bool] false) a:(Or b c)) ((union a (union b c))))
+(rule (a:(Constant[bool] true) a:(EE b c)) ((union b c)))
+(rule (a:(Constant[bool] false) a:(NE b c)) ((union b c)))

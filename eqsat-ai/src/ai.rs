@@ -637,7 +637,7 @@ fn flow(x: bool) {
     #[test]
     fn ai8() {
         let text = r#"
-fn flow(x: bool) {
+fn flow_constant_prop(x: bool) {
     if x {
         y = x;
     } else {
@@ -654,7 +654,7 @@ fn flow(x: bool) {
     #[test]
     fn ai9() {
         let text = r#"
-fn flow(x: bool) {
+fn flow_backwards(x: bool) {
     if !!!x {
         y = x;
     } else {
@@ -665,6 +665,22 @@ fn flow(x: bool) {
 "#;
         let (value, mut saturator, version) = get_return(text);
         let correct = saturator.intern(SSA::Constant(Constant::Bool(false)), &version);
+        assert_eq!(correct, value);
+    }
+
+    #[test]
+    fn ai10() {
+        let text = r#"
+fn flow_backwards_ee(x: i64, y: i64) {
+    z = 0;
+    if x == y {
+        z = x - y;
+    }
+    return z;
+}
+"#;
+        let (value, mut saturator, version) = get_return(text);
+        let correct = saturator.intern(SSA::Constant(Constant::I64(0)), &version);
         assert_eq!(correct, value);
     }
 
