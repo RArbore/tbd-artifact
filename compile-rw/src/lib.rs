@@ -35,9 +35,19 @@ enum Pattern {
     Literal(Literal),
     RustExpr(Symbol),
     Wildcard,
-    Constant(Type, Box<Pattern>),
-    Unary(Symbol, Box<Pattern>),
-    Binary(Symbol, Box<Pattern>, Box<Pattern>),
+    Constant {
+        ty: Type,
+        input: Box<Pattern>,
+    },
+    Unary {
+        op: Symbol,
+        input: Box<Pattern>,
+    },
+    Binary {
+        op: Symbol,
+        lhs: Box<Pattern>,
+        rhs: Box<Pattern>,
+    },
 }
 
 // The LHS patterns of rewrites are converted into relational queries.
@@ -128,9 +138,9 @@ impl Display for Pattern {
             Literal(lit) => write!(f, "{}", lit),
             RustExpr(expr) => write!(f, "`{}`", expr),
             Wildcard => write!(f, "_"),
-            Constant(ty, input) => write!(f, "(Constant[{}] {})", ty.rust_type(), input),
-            Unary(op, input) => write!(f, "({} {})", op, input),
-            Binary(op, lhs, rhs) => write!(f, "({} {} {})", op, lhs, rhs),
+            Constant { ty, input } => write!(f, "(Constant[{}] {})", ty.rust_type(), input),
+            Unary { op, input } => write!(f, "({} {})", op, input),
+            Binary { op, lhs, rhs } => write!(f, "({} {} {})", op, lhs, rhs),
         }
     }
 }
@@ -205,7 +215,7 @@ fn pattern_to_query(pattern: &Pattern) -> Query {
                 panic!("can't evaluate Rust expression on left-hand side of rule")
             }
             Pattern::Wildcard => Term::Wildcard,
-            Pattern::Constant(ty, input) => {
+            Pattern::Constant { ty, input } => {
                 let input = pattern_to_query_helper(input, atoms, types);
                 let var = format!("_root_{}", atoms.len()).into();
                 let root = Term::Variable(var);
@@ -218,7 +228,7 @@ fn pattern_to_query(pattern: &Pattern) -> Query {
                 record_type(input, ty.rust_type(), types);
                 root
             }
-            Pattern::Unary(op, input) => {
+            Pattern::Unary { op, input } => {
                 let input = pattern_to_query_helper(input, atoms, types);
                 let var = format!("_root_{}", atoms.len()).into();
                 let root = Term::Variable(var);
@@ -231,7 +241,7 @@ fn pattern_to_query(pattern: &Pattern) -> Query {
                 record_type(input, "SSAId".into(), types);
                 root
             }
-            Pattern::Binary(op, lhs, rhs) => {
+            Pattern::Binary { op, lhs, rhs } => {
                 let lhs = pattern_to_query_helper(lhs, atoms, types);
                 let rhs = pattern_to_query_helper(rhs, atoms, types);
                 let var = format!("_root_{}", atoms.len()).into();
@@ -317,7 +327,7 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
             quote! { { #expr } }
         }
         Pattern::Wildcard => panic!(),
-        Pattern::Constant(ty, input) => {
+        Pattern::Constant { ty, input } => {
             let input = build_pattern(input);
             let cons_variant = format_ident!("{}", ty.compiler_type().as_str());
             quote! {
@@ -327,7 +337,7 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
                 }
             }
         }
-        Pattern::Unary(op, input) => {
+        Pattern::Unary { op, input } => {
             let op_iden = format_ident!("{}", op.as_str());
             let input = build_pattern(input);
             quote! {
@@ -337,7 +347,7 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
                 }
             }
         }
-        Pattern::Binary(op, lhs, rhs) => {
+        Pattern::Binary { op, lhs, rhs } => {
             let op_iden = format_ident!("{}", op.as_str());
             let lhs = build_pattern(lhs);
             let rhs = build_pattern(rhs);
