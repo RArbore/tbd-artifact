@@ -6,7 +6,7 @@ use std::rc::Rc;
 use symbol_table::GlobalSymbol as Symbol;
 
 use crate::dom::DomTree;
-use crate::nonssa::{Block, BlockId, Constant, Expr, NonSSAFunc, Type};
+use crate::nonssa::{Block, BlockId, Constant, Expr, NonSSAFunc};
 use crate::saturator::Saturator;
 use crate::ssa::{KnotId, SSA, SSABlock, SSABlockId, SSAId};
 use crate::version::Version;
@@ -443,7 +443,6 @@ fn ensure_analyzed(saturator: &mut Saturator, version_state: &mut VersionState) 
 }
 
 fn assume(id: SSAId, direction: bool, saturator: &mut Saturator, version_state: &mut VersionState) {
-    assert!(saturator.ssa.ty(id) == Type::Bool);
     let VersionState::Mutable(version) = version_state else {
         panic!()
     };

@@ -1,6 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 
-use crate::nonssa::Constant;
+use crate::nonssa::{Constant, Type};
 use crate::rw::{Tries, apply_rws};
 use crate::ssa::{SSA, SSAId, SSAProgram};
 use crate::version::Version;
@@ -30,6 +30,7 @@ impl Saturator {
     }
 
     pub fn union(&mut self, x: SSAId, y: SSAId, version: &mut Version) -> SSAId {
+        assert_eq!(self.ssa.ty(x), self.ssa.ty(y));
         version.union_with(x, y, |id| {
             // Record any SSAId whose canonical SSAId changed as a delta ID. Notably, the SSAId
             // inserted here is itself *not* canonical.
@@ -38,11 +39,13 @@ impl Saturator {
     }
 
     pub fn is_always_false(&mut self, id: SSAId, version: &Version) -> bool {
+        assert_eq!(self.ssa.ty(id), Type::Bool);
         assert_eq!(id, version.find(id));
         self.intern(SSA::Constant(Constant::Bool(false)), version) == id
     }
 
     pub fn is_always_true(&mut self, id: SSAId, version: &Version) -> bool {
+        assert_eq!(self.ssa.ty(id), Type::Bool);
         assert_eq!(id, version.find(id));
         self.intern(SSA::Constant(Constant::Bool(true)), version) == id
     }

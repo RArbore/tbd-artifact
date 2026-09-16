@@ -45,6 +45,10 @@ BinaryExpr: Expr = {
     <lhs:BinaryExpr> "<=" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::LE, lhs: Box::new(lhs), rhs: Box::new(rhs) },
     <lhs:BinaryExpr> ">" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::GT, lhs: Box::new(lhs), rhs: Box::new(rhs) },
     <lhs:BinaryExpr> ">=" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::GE, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+    #[precedence(level="4")] #[assoc(side="left")]
+    <lhs:BinaryExpr> "&" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::And, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+    <lhs:BinaryExpr> "|" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::Or, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+    <lhs:BinaryExpr> "^" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::Xor, lhs: Box::new(lhs), rhs: Box::new(rhs) },
 }
 
 UnaryExpr: Expr = {

@@ -63,6 +63,11 @@ impl SSA {
                     assert_eq!(types[rhs], Type::I64);
                     Type::I64
                 }
+                BinaryOp::And | BinaryOp::Or | BinaryOp::Xor => {
+                    assert_eq!(types[lhs], Type::Bool);
+                    assert_eq!(types[rhs], Type::Bool);
+                    Type::Bool
+                }
                 BinaryOp::EE
                 | BinaryOp::NE
                 | BinaryOp::LT
