@@ -268,7 +268,7 @@ impl<'a> AIContext<'a> {
             let block_changed = if always_false && !direction || always_true && direction {
                 self.update_block(block, ssa_pred)
             } else {
-                let new_block =
+                let (block_changed, new_block) =
                     self.update_new_block(block, SSABlock::Guard(ssa_pred, value, direction));
                 // When the guard is necessary, we want to assume the guard condition is either true
                 // or false (depending on `direction`) in the created version.
@@ -276,9 +276,9 @@ impl<'a> AIContext<'a> {
                     value,
                     direction,
                     &mut self.saturator,
-                    self.versions.get_mut(&new_block.1).unwrap(),
+                    self.versions.get_mut(&new_block).unwrap(),
                 );
-                new_block.0
+                block_changed
             };
             // Guards make no assignments.
             block_changed | self.update_vars(block, self.vars[&pred].clone())
@@ -318,7 +318,6 @@ impl<'a> AIContext<'a> {
                 let ssa_pred2 = self.to_ssa_block(pred2);
                 assert_ne!(ssa_pred1, ssa_pred2);
                 let mut new_vars = HashMap::new();
-                let mut pair_to_vars: HashMap<(SSAId, SSAId), HashSet<Symbol>> = HashMap::new();
                 let mut knot_values = HashMap::new();
 
                 // Saturate because discovered equalities may help us avoid making knots.
@@ -335,6 +334,10 @@ impl<'a> AIContext<'a> {
                 let pred2_version = &self.versions[&ssa_pred2];
                 let lca = self.dom_tree.lca(ssa_pred1, ssa_pred2);
 
+                let mut non_intersection_to_vars: HashMap<(SSAId, SSAId), HashSet<Symbol>> =
+                    HashMap::new();
+                let mut intersection_to_var: Vec<(SSAId, Vec<SSAId>, Symbol)> = vec![];
+
                 for (var, value1) in vars1 {
                     if let Some(value2) = vars2.get(var) {
                         let value1 = pred1_version.as_ref().find(*value1);
@@ -343,11 +346,21 @@ impl<'a> AIContext<'a> {
                             pred1_version.as_ref().set(value1, Some(lca)).collect();
                         let set2: HashSet<_> =
                             pred2_version.as_ref().set(value1, Some(lca)).collect();
-                        if !set1.is_disjoint(&set2) {
-                            new_vars.insert(*var, value1);
+
+                        let mut intersection = set1.intersection(&set2);
+                        if let Some(first) = intersection.next() {
+                            // When the ID sets in the two predecessors overlap, then the variable
+                            // can be represented uniformly by any ID in the intersection. Record
+                            // these intersections to be unioned later when we have the version for
+                            // the SSA merge block.
+                            intersection_to_var.push((
+                                *first,
+                                intersection.cloned().collect(),
+                                *var,
+                            ));
                         } else {
                             // Just collect the variables where a knot must be made, because...
-                            pair_to_vars
+                            non_intersection_to_vars
                                 .entry((value1, value2))
                                 .or_default()
                                 .insert(*var);
@@ -356,7 +369,7 @@ impl<'a> AIContext<'a> {
                 }
 
                 // ...we want to create a single knot per set of variables sharing values.
-                for ((value1, value2), vars) in pair_to_vars {
+                for ((value1, value2), vars) in non_intersection_to_vars {
                     let knot_id = self
                         .knot_map
                         .intern_knot(block, vars.iter().cloned().collect());
@@ -368,12 +381,23 @@ impl<'a> AIContext<'a> {
                     }
                     knot_values.insert(knot_id, (value1, value2));
                 }
+                let (block_changed, new_block) = self
+                    .update_new_block(block, SSABlock::Merge(ssa_pred1, ssa_pred2, knot_values));
 
-                let changed = self
-                    .update_new_block(block, SSABlock::Merge(ssa_pred1, ssa_pred2, knot_values))
-                    .0
-                    | self.update_vars(block, new_vars);
-                changed
+                // Now that we have a version for this block, merge the IDs in intersecting sets.
+                for (first, rest, var) in intersection_to_var {
+                    let canon_id = rest.into_iter().fold(first, |a, b| {
+                        union(
+                            a,
+                            b,
+                            &mut self.saturator,
+                            self.versions.get_mut(&new_block).unwrap(),
+                        )
+                    });
+                    new_vars.insert(var, canon_id);
+                }
+
+                block_changed | self.update_vars(block, new_vars)
             }
         }
     }
@@ -430,19 +454,23 @@ fn ensure_analyzed(saturator: &mut Saturator, version_state: &mut VersionState) 
 }
 
 fn assume(id: SSAId, direction: bool, saturator: &mut Saturator, version_state: &mut VersionState) {
-    use VersionState::*;
-    match version_state {
-        Mutable(version) => {
-            let zero = saturator.intern(SSA::Constant(0), version);
-            if direction {
-                let not = saturator.intern(SSA::Unary(UnaryOp::Not, id), version);
-                saturator.union(not, zero, version);
-            } else {
-                saturator.union(id, zero, version);
-            }
-        }
-        Immutable(_) => {}
+    let VersionState::Mutable(version) = version_state else {
+        panic!()
+    };
+    let zero = saturator.intern(SSA::Constant(0), version);
+    if direction {
+        let not = saturator.intern(SSA::Unary(UnaryOp::Not, id), version);
+        saturator.union(not, zero, version);
+    } else {
+        saturator.union(id, zero, version);
     }
+}
+
+fn union(a: SSAId, b: SSAId, saturator: &mut Saturator, version_state: &mut VersionState) -> SSAId {
+    let VersionState::Mutable(version) = version_state else {
+        panic!()
+    };
+    saturator.union(a, b, version)
 }
 
 #[cfg(test)]

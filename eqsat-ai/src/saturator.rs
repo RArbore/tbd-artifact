@@ -28,12 +28,12 @@ impl Saturator {
         id
     }
 
-    pub fn union(&mut self, x: SSAId, y: SSAId, version: &mut Version) {
+    pub fn union(&mut self, x: SSAId, y: SSAId, version: &mut Version) -> SSAId {
         version.union_with(x, y, |id| {
             // Record any SSAId whose canonical SSAId changed as a delta ID. Notably, the SSAId
             // inserted here is itself *not* canonical.
             self.delta.insert(id);
-        });
+        })
     }
 
     pub fn is_always_false(&mut self, id: SSAId, version: &Version) -> bool {
