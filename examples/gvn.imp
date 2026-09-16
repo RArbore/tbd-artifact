@@ -1,4 +1,4 @@
-fn gvn(x) {
+fn gvn(x: i64) {
 	y = x;
 	while x > 0 {
 		x = x - 1;

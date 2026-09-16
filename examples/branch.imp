@@ -1,6 +1,6 @@
-fn branch(x) {
+fn branch(x: bool) {
 	if x {
-		x = 0;
+		x = false;
 	}
-	return x + 7;
+	return x;
 }

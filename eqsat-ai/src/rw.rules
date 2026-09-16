@@ -37,7 +37,7 @@
 (rw (NE (Sub a b) (Constant[i64] 0)) (NE a b))
 
 (rw (Neg (Constant[i64] a)) (Constant[i64] `-a`))
-(rw (Not (Constant[i64] a)) (Constant[bool] `a == 0`))
+(rw (Not (Constant[bool] a)) (Constant[bool] `!a`))
 
 (rw (Add (Constant[i64] a) (Constant[i64] b)) (Constant[i64] `a + b`))
 (rw (Sub (Constant[i64] a) (Constant[i64] b)) (Constant[i64] `a - b`))

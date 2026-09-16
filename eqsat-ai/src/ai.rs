@@ -628,4 +628,21 @@ fn flow(x: bool) {
         let correct = saturator.intern(SSA::Constant(Constant::I64(42)), &version);
         assert_eq!(correct, value);
     }
+
+    #[test]
+    fn ai8() {
+        let text = r#"
+fn flow(x: bool) {
+    if x {
+        y = x;
+    } else {
+        y = !x;
+    }
+    return y;
+}
+"#;
+        let (value, mut saturator, version) = get_return(text);
+        let correct = saturator.intern(SSA::Constant(Constant::Bool(true)), &version);
+        assert_eq!(correct, value);
+    }
 }

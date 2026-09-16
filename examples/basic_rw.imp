@@ -1,4 +1,4 @@
-fn basic_rw(x, y) {
+fn basic_rw(x: i64, y: i64) {
 	if x + y == y + x {
 		z = 42;
 	} else {

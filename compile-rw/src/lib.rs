@@ -417,7 +417,12 @@ fn emit_wcoj(
             // Cast the variable to its Rust type, so that the code for the RHS of the rule can use
             // the variable as its proper type.
             let rust_ty = format_ident!("{}", query.types[&var].as_str());
-            let cast = quote! { let #var_iden = *#var_iden as #rust_ty; };
+            // Rust moment...
+            let cast = if query.types[&var] == "bool".into() {
+                quote! { let #var_iden = *#var_iden != 0; }
+            } else {
+                quote! { let #var_iden = *#var_iden as #rust_ty; }
+            };
 
             // Emit the rest of the WCOJ.
             let nested = emit_wcoj_helper(

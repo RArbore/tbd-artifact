@@ -1,4 +1,4 @@
-fn flow(x) {
+fn flow(x: bool) {
     if x {
         y = !x;
     } else {

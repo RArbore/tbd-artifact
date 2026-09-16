@@ -1,4 +1,4 @@
-fn loop(x) {
+fn loop(x: i64) {
 	y = 7;
 	while x > 0 {
 		x = x - 1;
