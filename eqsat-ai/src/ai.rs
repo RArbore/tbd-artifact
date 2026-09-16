@@ -685,6 +685,48 @@ fn flow_backwards_ee(x: i64, y: i64) {
     }
 
     #[test]
+    fn ai11() {
+        let text = r#"
+fn old_paper_example1(y: i64) {
+    x = -6;
+    z = 42;
+    while y < 10 {
+        y = y + 1;
+        x = x + 8;
+        lhs = ((x + y) + z) * y;
+        rhs = 2 * y + (y * y + z * y);
+        if lhs != rhs {
+            z = 24;
+        }
+        x = x - 8;
+    }
+    return z + 7;
+}
+"#;
+        let (value, mut saturator, version) = get_return(text);
+        let correct = saturator.intern(SSA::Constant(Constant::I64(49)), &version);
+        assert_eq!(correct, value);
+    }
+
+    #[test]
+    fn ai12() {
+        let text = r#"
+fn old_paper_example1(x: i64) {
+    y = x;
+    while y < 10 {
+        xt = x;
+        x = y * y + y * 5;
+        y = xt * (y + 5 + 0) ;
+    }
+    return x - y;
+}
+"#;
+        let (value, mut saturator, version) = get_return(text);
+        let correct = saturator.intern(SSA::Constant(Constant::I64(0)), &version);
+        assert_eq!(correct, value);
+    }
+
+    #[test]
     #[should_panic]
     fn bad_types1() {
         let text = r#"

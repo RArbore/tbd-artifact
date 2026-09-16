@@ -21,6 +21,8 @@
 (rw (Not (LE a b)) (GT a b))
 (rw (Not (GT a b)) (LE a b))
 (rw (Not (GE a b)) (LT a b))
+(rw (EE a b) (EE b a))
+(rw (NE a b) (NE b a))
 (rw (LT a b) (GT b a))
 (rw (LE a b) (GE b a))
 (rw (GT a b) (LT b a))

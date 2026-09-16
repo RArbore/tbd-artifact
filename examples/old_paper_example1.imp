@@ -1,0 +1,15 @@
+fn example1 (y: i64) {
+    x = -6;
+    z = 42;
+    while y < 10 {
+        y = y + 1;
+        x = x + 8;
+        lhs = ((x + y) + z) * y;
+        rhs = 2 * y + (y * y + z * y);
+        if lhs != rhs {
+            z = 24;
+        }
+        x = x - 8;
+    }
+    return z + 7;
+}

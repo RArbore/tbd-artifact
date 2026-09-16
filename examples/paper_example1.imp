@@ -1,0 +1,15 @@
+fn example1(x: i64) {
+    y = x;
+    z = x + 1;
+    while z == x + 1 {
+        xt = x;
+        x = y * x;
+        if x + 1 == z {
+            y = xt * y;
+            z = x + 1;
+        } else {
+            z = 999;
+        }
+    }
+    return x - y;
+}
