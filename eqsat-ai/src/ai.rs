@@ -6,7 +6,7 @@ use std::rc::Rc;
 use symbol_table::GlobalSymbol as Symbol;
 
 use crate::dom::DomTree;
-use crate::nonssa::{Block, BlockId, Constant, Expr, NonSSAFunc};
+use crate::nonssa::{Block, BlockId, Constant, Expr, NonSSAFunc, Type};
 use crate::saturator::Saturator;
 use crate::ssa::{KnotId, SSA, SSABlock, SSABlockId, SSAId};
 use crate::version::Version;
@@ -355,7 +355,12 @@ impl<'a> AIContext<'a> {
                         .intern_knot(block, vars.iter().cloned().collect());
                     // Knots can't be unioned with anything in a version above the block they are
                     // defined in.
-                    let knot = self.saturator.intern(SSA::Knot(knot_id), &Version::root(0));
+                    let ty1 = self.saturator.ssa.ty(value1);
+                    let ty2 = self.saturator.ssa.ty(value2);
+                    assert_eq!(ty1, ty2);
+                    let knot = self
+                        .saturator
+                        .intern(SSA::Knot(knot_id, ty1), &Version::root(0));
                     for var in vars {
                         new_vars.insert(var, knot);
                     }
@@ -438,6 +443,7 @@ fn ensure_analyzed(saturator: &mut Saturator, version_state: &mut VersionState) 
 }
 
 fn assume(id: SSAId, direction: bool, saturator: &mut Saturator, version_state: &mut VersionState) {
+    assert!(saturator.ssa.ty(id) == Type::Bool);
     let VersionState::Mutable(version) = version_state else {
         panic!()
     };
@@ -644,5 +650,44 @@ fn flow(x: bool) {
         let (value, mut saturator, version) = get_return(text);
         let correct = saturator.intern(SSA::Constant(Constant::Bool(true)), &version);
         assert_eq!(correct, value);
+    }
+
+    #[test]
+    #[should_panic]
+    fn bad_types1() {
+        let text = r#"
+fn simple() {
+    x = 0 + true;
+    return x;
+}
+"#;
+        get_return(text);
+    }
+
+    #[test]
+    #[should_panic]
+    fn bad_types2() {
+        let text = r#"
+fn simple(x: i64) {
+    if x {}
+    return x;
+}
+"#;
+        get_return(text);
+    }
+
+    #[test]
+    #[should_panic]
+    fn bad_types3() {
+        let text = r#"
+fn simple(x: bool) {
+    if x {
+        return 1;
+    } else {
+        return true;
+    }
+}
+"#;
+        get_return(text);
     }
 }

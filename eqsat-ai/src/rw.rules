@@ -1,7 +1,5 @@
 (rw (Add a b) (Add b a))
-(rw (Add a (Add b c)) (Add (Add a b) c))
 (rw (Mul a b) (Mul b a))
-(rw (Mul a (Mul b c)) (Mul (Mul a b) c))
 (rw (Mul a (Add b c)) (Add (Mul a b) (Mul a c)))
 
 (rw (Sub a (Neg b)) (Add a b))

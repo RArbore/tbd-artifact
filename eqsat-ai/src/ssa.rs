@@ -15,7 +15,7 @@ pub enum SSA {
     Binary(BinaryOp, SSAId, SSAId),
     // Knots serve the function of phi functions in our SSA form. They can be thought of as block
     // arguments (see SSABlock::Merge below).
-    Knot(KnotId),
+    Knot(KnotId, Type),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,8 +38,44 @@ struct SSAHashCons {
 #[derive(Debug, Clone, Default)]
 pub struct SSAProgram {
     ssa: SSAHashCons,
+    types: Vec<Type>,
     cfg: Vec<SSABlock>,
     exits: HashMap<Symbol, SSABlockId>,
+}
+
+impl SSA {
+    fn ty(&self, types: &Vec<Type>) -> Type {
+        match *self {
+            SSA::Constant(Constant::I64(_)) => Type::I64,
+            SSA::Constant(Constant::Bool(_)) => Type::Bool,
+            SSA::Param(_, ty) | SSA::Knot(_, ty) => ty,
+            SSA::Unary(UnaryOp::Neg, input) => {
+                assert_eq!(types[input], Type::I64);
+                Type::I64
+            }
+            SSA::Unary(UnaryOp::Not, input) => {
+                assert_eq!(types[input], Type::Bool);
+                Type::Bool
+            }
+            SSA::Binary(op, lhs, rhs) => match op {
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul => {
+                    assert_eq!(types[lhs], Type::I64);
+                    assert_eq!(types[rhs], Type::I64);
+                    Type::I64
+                }
+                BinaryOp::EE
+                | BinaryOp::NE
+                | BinaryOp::LT
+                | BinaryOp::LE
+                | BinaryOp::GT
+                | BinaryOp::GE => {
+                    assert_eq!(types[lhs], Type::I64);
+                    assert_eq!(types[rhs], Type::I64);
+                    Type::Bool
+                }
+            },
+        }
+    }
 }
 
 impl SSAHashCons {
@@ -83,11 +119,20 @@ impl SSAProgram {
     }
 
     pub fn intern(&mut self, ssa: SSA) -> SSAId {
-        self.ssa.intern(ssa)
+        let id = self.ssa.intern(ssa);
+        if id >= self.types.len() {
+            assert_eq!(id, self.types.len());
+            self.types.push(ssa.ty(&self.types));
+        }
+        id
     }
 
     pub fn get(&self, id: SSAId) -> SSA {
         self.ssa.get(id)
+    }
+
+    pub fn ty(&self, id: SSAId) -> Type {
+        self.types[id]
     }
 
     pub fn users(&mut self, id: SSAId) -> &HashSet<SSAId> {

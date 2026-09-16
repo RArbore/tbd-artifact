@@ -647,7 +647,7 @@ pub fn compile_rw(contents: &str) -> String {
                     SSA::Binary(op, _, _) => {
                         #trie_binary_insert
                     }
-                    SSA::Knot(_) => {}
+                    SSA::Knot(_, _) => {}
                 }
             }
         }

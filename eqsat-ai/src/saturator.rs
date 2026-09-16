@@ -7,8 +7,8 @@ use crate::version::Version;
 
 #[derive(Default, Debug)]
 pub struct Saturator {
-    // `Saturator` only deals with the data flow graph - allow direct access to `SSAProgram` for
-    // other things like the control flow graph.
+    // `Saturator` is just a thing wrapper around `SSAProgram` that provides utilities for equality
+    // saturation - provide direct access to the `SSAProgram` for other manipulations.
     pub ssa: SSAProgram,
 
     // What nodes have either been:
