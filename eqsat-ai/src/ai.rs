@@ -317,8 +317,6 @@ impl<'a> AIContext<'a> {
                 let ssa_pred1 = self.to_ssa_block(pred1);
                 let ssa_pred2 = self.to_ssa_block(pred2);
                 assert_ne!(ssa_pred1, ssa_pred2);
-                let mut new_vars = HashMap::new();
-                let mut knot_values = HashMap::new();
 
                 // Saturate because discovered equalities may help us avoid making knots.
                 ensure_analyzed(
@@ -332,44 +330,24 @@ impl<'a> AIContext<'a> {
 
                 let pred1_version = &self.versions[&ssa_pred1];
                 let pred2_version = &self.versions[&ssa_pred2];
-                let lca = self.dom_tree.lca(ssa_pred1, ssa_pred2);
-
-                let mut non_intersection_to_vars: HashMap<(SSAId, SSAId), HashSet<Symbol>> =
-                    HashMap::new();
-                let mut intersection_to_var: Vec<(SSAId, Vec<SSAId>, Symbol)> = vec![];
-
+                let mut pair_to_vars: HashMap<(SSAId, SSAId), HashSet<Symbol>> = HashMap::new();
                 for (var, value1) in vars1 {
                     if let Some(value2) = vars2.get(var) {
                         let value1 = pred1_version.as_ref().find(*value1);
                         let value2 = pred2_version.as_ref().find(*value2);
-                        let set1: HashSet<_> =
-                            pred1_version.as_ref().set(value1, Some(lca)).collect();
-                        let set2: HashSet<_> =
-                            pred2_version.as_ref().set(value1, Some(lca)).collect();
-
-                        let mut intersection = set1.intersection(&set2);
-                        if let Some(first) = intersection.next() {
-                            // When the ID sets in the two predecessors overlap, then the variable
-                            // can be represented uniformly by any ID in the intersection. Record
-                            // these intersections to be unioned later when we have the version for
-                            // the SSA merge block.
-                            intersection_to_var.push((
-                                *first,
-                                intersection.cloned().collect(),
-                                *var,
-                            ));
-                        } else {
-                            // Just collect the variables where a knot must be made, because...
-                            non_intersection_to_vars
-                                .entry((value1, value2))
-                                .or_default()
-                                .insert(*var);
-                        }
+                        // Group variables by pair of joined SSAIds.
+                        pair_to_vars
+                            .entry((value1, value2))
+                            .or_default()
+                            .insert(*var);
                     }
                 }
 
-                // ...we want to create a single knot per set of variables sharing values.
-                for ((value1, value2), vars) in non_intersection_to_vars {
+                // We create a single knot per set of variables sharing values.
+                let mut new_vars = HashMap::new();
+                let mut knot_values = HashMap::new();
+                let mut pair_to_knot = HashMap::new();
+                for ((value1, value2), vars) in pair_to_vars {
                     let knot_id = self
                         .knot_map
                         .intern_knot(block, vars.iter().cloned().collect());
@@ -380,21 +358,25 @@ impl<'a> AIContext<'a> {
                         new_vars.insert(var, knot);
                     }
                     knot_values.insert(knot_id, (value1, value2));
+                    pair_to_knot.insert((value1, value2), knot);
                 }
                 let (block_changed, new_block) = self
                     .update_new_block(block, SSABlock::Merge(ssa_pred1, ssa_pred2, knot_values));
+                assert_ne!(new_block, ssa_pred1);
+                assert_ne!(new_block, ssa_pred2);
 
-                // Now that we have a version for this block, merge the IDs in intersecting sets.
-                for (first, rest, var) in intersection_to_var {
-                    let canon_id = rest.into_iter().fold(first, |a, b| {
-                        union(
-                            a,
-                            b,
-                            &mut self.saturator,
-                            self.versions.get_mut(&new_block).unwrap(),
-                        )
-                    });
-                    new_vars.insert(var, canon_id);
+                // Now that we have a version for this block, merge the IDs in the intersection of
+                // the sets in the predecessor versions with the knots.
+                for ((value1, value2), knot) in pair_to_knot {
+                    let pred1_version = &self.versions[&ssa_pred1];
+                    let pred2_version = &self.versions[&ssa_pred2];
+                    let idom = self.dom_tree.idom(new_block).unwrap();
+                    let set1: HashSet<_> = pred1_version.as_ref().set(value1, Some(idom)).collect();
+                    let set2: HashSet<_> = pred2_version.as_ref().set(value2, Some(idom)).collect();
+                    let version = self.versions.get_mut(&new_block).unwrap();
+                    for id in set1.intersection(&set2) {
+                        union(knot, *id, &mut self.saturator, version);
+                    }
                 }
 
                 block_changed | self.update_vars(block, new_vars)
@@ -622,6 +604,23 @@ fn loop() {
 "#;
         let (value, mut saturator, version) = get_return_no_control_flow(text);
         let correct = saturator.intern(SSA::Constant(2), &version);
+        assert_eq!(correct, value);
+    }
+
+    #[test]
+    fn ai7() {
+        let text = r#"
+fn flow(x) {
+    if x {
+        y = !x;
+    } else {
+        y = x;
+    }
+    return y;
+}
+"#;
+        let (value, mut saturator, version) = get_return(text);
+        let correct = saturator.intern(SSA::Constant(0), &version);
         assert_eq!(correct, value);
     }
 }
