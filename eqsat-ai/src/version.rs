@@ -209,6 +209,10 @@ impl Version {
         }
     }
 
+    pub fn block(&self) -> SSABlockId {
+        self.block
+    }
+
     pub fn find(&self, id: SSAId) -> SSAId {
         self.uf.find(
             self.parent
