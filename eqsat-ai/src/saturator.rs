@@ -1,8 +1,8 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 
 use crate::nonssa::{Constant, Type};
 use crate::rw::{Tries, apply_rws};
-use crate::ssa::{SSA, SSABlockId, SSAId, SSAProgram};
+use crate::ssa::{SSA, SSAId, SSAProgram};
 use crate::version::Version;
 
 #[derive(Default, Debug)]
@@ -15,8 +15,8 @@ pub struct Saturator {
     // 1. Added to the hash-cons...
     // 2. Have had their canonical SSAId changed...
     // ...since the last iteration of rewriting.
-    // Every node that isn't a delta node is "stale". Store stale sets per version.
-    stale: HashMap<SSABlockId, HashSet<SSAId>>,
+    // Every node that isn't a delta node is "stale".
+    stale: HashSet<SSAId>,
 }
 
 impl Saturator {
@@ -26,11 +26,10 @@ impl Saturator {
 
     pub fn union(&mut self, x: SSAId, y: SSAId, version: &mut Version) -> SSAId {
         assert_eq!(self.ssa.ty(x), self.ssa.ty(y));
-        let stale = self.stale.entry(version.block()).or_default();
         version.union_with(x, y, |id| {
             // Record any SSAId whose canonical SSAId changed as a delta ID. Notably, this SSAId is
             // itself *not* canonical.
-            stale.remove(&id);
+            self.stale.remove(&id);
         })
     }
 
@@ -47,55 +46,48 @@ impl Saturator {
     }
 
     pub fn saturate(&mut self, version: &mut Version) {
-        let block = version.block();
-        loop {
-            // We are done saturating when there are no more delta nodes, or equivalently when every
-            // node is stale.
-            let stale = self.stale.entry(block).or_default();
-            if stale.len() == self.ssa.num_nodes() {
-                break;
-            }
+        while self.stale.len() != self.ssa.num_nodes() {
+            self.rebuild(version);
 
-            // Set up worklist for rebuilding. The worklist always contains the set of nodes using
-            // non-canonical IDs.
-            let mut worklist = VecDeque::new();
-            for id in 0..self.ssa.num_nodes() {
-                if !stale.contains(&id) && id != version.find_mut(id) {
-                    for user in self.ssa.users(id) {
-                        worklist.push_back(*user);
-                    }
-                }
-            }
-
-            // Perform rebuilding.
-            while let Some(id) = worklist.pop_front() {
-                let old_ssa = self.ssa.get(id);
-                let new_ssa = version.canonicalize(old_ssa);
-                // We should only ever insert a node into the worklist if it's non-canonical.
-                assert_ne!(old_ssa, new_ssa);
-                let new_id = self.ssa.intern(new_ssa);
-                version.union_with(id, new_id, |id| {
-                    stale.remove(&id);
-                    for user in self.ssa.users(id) {
-                        worklist.push_back(*user);
-                    }
-                });
-            }
-
-            // TODO: This reconstructs the tries from scratch. Do incremental trie construction!
+            // TODO: This rebuilds the tries from scratch. Do incremental trie construction!
             let mut tries = Tries::default();
             for id in 0..self.ssa.num_nodes() {
                 let node = self.ssa.get(id);
                 if version.is_canonical(node) {
                     tries.insert_tuple(version.find_mut(id), node, id, false);
-                    if !stale.contains(&id) {
+                    if !self.stale.contains(&id) {
                         tries.insert_tuple(version.find_mut(id), node, id, true);
                     }
                 }
-                stale.insert(id);
+                self.stale.insert(id);
             }
 
             apply_rws::<false>(&tries, self, version);
+        }
+    }
+
+    fn rebuild(&mut self, version: &mut Version) {
+        let mut worklist = VecDeque::new();
+        for id in 0..self.ssa.num_nodes() {
+            if !self.stale.contains(&id) && id != version.find_mut(id) {
+                for user in self.ssa.users(id) {
+                    worklist.push_back(*user);
+                }
+            }
+        }
+
+        while let Some(id) = worklist.pop_front() {
+            let old_ssa = self.ssa.get(id);
+            let new_ssa = version.canonicalize(old_ssa);
+            // We should only ever insert a node into the worklist if it's non-canonical.
+            assert_ne!(old_ssa, new_ssa);
+            let new_id = self.ssa.intern(new_ssa);
+            version.union_with(id, new_id, |id| {
+                self.stale.remove(&id);
+                for user in self.ssa.users(id) {
+                    worklist.push_back(*user);
+                }
+            });
         }
     }
 }
