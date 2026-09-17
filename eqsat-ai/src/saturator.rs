@@ -11,25 +11,30 @@ pub struct Saturator {
     // saturation - provide direct access to the `SSAProgram` for other manipulations.
     pub ssa: SSAProgram,
 
-    // Delta nodes are nodes that have either been:
+    // What nodes have either been:
     // 1. Added to the hash-cons...
     // 2. Have had their canonical SSAId changed...
     // ...since the last iteration of rewriting.
-    // Every node that isn't a delta node is "stale".
-    stale: HashSet<SSAId>,
+    delta: HashSet<SSAId>,
 }
 
 impl Saturator {
     pub fn intern(&mut self, ssa: SSA, version: &Version) -> SSAId {
-        version.find(self.ssa.intern(ssa))
+        let before = self.ssa.num_nodes();
+        let id = version.find(self.ssa.intern(ssa));
+        let after = self.ssa.num_nodes();
+        if before != after {
+            self.delta.insert(id);
+        }
+        id
     }
 
     pub fn union(&mut self, x: SSAId, y: SSAId, version: &mut Version) -> SSAId {
         assert_eq!(self.ssa.ty(x), self.ssa.ty(y));
         version.union_with(x, y, |id| {
-            // Record any SSAId whose canonical SSAId changed as a delta ID. Notably, this SSAId is
-            // itself *not* canonical.
-            self.stale.remove(&id);
+            // Record any SSAId whose canonical SSAId changed as a delta ID. Notably, the SSAId
+            // inserted here is itself *not* canonical.
+            self.delta.insert(id);
         })
     }
 
@@ -46,7 +51,7 @@ impl Saturator {
     }
 
     pub fn saturate(&mut self, version: &mut Version) {
-        while self.stale.len() != self.ssa.num_nodes() {
+        while !self.delta.is_empty() {
             self.rebuild(version);
 
             // TODO: This rebuilds the tries from scratch. Do incremental trie construction!
@@ -55,12 +60,15 @@ impl Saturator {
                 let node = self.ssa.get(id);
                 if version.is_canonical(node) {
                     tries.insert_tuple(version.find_mut(id), node, id, false);
-                    if !self.stale.contains(&id) {
-                        tries.insert_tuple(version.find_mut(id), node, id, true);
-                    }
                 }
-                self.stale.insert(id);
             }
+            for id in &self.delta {
+                let node = self.ssa.get(*id);
+                if version.is_canonical(node) {
+                    tries.insert_tuple(version.find_mut(*id), node, *id, true);
+                }
+            }
+            self.delta.clear();
 
             apply_rws::<false>(&tries, self, version);
         }
@@ -68,9 +76,10 @@ impl Saturator {
 
     fn rebuild(&mut self, version: &mut Version) {
         let mut worklist = VecDeque::new();
-        for id in 0..self.ssa.num_nodes() {
-            if !self.stale.contains(&id) && id != version.find_mut(id) {
-                for user in self.ssa.users(id) {
+        for id in &self.delta {
+            // The only nodes in `delta` that should fail this check are new nodes.
+            if *id != version.find_mut(*id) {
+                for user in self.ssa.users(*id) {
                     worklist.push_back(*user);
                 }
             }
@@ -83,7 +92,7 @@ impl Saturator {
             assert_ne!(old_ssa, new_ssa);
             let new_id = self.ssa.intern(new_ssa);
             version.union_with(id, new_id, |id| {
-                self.stale.remove(&id);
+                self.delta.insert(id);
                 for user in self.ssa.users(id) {
                     worklist.push_back(*user);
                 }

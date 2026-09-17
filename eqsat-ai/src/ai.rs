@@ -711,7 +711,7 @@ fn old_paper_example1(y: i64) {
     #[test]
     fn ai12() {
         let text = r#"
-fn old_paper_example2(x: i64) {
+fn old_paper_example1(x: i64) {
     y = x;
     while y < 10 {
         xt = x;
