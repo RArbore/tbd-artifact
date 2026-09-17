@@ -694,7 +694,7 @@ fn old_paper_example1(y: i64) {
         y = y + 1;
         x = x + 8;
         lhs = ((x + y) + z) * y;
-        rhs = 2 * y + (y * y + z * y);
+        rhs = (2 * y + y * y) + z * y;
         if lhs != rhs {
             z = 24;
         }
@@ -723,6 +723,20 @@ fn old_paper_example1(x: i64) {
 "#;
         let (value, mut saturator, version) = get_return(text);
         let correct = saturator.intern(SSA::Constant(Constant::I64(0)), &version);
+        assert_eq!(correct, value);
+    }
+
+    #[test]
+    fn ai13() {
+        let text = r#"
+fn simplified(y: i64) {
+    z = 42;
+    while y < 10 {}
+    return z + 7;
+}
+"#;
+        let (value, mut saturator, version) = get_return(text);
+        let correct = saturator.intern(SSA::Constant(Constant::I64(49)), &version);
         assert_eq!(correct, value);
     }
 
