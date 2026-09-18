@@ -249,6 +249,8 @@ impl<'a> AIContext<'a> {
         let VersionState::Mutable(version) = self.versions.get_mut(&version).unwrap() else {
             panic!()
         };
+        // By the time we get here, Constant(false) and Constant(true) have already been added to the
+        // hash-cons, so this will never create delta IDs.
         let val = self
             .saturator
             .intern(SSA::Constant(Constant::Bool(direction)), version);
@@ -299,19 +301,19 @@ impl<'a> AIContext<'a> {
         let ssa_pred = self.to_ssa_block(pred);
         let value = self.visit_expr(cond, pred, ssa_pred);
         assert_eq!(self.saturator.ssa.ty(value), Type::Bool);
+        let pred_version = self.versions[&ssa_pred].as_ref();
+        let false_value = self
+            .saturator
+            .intern(SSA::Constant(Constant::Bool(false)), pred_version);
+        let true_value = self
+            .saturator
+            .intern(SSA::Constant(Constant::Bool(true)), pred_version);
 
         // Saturate so that the condition is analyzed.
         self.ensure_analyzed(ssa_pred);
-        let pred_version = self.versions.get_mut(&ssa_pred).unwrap();
-        let value = pred_version.as_ref().find(value);
-        let always_false = value
-            == self
-                .saturator
-                .intern(SSA::Constant(Constant::Bool(false)), pred_version.as_ref());
-        let always_true = value
-            == self
-                .saturator
-                .intern(SSA::Constant(Constant::Bool(true)), pred_version.as_ref());
+        let pred_version = self.versions[&ssa_pred].as_ref();
+        let always_false = pred_version.find(value) == pred_version.find(false_value);
+        let always_true = pred_version.find(value) == pred_version.find(true_value);
         assert!(!always_false || !always_true);
 
         if always_false && direction || always_true && !direction {
@@ -363,15 +365,11 @@ impl<'a> AIContext<'a> {
                 self.ensure_analyzed(ssa_pred1);
                 self.ensure_analyzed(ssa_pred2);
 
-                let pred1_version = &self.versions[&ssa_pred1];
-                let pred2_version = &self.versions[&ssa_pred2];
-                let vars1 = &self.vars[&pred1];
-                let vars2 = &self.vars[&pred2];
                 let mut pair_to_vars: HashMap<(SSAId, SSAId), HashSet<Symbol>> = HashMap::new();
-                for (var, value1) in vars1 {
-                    if let Some(value2) = vars2.get(var) {
-                        let value1 = pred1_version.as_ref().find(*value1);
-                        let value2 = pred2_version.as_ref().find(*value2);
+                for (var, value1) in &self.vars[&pred1] {
+                    if let Some(value2) = self.vars[&pred2].get(var) {
+                        let value1 = self.versions[&ssa_pred1].as_ref().find(*value1);
+                        let value2 = self.versions[&ssa_pred2].as_ref().find(*value2);
                         // Group variables by pair of joined SSAIds.
                         pair_to_vars
                             .entry((value1, value2))
@@ -436,11 +434,8 @@ impl<'a> AIContext<'a> {
         self.ensure_analyzed(ssa_pred);
 
         // Re-collect the values so that they are canonical SSAIds.
-        let pred_version = self.versions.get_mut(&ssa_pred).unwrap();
-        let values = values
-            .into_iter()
-            .map(|id| pred_version.as_ref().find(id))
-            .collect();
+        let pred_version = self.versions[&ssa_pred].as_ref();
+        let values = values.into_iter().map(|id| pred_version.find(id)).collect();
         self.update_new_block(block, SSABlock::Return(ssa_pred, values));
         self.saturator
             .ssa

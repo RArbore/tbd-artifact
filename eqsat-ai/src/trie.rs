@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crate::nonssa::Constant;
 use crate::ssa::{SSA, SSAId};
 
-// The relational tuple representation is separate from the hashcons, so this doesn't have to be the
+// The relational tuple representation is separate from the hash-cons, so this doesn't have to be the
 // same type as SSAId.
 pub type TupleValue = u32;
 

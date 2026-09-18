@@ -22,7 +22,7 @@ impl Saturator {
         let before = self.ssa.num_nodes();
         let id = version.find(self.ssa.intern(ssa));
         let after = self.ssa.num_nodes();
-        if before != after {
+        if before != after && !ssa.is_param_or_knot() {
             self.delta.insert(id);
         }
         id
@@ -33,6 +33,9 @@ impl Saturator {
         version.union_with(x, y, |id| {
             // Record any SSAId whose canonical SSAId changed as a delta ID. Notably, the SSAId
             // inserted here is itself *not* canonical.
+            // NOTE: This should really ignore Param and Knot nodes, just as in `Saturator::intern`,
+            // but we don't have a good way to map from SSAId to SSA in this context. It's fine for
+            // these nodes to be added to the delta set, they will just be ignored by `apply_rws`.
             self.delta.insert(id);
         })
     }
