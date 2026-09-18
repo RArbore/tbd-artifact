@@ -748,6 +748,23 @@ fn simplified(y: i64) {
     }
 
     #[test]
+    fn ai14() {
+        let text = r#"
+fn tricky(x: bool) {
+    if x {
+        y = 7 + 2;
+    } else {
+        y = 7 + 2;
+    }
+    return y;
+}
+"#;
+        let (value, mut saturator, version) = get_return(text);
+        let correct = saturator.intern(SSA::Constant(Constant::I64(9)), &version);
+        assert_eq!(correct, value);
+    }
+
+    #[test]
     #[should_panic]
     fn bad_types1() {
         let text = r#"
