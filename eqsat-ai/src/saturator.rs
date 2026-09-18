@@ -12,23 +12,18 @@ pub struct Saturator {
 
     // What nodes have either been:
     // 1. Added to the hash-cons...
-    // 2. Have had their canonical SSAId changed (due to a union)...
+    // 2. Have had their canonical SSAId changed...
     // ...since the last iteration of rewriting.
-    delta_new: HashSet<SSAId>,
-    delta_union: HashSet<SSAId>,
+    delta: HashSet<SSAId>,
 }
 
 impl Saturator {
-    pub fn is_delta_new_empty(&self) -> bool {
-        self.delta_new.is_empty()
-    }
-    
     pub fn intern(&mut self, ssa: SSA, version: &Version) -> SSAId {
         let before = self.ssa.num_nodes();
         let id = version.find(self.ssa.intern(ssa));
         let after = self.ssa.num_nodes();
         if before != after && !ssa.is_param_or_knot() {
-            self.delta_new.insert(id);
+            self.delta.insert(id);
         }
         id
     }
@@ -41,12 +36,12 @@ impl Saturator {
             // NOTE: This should really ignore Param and Knot nodes, just as in `Saturator::intern`,
             // but we don't have a good way to map from SSAId to SSA in this context. It's fine for
             // these nodes to be added to the delta set, they will just be ignored by `apply_rws`.
-            self.delta_union.insert(id);
+            self.delta.insert(id);
         })
     }
 
     pub fn saturate(&mut self, version: &mut Version) {
-        while !self.delta_new.is_empty() || !self.delta_union.is_empty() {
+        while !self.delta.is_empty() {
             self.rebuild(version);
 
             // TODO: This rebuilds the tries from scratch. Do incremental trie construction!
@@ -57,26 +52,26 @@ impl Saturator {
                     tries.insert_tuple(version.find_mut(id), node, id, false);
                 }
             }
-            for id in self.delta_new.union(&self.delta_union) {
+            for id in &self.delta {
                 let node = self.ssa.get(*id);
                 if version.is_canonical(node) {
                     tries.insert_tuple(version.find_mut(*id), node, *id, true);
                 }
             }
-            self.delta_new.clear();
-            self.delta_union.clear();
+            self.delta.clear();
 
             apply_rws::<false>(&tries, self, version);
         }
     }
 
     fn rebuild(&mut self, version: &mut Version) {
-        // The worklist contains the nodes that use non-canonical SSAIds. It always contains only
-        // such nodes, because the set of non-canonical SSAIds strictly grows during rebuilding.
         let mut worklist = VecDeque::new();
-        for id in &self.delta_union {
-            for user in self.ssa.users(*id) {
-                worklist.push_back(*user);
+        for id in &self.delta {
+            // The only nodes in `delta` that should fail this check are new nodes.
+            if *id != version.find_mut(*id) {
+                for user in self.ssa.users(*id) {
+                    worklist.push_back(*user);
+                }
             }
         }
 
@@ -87,7 +82,7 @@ impl Saturator {
             assert_ne!(old_ssa, new_ssa);
             let new_id = self.ssa.intern(new_ssa);
             version.union_with(id, new_id, |id| {
-                self.delta_union.insert(id);
+                self.delta.insert(id);
                 for user in self.ssa.users(id) {
                     worklist.push_back(*user);
                 }

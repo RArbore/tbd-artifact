@@ -240,10 +240,7 @@ impl<'a> AIContext<'a> {
 
     fn ensure_analyzed(&mut self, version: SSABlockId) {
         match self.versions.get_mut(&version).unwrap() {
-            VersionState::Mutable(version) => {
-                self.saturator.saturate(version);
-                assert!(self.saturator.is_delta_new_empty());
-            }
+            VersionState::Mutable(version) => self.saturator.saturate(version),
             VersionState::Immutable(_) => {}
         }
     }
