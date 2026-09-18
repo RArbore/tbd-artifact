@@ -40,6 +40,7 @@ pub fn abstract_interpret(
         knot_map: KnotMap::default(),
         dom_tree: DomTree::default(),
         versions: HashMap::default(),
+        last_saturation: None,
         saturator,
     };
     // A faster interpreter would walk the non-SSA CFG in WTO. We use a worklist for two reasons.
@@ -115,6 +116,9 @@ struct AIContext<'a> {
     dom_tree: DomTree,
     // Store the latest version for each SSA block outside of the Saturator.
     versions: HashMap<SSABlockId, VersionState>,
+    // Store the last version that we performed saturation in. We need to track this to keep
+    // `Saturator::delta` up-to-date.
+    last_saturation: Option<SSABlockId>,
     // All building of the SSA program goes through the Saturator.
     saturator: &'a mut Saturator,
 }
@@ -238,9 +242,16 @@ impl<'a> AIContext<'a> {
         }
     }
 
-    fn ensure_analyzed(&mut self, version: SSABlockId) {
-        match self.versions.get_mut(&version).unwrap() {
-            VersionState::Mutable(version) => self.saturator.saturate(version),
+    fn ensure_analyzed(&mut self, block: SSABlockId) {
+        match self.versions.get_mut(&block).unwrap() {
+            VersionState::Mutable(version) => {
+                if let Some(_last_version) = self.last_saturation {
+                } else {
+                    assert_eq!(self.saturator.ssa.get_block(block), &SSABlock::Entry);
+                }
+                self.saturator.saturate(version);
+                self.last_saturation = Some(block);
+            }
             VersionState::Immutable(_) => {}
         }
     }
