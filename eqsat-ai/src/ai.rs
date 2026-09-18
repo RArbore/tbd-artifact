@@ -6,7 +6,7 @@ use std::rc::Rc;
 use symbol_table::GlobalSymbol as Symbol;
 
 use crate::dom::DomTree;
-use crate::nonssa::{Block, BlockId, Constant, Expr, NonSSAFunc};
+use crate::nonssa::{Block, BlockId, Constant, Expr, NonSSAFunc, Type};
 use crate::saturator::Saturator;
 use crate::ssa::{KnotId, SSA, SSABlock, SSABlockId, SSAId};
 use crate::version::Version;
@@ -255,12 +255,19 @@ impl<'a> AIContext<'a> {
             cond,
             &self.vars[&pred],
         );
+        assert_eq!(self.saturator.ssa.ty(value), Type::Bool);
 
         // Saturate so that the condition is analyzed.
         ensure_analyzed(&mut self.saturator, pred_version);
         let value = pred_version.as_ref().find(value);
-        let always_false = self.saturator.is_always_false(value, pred_version.as_ref());
-        let always_true = self.saturator.is_always_true(value, pred_version.as_ref());
+        let always_false = value
+            == self
+                .saturator
+                .intern(SSA::Constant(Constant::Bool(false)), pred_version.as_ref());
+        let always_true = value
+            == self
+                .saturator
+                .intern(SSA::Constant(Constant::Bool(true)), pred_version.as_ref());
         assert!(!always_false || !always_true);
 
         if always_false && direction || always_true && !direction {

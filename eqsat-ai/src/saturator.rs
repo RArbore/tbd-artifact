@@ -1,6 +1,5 @@
 use std::collections::{HashSet, VecDeque};
 
-use crate::nonssa::{Constant, Type};
 use crate::rw::{Tries, apply_rws};
 use crate::ssa::{SSA, SSAId, SSAProgram};
 use crate::version::Version;
@@ -36,18 +35,6 @@ impl Saturator {
             // inserted here is itself *not* canonical.
             self.delta.insert(id);
         })
-    }
-
-    pub fn is_always_false(&mut self, id: SSAId, version: &Version) -> bool {
-        assert_eq!(self.ssa.ty(id), Type::Bool);
-        assert_eq!(id, version.find(id));
-        self.intern(SSA::Constant(Constant::Bool(false)), version) == id
-    }
-
-    pub fn is_always_true(&mut self, id: SSAId, version: &Version) -> bool {
-        assert_eq!(self.ssa.ty(id), Type::Bool);
-        assert_eq!(id, version.find(id));
-        self.intern(SSA::Constant(Constant::Bool(true)), version) == id
     }
 
     pub fn saturate(&mut self, version: &mut Version) {
