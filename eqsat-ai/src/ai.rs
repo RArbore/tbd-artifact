@@ -339,6 +339,9 @@ impl<'a> AIContext<'a> {
                 // When the guard is necessary, we want to assume the guard condition is either true
                 // or false (depending on `direction`) in the created version.
                 self.assume(value, direction, new_block);
+                // We need to saturate after the union from the assumption, since jumping to a
+                // different version could cause the potential delta to be lost in this version.
+                self.ensure_analyzed(new_block);
                 block_changed
             };
             // Guards make no assignments.
@@ -428,6 +431,9 @@ impl<'a> AIContext<'a> {
                         self.union(knot, *id, new_block);
                     }
                 }
+                // We need to saturate after the unions above, since jumping to a different version
+                // could cause the potential delta to be lost in this version.
+                self.ensure_analyzed(new_block);
 
                 block_changed | self.update_vars(block, new_vars)
             }
