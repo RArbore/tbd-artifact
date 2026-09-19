@@ -41,6 +41,8 @@ pub fn abstract_interpret(
         dom_tree: DomTree::default(),
         versions: HashMap::default(),
         last_saturation: None,
+        examined_ids: HashMap::default(),
+        previously_examined: HashSet::default(),
         saturator,
     };
     // A faster interpreter would walk the non-SSA CFG in WTO. We use a worklist for two reasons.
@@ -119,6 +121,17 @@ struct AIContext<'a> {
     // Store the last version that we performed saturation in. We need to track this to keep
     // `Saturator::delta` up-to-date.
     last_saturation: Option<SSABlockId>,
+    // Store the set of SSAIds that were "examined" in each version. A SSAId is considered "examined"
+    // in a version if it was ever 1. added as a new node in the hash-cons or 2. was ever interned
+    // when the SSAId was in `previously_examined`. When moving out of a version with examined
+    // SSAIds, those SSAIds need to be added to `previously_examined`, so that they are re-examined.
+    // When moving into a version with examined SSAIds, those SSAIds need to be removed from
+    // `previously_examined`, so that they are not re-examined unnecessarily.
+    examined_ids: HashMap<SSABlockId, HashSet<SSAId>>,
+    // Store the set of SSAIds that were examined in versions that we've since left. At any point in
+    // time, if we intern a SSAId that is in this set, we treat it as a new node and add it to the
+    // delta set, even if it was already in the hash-cons!
+    previously_examined: HashSet<SSAId>,
     // All building of the SSA program goes through the Saturator.
     saturator: &'a mut Saturator,
 }
@@ -185,6 +198,8 @@ impl<'a> AIContext<'a> {
         };
         self.versions
             .insert(ssa_block_id, VersionState::Mutable(version));
+        // In the new version, nothing has been examined yet.
+        self.examined_ids.insert(ssa_block_id, HashSet::new());
 
         (is_new, ssa_block_id)
     }
@@ -245,7 +260,21 @@ impl<'a> AIContext<'a> {
     fn ensure_analyzed(&mut self, block: SSABlockId) {
         match self.versions.get_mut(&block).unwrap() {
             VersionState::Mutable(version) => {
-                if let Some(_last_version) = self.last_saturation {
+                if let Some(last_block) = self.last_saturation {
+                    let mut up_ids = HashSet::new();
+                    let mut down_ids = HashSet::new();
+                    self.dom_tree.lca(
+                        block,
+                        last_block,
+                        |up_id| up_ids.extend(self.examined_ids[&up_id].iter().cloned()),
+                        |down_id| down_ids.extend(self.examined_ids[&down_id].iter().cloned()),
+                    );
+                    for id in up_ids {
+                        self.previously_examined.insert(id);
+                    }
+                    for id in down_ids {
+                        self.previously_examined.remove(&id);
+                    }
                 } else {
                     assert_eq!(self.saturator.ssa.get_block(block), &SSABlock::Entry);
                 }
