@@ -40,7 +40,7 @@ pub fn abstract_interpret(
         knot_map: KnotMap::default(),
         dom_tree: DomTree::default(),
         versions: HashMap::default(),
-        last_saturation: None,
+        current_version: None,
         examined_ids: HashMap::default(),
         previously_examined: HashSet::default(),
         saturator,
@@ -118,9 +118,9 @@ struct AIContext<'a> {
     dom_tree: DomTree,
     // Store the latest version for each SSA block outside of the Saturator.
     versions: HashMap<SSABlockId, VersionState>,
-    // Store the last version that we performed saturation in. We need to track this to keep
-    // `Saturator::delta` up-to-date.
-    last_saturation: Option<SSABlockId>,
+    // Store the "current" version. Moving between versions requires careful maintenance of the delta
+    // set, so we use `move_to_version` to explicitly change this member.
+    current_version: Option<SSABlockId>,
     // Store the set of SSAIds that were "examined" in each version. A SSAId is considered "examined"
     // in a version if it was ever 1. added as a new node in the hash-cons or 2. was ever interned
     // when the SSAId was in `previously_examined`. When moving out of a version with examined
@@ -130,7 +130,7 @@ struct AIContext<'a> {
     examined_ids: HashMap<SSABlockId, HashSet<SSAId>>,
     // Store the set of SSAIds that were examined in versions that we've since left. At any point in
     // time, if we intern a SSAId that is in this set, we treat it as a new node and add it to the
-    // delta set, even if it was already in the hash-cons!
+    // delta set, even if it was already in the hash-cons (and then remove it from this set).
     previously_examined: HashSet<SSAId>,
     // All building of the SSA program goes through the Saturator.
     saturator: &'a mut Saturator,
@@ -232,7 +232,8 @@ impl<'a> AIContext<'a> {
         self.blocks[&block_id].0
     }
 
-    fn visit_expr(&mut self, expr: &Expr, vars: BlockId, version: SSABlockId) -> SSAId {
+    fn visit_expr(&mut self, expr: &Expr, vars: BlockId) -> SSAId {
+        let version = self.current_version.unwrap();
         use Expr::*;
         match expr {
             Constant { val } => {
@@ -244,48 +245,55 @@ impl<'a> AIContext<'a> {
                 version.find(self.vars[&vars][var])
             }
             Unary { op, input } => {
-                let input = self.visit_expr(input, vars, version);
+                let input = self.visit_expr(input, vars);
                 let version = self.versions[&version].as_ref();
                 self.saturator.intern(SSA::Unary(*op, input), version)
             }
             Binary { op, lhs, rhs } => {
-                let lhs = self.visit_expr(lhs, vars, version);
-                let rhs = self.visit_expr(rhs, vars, version);
+                let lhs = self.visit_expr(lhs, vars);
+                let rhs = self.visit_expr(rhs, vars);
                 let version = self.versions[&version].as_ref();
                 self.saturator.intern(SSA::Binary(*op, lhs, rhs), version)
             }
         }
     }
 
-    fn ensure_analyzed(&mut self, block: SSABlockId) {
-        match self.versions.get_mut(&block).unwrap() {
-            VersionState::Mutable(version) => {
-                if let Some(last_block) = self.last_saturation {
-                    let mut up_ids = HashSet::new();
-                    let mut down_ids = HashSet::new();
-                    self.dom_tree.lca(
-                        block,
-                        last_block,
-                        |up_id| up_ids.extend(self.examined_ids[&up_id].iter().cloned()),
-                        |down_id| down_ids.extend(self.examined_ids[&down_id].iter().cloned()),
-                    );
-                    for id in up_ids {
-                        self.previously_examined.insert(id);
-                    }
-                    for id in down_ids {
-                        self.previously_examined.remove(&id);
-                    }
-                } else {
-                    assert_eq!(self.saturator.ssa.get_block(block), &SSABlock::Entry);
-                }
-                self.saturator.saturate(version);
-                self.last_saturation = Some(block);
+    fn move_to_version(&mut self, block: SSABlockId) {
+        if let Some(last_block) = self.current_version {
+            // Traverse up and down the dominator tree from the last block to the new block.
+            let mut up_ids = HashSet::new();
+            let mut down_ids = HashSet::new();
+            self.dom_tree.lca(
+                block,
+                last_block,
+                |up_id| up_ids.extend(self.examined_ids[&up_id].iter().cloned()),
+                |down_id| down_ids.extend(self.examined_ids[&down_id].iter().cloned()),
+            );
+            // When popping a version, any examined nodes may need to be examined again.
+            for id in up_ids {
+                self.previously_examined.insert(id);
             }
+            // When pushing a version, any examined nodes will have their examination inherited by
+            // the destination version.
+            for id in down_ids {
+                self.previously_examined.remove(&id);
+            }
+        } else {
+            assert_eq!(self.saturator.ssa.get_block(block), &SSABlock::Entry);
+        }
+        self.current_version = Some(block);
+    }
+
+    fn ensure_analyzed(&mut self) {
+        let version = self.current_version.unwrap();
+        match self.versions.get_mut(&version).unwrap() {
+            VersionState::Mutable(version) => self.saturator.saturate(version),
             VersionState::Immutable(_) => {}
         }
     }
 
-    fn assume(&mut self, id: SSAId, direction: bool, version: SSABlockId) {
+    fn assume(&mut self, id: SSAId, direction: bool) {
+        let version = self.current_version.unwrap();
         let VersionState::Mutable(version) = self.versions.get_mut(&version).unwrap() else {
             panic!()
         };
@@ -297,7 +305,8 @@ impl<'a> AIContext<'a> {
         self.saturator.union(id, val, version);
     }
 
-    fn union(&mut self, a: SSAId, b: SSAId, version: SSABlockId) -> SSAId {
+    fn union(&mut self, a: SSAId, b: SSAId) -> SSAId {
+        let version = self.current_version.unwrap();
         let VersionState::Mutable(version) = self.versions.get_mut(&version).unwrap() else {
             panic!()
         };
@@ -339,7 +348,8 @@ impl<'a> AIContext<'a> {
 
     fn visit_guard(&mut self, block: BlockId, pred: BlockId, cond: &Expr, direction: bool) -> bool {
         let ssa_pred = self.to_ssa_block(pred);
-        let value = self.visit_expr(cond, pred, ssa_pred);
+        self.move_to_version(ssa_pred);
+        let value = self.visit_expr(cond, pred);
         assert_eq!(self.saturator.ssa.ty(value), Type::Bool);
         let pred_version = self.versions[&ssa_pred].as_ref();
         let false_value = self
@@ -350,7 +360,7 @@ impl<'a> AIContext<'a> {
             .intern(SSA::Constant(Constant::Bool(true)), pred_version);
 
         // Saturate so that the condition is analyzed.
-        self.ensure_analyzed(ssa_pred);
+        self.ensure_analyzed();
         let pred_version = self.versions[&ssa_pred].as_ref();
         let always_false = pred_version.find(value) == pred_version.find(false_value);
         let always_true = pred_version.find(value) == pred_version.find(true_value);
@@ -365,12 +375,13 @@ impl<'a> AIContext<'a> {
                 let (block_changed, new_block) =
                     self.update_new_block(block, SSABlock::Guard(ssa_pred, value, direction));
 
+                self.move_to_version(new_block);
                 // When the guard is necessary, we want to assume the guard condition is either true
                 // or false (depending on `direction`) in the created version.
-                self.assume(value, direction, new_block);
+                self.assume(value, direction);
                 // We need to saturate after the union from the assumption, since jumping to a
                 // different version could cause the potential delta to be lost in this version.
-                self.ensure_analyzed(new_block);
+                self.ensure_analyzed();
                 block_changed
             };
             // Guards make no assignments.
@@ -380,7 +391,8 @@ impl<'a> AIContext<'a> {
 
     fn visit_assign(&mut self, block: BlockId, pred: BlockId, var: Symbol, expr: &Expr) -> bool {
         let ssa_pred = self.to_ssa_block(pred);
-        let value = self.visit_expr(expr, pred, ssa_pred);
+        self.move_to_version(ssa_pred);
+        let value = self.visit_expr(expr, pred);
         let mut vars = self.vars[&pred].clone();
         vars.insert(var, value);
         self.update_block(block, ssa_pred) | self.update_vars(block, vars)
@@ -405,8 +417,10 @@ impl<'a> AIContext<'a> {
                 assert_ne!(ssa_pred1, ssa_pred2);
 
                 // Saturate because discovered equalities may help us avoid making knots.
-                self.ensure_analyzed(ssa_pred1);
-                self.ensure_analyzed(ssa_pred2);
+                self.move_to_version(ssa_pred1);
+                self.ensure_analyzed();
+                self.move_to_version(ssa_pred2);
+                self.ensure_analyzed();
 
                 let mut pair_to_vars: HashMap<(SSAId, SSAId), HashSet<Symbol>> = HashMap::new();
                 for (var, value1) in &self.vars[&pred1] {
@@ -447,6 +461,7 @@ impl<'a> AIContext<'a> {
                     .update_new_block(block, SSABlock::Merge(ssa_pred1, ssa_pred2, knot_values));
                 assert_ne!(new_block, ssa_pred1);
                 assert_ne!(new_block, ssa_pred2);
+                self.move_to_version(new_block);
 
                 // Now that we have a version for this block, merge the IDs in the intersection of
                 // the sets in the predecessor versions with the knots.
@@ -457,12 +472,12 @@ impl<'a> AIContext<'a> {
                     let set1: HashSet<_> = pred1_version.as_ref().set(value1, Some(idom)).collect();
                     let set2: HashSet<_> = pred2_version.as_ref().set(value2, Some(idom)).collect();
                     for id in set1.intersection(&set2) {
-                        self.union(knot, *id, new_block);
+                        self.union(knot, *id);
                     }
                 }
                 // We need to saturate after the unions above, since jumping to a different version
                 // could cause the potential delta to be lost in this version.
-                self.ensure_analyzed(new_block);
+                self.ensure_analyzed();
 
                 block_changed | self.update_vars(block, new_vars)
             }
@@ -471,13 +486,14 @@ impl<'a> AIContext<'a> {
 
     fn visit_return(&mut self, block: BlockId, pred: BlockId, exprs: &[Expr]) -> bool {
         let ssa_pred = self.to_ssa_block(pred);
+        self.move_to_version(ssa_pred);
         let values: Vec<_> = exprs
             .into_iter()
-            .map(|expr| self.visit_expr(expr, pred, ssa_pred))
+            .map(|expr| self.visit_expr(expr, pred))
             .collect();
 
         // Saturate so that the returned SSAIds are analyzed.
-        self.ensure_analyzed(ssa_pred);
+        self.ensure_analyzed();
 
         // Re-collect the values so that they are canonical SSAIds.
         let pred_version = self.versions[&ssa_pred].as_ref();
