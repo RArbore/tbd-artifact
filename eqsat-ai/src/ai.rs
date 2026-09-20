@@ -232,28 +232,31 @@ impl<'a> AIContext<'a> {
         self.blocks[&block_id].0
     }
 
+    fn intern(&mut self, ssa: SSA, version: SSABlockId) -> SSAId {
+        self.saturator.intern_custom(
+            ssa,
+            self.versions[&version].as_ref(),
+            |id| self.previously_examined.remove(&id),
+            |id| {
+                self.examined_ids.entry(version).or_default().insert(id);
+            },
+        )
+    }
+
     fn visit_expr(&mut self, expr: &Expr, vars: BlockId) -> SSAId {
         let version = self.current_version.unwrap();
         use Expr::*;
         match expr {
-            Constant { val } => {
-                let version = self.versions[&version].as_ref();
-                self.saturator.intern(SSA::Constant(*val), version)
-            }
-            Variable { var } => {
-                let version = self.versions[&version].as_ref();
-                version.find(self.vars[&vars][var])
-            }
+            Constant { val } => self.intern(SSA::Constant(*val), version),
+            Variable { var } => self.versions[&version].as_ref().find(self.vars[&vars][var]),
             Unary { op, input } => {
                 let input = self.visit_expr(input, vars);
-                let version = self.versions[&version].as_ref();
-                self.saturator.intern(SSA::Unary(*op, input), version)
+                self.intern(SSA::Unary(*op, input), version)
             }
             Binary { op, lhs, rhs } => {
                 let lhs = self.visit_expr(lhs, vars);
                 let rhs = self.visit_expr(rhs, vars);
-                let version = self.versions[&version].as_ref();
-                self.saturator.intern(SSA::Binary(*op, lhs, rhs), version)
+                self.intern(SSA::Binary(*op, lhs, rhs), version)
             }
         }
     }
@@ -266,20 +269,21 @@ impl<'a> AIContext<'a> {
             assert!(self.saturator.is_delta_empty());
 
             // Traverse up and down the dominator tree from the last block to the new block.
-            let mut up_ids = HashSet::new();
-            let mut down_ids = HashSet::new();
+            let mut up_ids = vec![];
+            let mut down_ids = vec![];
             self.dom_tree.lca(
-                block,
                 last_block,
+                block,
                 |up_id| up_ids.extend(self.examined_ids[&up_id].iter().cloned()),
                 |down_id| down_ids.extend(self.examined_ids[&down_id].iter().cloned()),
             );
+
             // When popping a version, any examined nodes may need to be examined again.
             for id in up_ids {
-                self.previously_examined.insert(id);
+                assert!(self.previously_examined.insert(id));
             }
             // When pushing a version, any examined nodes will have their examination inherited by
-            // the destination version.
+            // the destination version, so we don't need to re-examine them.
             for id in down_ids {
                 self.previously_examined.remove(&id);
             }
@@ -295,19 +299,17 @@ impl<'a> AIContext<'a> {
             VersionState::Mutable(version) => self.saturator.saturate(version),
             VersionState::Immutable(_) => {}
         }
+        assert!(self.saturator.is_delta_empty());
     }
 
     fn assume(&mut self, id: SSAId, direction: bool) {
-        let version = self.current_version.unwrap();
-        let VersionState::Mutable(version) = self.versions.get_mut(&version).unwrap() else {
-            panic!()
-        };
         // By the time we get here, Constant(false) and Constant(true) have already been added to the
         // hash-cons, so this will never create delta IDs.
-        let val = self
-            .saturator
-            .intern(SSA::Constant(Constant::Bool(direction)), version);
-        self.saturator.union(id, val, version);
+        let val = self.intern(
+            SSA::Constant(Constant::Bool(direction)),
+            self.current_version.unwrap(),
+        );
+        self.union(id, val);
     }
 
     fn union(&mut self, a: SSAId, b: SSAId) -> SSAId {
@@ -356,13 +358,8 @@ impl<'a> AIContext<'a> {
         self.move_to_version(ssa_pred);
         let value = self.visit_expr(cond, pred);
         assert_eq!(self.saturator.ssa.ty(value), Type::Bool);
-        let pred_version = self.versions[&ssa_pred].as_ref();
-        let false_value = self
-            .saturator
-            .intern(SSA::Constant(Constant::Bool(false)), pred_version);
-        let true_value = self
-            .saturator
-            .intern(SSA::Constant(Constant::Bool(true)), pred_version);
+        let false_value = self.intern(SSA::Constant(Constant::Bool(false)), ssa_pred);
+        let true_value = self.intern(SSA::Constant(Constant::Bool(true)), ssa_pred);
 
         // Saturate so that the condition is analyzed.
         self.ensure_analyzed();
@@ -762,7 +759,7 @@ fn old_paper_example1(y: i64) {
 "#;
         let (value, mut saturator, version) = get_return(text);
         let correct = saturator.intern(SSA::Constant(Constant::I64(49)), &version);
-        //assert_eq!(correct, value);
+        assert_eq!(correct, value);
     }
 
     #[test]
@@ -780,7 +777,7 @@ fn old_paper_example2(x: i64) {
 "#;
         let (value, mut saturator, version) = get_return(text);
         let correct = saturator.intern(SSA::Constant(Constant::I64(0)), &version);
-        //assert_eq!(correct, value);
+        assert_eq!(correct, value);
     }
 
     #[test]
@@ -794,7 +791,7 @@ fn simplified(y: i64) {
 "#;
         let (value, mut saturator, version) = get_return(text);
         let correct = saturator.intern(SSA::Constant(Constant::I64(49)), &version);
-        //assert_eq!(correct, value);
+        assert_eq!(correct, value);
     }
 
     #[test]
@@ -811,7 +808,25 @@ fn tricky(x: bool) {
 "#;
         let (value, mut saturator, version) = get_return(text);
         let correct = saturator.intern(SSA::Constant(Constant::I64(9)), &version);
-        //assert_eq!(correct, value);
+        assert_eq!(correct, value);
+    }
+
+    #[test]
+    fn ai15() {
+        let text = r#"
+fn simplified(y: i64) {
+    while y < 10 {
+        y = y + 1;
+        lhs = 3 * y;
+        rhs = 2 * y;
+        if lhs != rhs {}
+    }
+    return 7;
+}
+"#;
+        let (value, mut saturator, version) = get_return(text);
+        let correct = saturator.intern(SSA::Constant(Constant::I64(7)), &version);
+        assert_eq!(correct, value);
     }
 
     #[test]

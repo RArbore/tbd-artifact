@@ -19,10 +19,25 @@ pub struct Saturator {
 
 impl Saturator {
     pub fn intern(&mut self, ssa: SSA, version: &Version) -> SSAId {
+        self.intern_custom(ssa, version, |_| false, |_| {})
+    }
+
+    pub fn intern_custom<F1, F2>(
+        &mut self,
+        ssa: SSA,
+        version: &Version,
+        is_new: F1,
+        on_new: F2,
+    ) -> SSAId
+    where
+        F1: FnOnce(SSAId) -> bool,
+        F2: FnOnce(SSAId),
+    {
         let before = self.ssa.num_nodes();
         let id = version.find(self.ssa.intern(ssa));
         let after = self.ssa.num_nodes();
-        if before != after && !ssa.is_param_or_knot() {
+        if !ssa.is_param_or_knot() && (before != after || is_new(id)) {
+            on_new(id);
             self.delta.insert(id);
         }
         id
