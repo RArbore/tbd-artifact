@@ -28,6 +28,10 @@ impl Saturator {
         id
     }
 
+    pub fn is_delta_empty(&self) -> bool {
+        self.delta.is_empty()
+    }
+
     pub fn union(&mut self, x: SSAId, y: SSAId, version: &mut Version) -> SSAId {
         assert_eq!(self.ssa.ty(x), self.ssa.ty(y));
         version.union_with(x, y, |id| {
