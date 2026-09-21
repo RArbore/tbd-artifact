@@ -719,6 +719,15 @@ pub fn compile_rw(contents: &str) -> String {
             }
         })
         .collect();
+    let trie_clear_delta: TokenStream = needed_tries
+        .iter()
+        .filter(|trie| trie.is_delta)
+        .map(|trie| quote! { self.#trie.clear(); })
+        .collect();
+    let trie_clear_all: TokenStream = needed_tries
+        .iter()
+        .map(|trie| quote! { self.#trie.clear(); })
+        .collect();
     let trie_struct = quote! {
         #[derive(Default)]
         pub struct Tries {
@@ -740,6 +749,14 @@ pub fn compile_rw(contents: &str) -> String {
                     }
                     SSA::Knot(_, _) => {}
                 }
+            }
+
+            pub fn clear_delta(&mut self) {
+                #trie_clear_delta
+            }
+
+            pub fn clear_all(&mut self) {
+                #trie_clear_all
             }
         }
     };

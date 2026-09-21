@@ -1,10 +1,11 @@
+use core::mem::take;
 use std::collections::{HashSet, VecDeque};
 
 use crate::rw::{Tries, apply_rws};
 use crate::ssa::{SSA, SSAId, SSAProgram};
 use crate::version::Version;
 
-#[derive(Default, Debug)]
+#[derive(Default)]
 pub struct Saturator {
     // `Saturator` is just a thing wrapper around `SSAProgram` that provides utilities for equality
     // saturation - provide direct access to the `SSAProgram` for other manipulations.
@@ -15,6 +16,10 @@ pub struct Saturator {
     // 2. Have had their canonical SSAId changed (due to a union)...
     // ...since the last iteration of rewriting.
     delta: HashSet<SSAId>,
+
+    // Incrementally maintain the tries that get used for e-matching. Public so that `apply_rws` can
+    // refer to it.
+    pub tries: Tries,
 }
 
 impl Saturator {
@@ -63,23 +68,28 @@ impl Saturator {
         while !self.delta.is_empty() {
             self.rebuild(version);
 
-            // TODO: This rebuilds the tries from scratch. Do incremental trie construction!
-            let mut tries = Tries::default();
-            for id in 0..self.ssa.num_nodes() {
-                let node = self.ssa.get(id);
-                if version.is_canonical(node) {
-                    tries.insert_tuple(version.find_mut(id), node, id, false);
-                }
-            }
+            // We have to do this song and dance because we want to store the `Tries` struct across
+            // calls to `saturate`, but `apply_rws` needs `self` for calls to `intern` and `union`
+            // while it needs live references to tries being iterated.
+            let mut tries = take(&mut self.tries);
+            // The delta tries get created from scratch every iteration.
             for id in &self.delta {
                 let node = self.ssa.get(*id);
                 if version.is_canonical(node) {
                     tries.insert_tuple(version.find_mut(*id), node, *id, true);
                 }
             }
+            for id in 0..self.ssa.num_nodes() {
+                let node = self.ssa.get(id);
+                if version.is_canonical(node) {
+                    tries.insert_tuple(version.find_mut(id), node, id, false);
+                }
+            }
             self.delta.clear();
 
             apply_rws::<false>(&tries, self, version);
+            tries.clear_all();
+            self.tries = tries;
         }
     }
 

@@ -100,7 +100,6 @@ impl AsRef<Version> for VersionState {
     }
 }
 
-#[derive(Debug)]
 struct AIContext<'a> {
     name: Symbol,
     // At each (visited) original block, map each variable to an SSA value.

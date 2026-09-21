@@ -95,6 +95,30 @@ impl Trie {
             }
         }
     }
+
+    pub fn remove_tuple<I>(&mut self, mut iter: I, id: SSAId) -> bool
+    where
+        I: Iterator<Item = TupleValue>,
+    {
+        use Trie::*;
+        if let Some(value) = iter.next() {
+            let Internal(node) = self else { panic!() };
+            if node.get_mut(&value).unwrap().remove_tuple(iter, id) {
+                node.remove(&value);
+                node.is_empty()
+            } else {
+                false
+            }
+        } else {
+            let Leaf(ids) = self else { panic!() };
+            assert!(ids.remove(&id));
+            ids.is_empty()
+        }
+    }
+
+    pub fn clear(&mut self) {
+        *self = Trie::default();
+    }
 }
 
 impl Default for Trie {
@@ -125,11 +149,21 @@ mod tests {
                 ]))
             )]))
         );
+        trie1.insert_tuple([0, 2].into_iter(), 44);
+        trie1.remove_tuple([0, 2].into_iter(), 44);
 
         let mut trie2 = Trie::default();
         trie2.insert_tuple([0, 2].into_iter(), 43);
         trie2.insert_tuple([0, 2].into_iter(), 42);
         trie2.insert_tuple([0, 1].into_iter(), 7);
+        assert_eq!(trie1, trie2);
+        trie1.insert_tuple([0, 1].into_iter(), 9);
+        assert_ne!(trie1, trie2);
+        trie2.insert_tuple([0, 1].into_iter(), 9);
+        assert_eq!(trie1, trie2);
+        trie1.remove_tuple([0, 1].into_iter(), 9);
+        assert_ne!(trie1, trie2);
+        trie2.remove_tuple([0, 1].into_iter(), 9);
         assert_eq!(trie1, trie2);
     }
 
@@ -139,5 +173,21 @@ mod tests {
         let mut trie = Trie::default();
         trie.insert_tuple([0, 2].into_iter(), 9);
         trie.insert_tuple([0, 2, 3].into_iter(), 42);
+    }
+
+    #[test]
+    #[should_panic]
+    fn trie3() {
+        let mut trie = Trie::default();
+        trie.insert_tuple([0, 2, 3].into_iter(), 42);
+        trie.remove_tuple([0, 2, 3].into_iter(), 41);
+    }
+
+    #[test]
+    #[should_panic]
+    fn trie4() {
+        let mut trie = Trie::default();
+        trie.insert_tuple([0, 2, 3].into_iter(), 42);
+        trie.remove_tuple([0, 2, 1].into_iter(), 42);
     }
 }

@@ -25,5 +25,5 @@ fn main() {
         let nonssa = convert_to_cfg(ast);
         abstract_interpret(&mut saturator, name, &nonssa);
     }
-    println!("{:?}", saturator);
+    println!("{:?}", saturator.ssa);
 }
