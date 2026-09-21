@@ -1,59 +1,101 @@
-use core::mem::take;
-use std::collections::{HashSet, VecDeque};
+use core::mem::{replace, take};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::rc::Rc;
 
+use crate::dom::DomTree;
 use crate::rw::{Tries, apply_rws};
-use crate::ssa::{SSA, SSAId, SSAProgram};
+use crate::ssa::{SSA, SSABlock, SSABlockId, SSAId, SSAProgram};
 use crate::version::Version;
 
-#[derive(Default)]
-pub struct Saturator {
-    // `Saturator` is just a thing wrapper around `SSAProgram` that provides utilities for equality
-    // saturation - provide direct access to the `SSAProgram` for other manipulations.
-    pub ssa: SSAProgram,
+#[derive(Debug)]
+enum VersionState {
+    // If the version is mutable, it is a leaf version.
+    Mutable(Version),
+    // If the version is immutable, it is a parent version of some child version.
+    Immutable(Rc<Version>),
+}
 
+impl AsRef<Version> for VersionState {
+    fn as_ref(&self) -> &Version {
+        use VersionState::*;
+        match self {
+            Mutable(version) => version,
+            Immutable(version) => version,
+        }
+    }
+}
+
+// Because Rust does not have field borrows, we have to do silly things sometimes to convey to the
+// borrow checker that we are not violating any of its rules. This struct should be considered as
+// part of `Saturator` directly. It handles all the facilities that just deal with SSAIds.
+#[derive(Default)]
+struct IDManager {
     // What nodes have either been:
     // 1. Added to the hash-cons...
     // 2. Have had their canonical SSAId changed (due to a union)...
     // ...since the last iteration of rewriting.
     delta: HashSet<SSAId>,
+    // Incrementally maintain dominator analysis.
+    dom_tree: DomTree,
+    // Store the latest version for each SSA block.
+    versions: HashMap<SSABlockId, VersionState>,
+    // Store the "current" version. Moving between versions requires careful maintenance of the delta
+    // set, so we use `move_to_version` to explicitly change this member.
+    current_version: Option<SSABlockId>,
+    // Store the set of SSAIds that were "examined" in each version. A SSAId is considered "examined"
+    // in a version if it was ever 1. added as a new node in the hash-cons while at that version or
+    // 2. was ever interned when the SSAId was in `previously_examined` while at that version. When
+    // moving out of a version with examined SSAIds, those SSAIds need to be added to
+    // `previously_examined`, so that they are re-examined if they are re-interned. When moving
+    // into a version with examined SSAIds, those SSAIds need to be removed from
+    // `previously_examined`, so that they are not re-examined unnecessarily.
+    examined_ids: HashMap<SSABlockId, HashSet<SSAId>>,
+    // Store the set of SSAIds that were examined in versions that we've since left. At any point in
+    // time, if we intern a SSAId that is in this set, we treat it as a new node and add it to the
+    // delta set (and remove it from this set), even if it was already in the hash-cons.
+    previously_examined: HashSet<SSAId>,
+}
+
+#[derive(Default)]
+pub struct Saturator {
+    pub ssa: SSAProgram,
+    ids: IDManager,
 
     // Incrementally maintain the tries that get used for e-matching. Public so that `apply_rws` can
     // refer to it.
     pub tries: Tries,
 }
 
-impl Saturator {
-    pub fn intern(&mut self, ssa: SSA, version: &Version) -> SSAId {
-        self.intern_custom(ssa, version, |_| false, |_| {})
-    }
-
-    pub fn intern_custom<F1, F2>(
-        &mut self,
-        ssa: SSA,
-        version: &Version,
-        is_new: F1,
-        on_new: F2,
-    ) -> SSAId
-    where
-        F1: FnOnce(SSAId) -> bool,
-        F2: FnOnce(SSAId),
-    {
-        let before = self.ssa.num_nodes();
-        let id = version.find(self.ssa.intern(ssa));
-        let after = self.ssa.num_nodes();
-        if !ssa.is_param_or_knot() && (before != after || is_new(id)) {
-            on_new(id);
-            self.delta.insert(id);
+impl IDManager {
+    pub fn find(&mut self, mut id: SSAId) -> SSAId {
+        if let Some(version) = self.current_version {
+            id = self.find_in_version(id, version);
         }
         id
     }
 
-    pub fn is_delta_empty(&self) -> bool {
-        self.delta.is_empty()
+    pub fn find_in_version(&mut self, id: SSAId, version: SSABlockId) -> SSAId {
+        match self.versions.get_mut(&version).unwrap() {
+            VersionState::Mutable(version) => version.find_mut(id),
+            VersionState::Immutable(version) => version.find(id),
+        }
     }
 
-    pub fn union(&mut self, x: SSAId, y: SSAId, version: &mut Version) -> SSAId {
-        assert_eq!(self.ssa.ty(x), self.ssa.ty(y));
+    pub fn union(&mut self, x: SSAId, y: SSAId) -> SSAId {
+        self.union_with(x, y, |_| {})
+    }
+
+    pub fn union_with<F>(&mut self, x: SSAId, y: SSAId, mut f: F) -> SSAId
+    where
+        F: FnMut(SSAId),
+    {
+        let VersionState::Mutable(version) = self
+            .versions
+            .get_mut(&self.current_version.unwrap())
+            .unwrap()
+        else {
+            panic!()
+        };
         version.union_with(x, y, |id| {
             // Record any SSAId whose canonical SSAId changed as a delta ID. Notably, the SSAId
             // inserted here is itself *not* canonical.
@@ -61,61 +103,226 @@ impl Saturator {
             // but we don't have a good way to map from SSAId to SSA in this context. It's fine for
             // these nodes to be added to the delta set, they will just be ignored by `apply_rws`.
             self.delta.insert(id);
+            f(id);
         })
     }
 
-    pub fn saturate(&mut self, version: &mut Version) {
-        while !self.delta.is_empty() {
-            self.rebuild(version);
+    pub fn is_canonical(&mut self, ssa: SSA) -> bool {
+        self.current_version
+            .map(|current_version| {
+                let VersionState::Mutable(version) =
+                    self.versions.get_mut(&current_version).unwrap()
+                else {
+                    panic!()
+                };
+                version.is_canonical(ssa)
+            })
+            .unwrap_or(true)
+    }
+
+    pub fn canonicalize(&mut self, ssa: SSA) -> SSA {
+        self.current_version
+            .map(|current_version| {
+                let VersionState::Mutable(version) =
+                    self.versions.get_mut(&current_version).unwrap()
+                else {
+                    panic!()
+                };
+                version.canonicalize(ssa)
+            })
+            .unwrap_or(ssa)
+    }
+
+    pub fn idom(&self, id: SSABlockId) -> Option<SSABlockId> {
+        self.dom_tree.idom(id)
+    }
+
+    pub fn set_in_version(
+        &self,
+        id: SSAId,
+        up_to: Option<SSABlockId>,
+        version: SSABlockId,
+    ) -> impl Iterator<Item = SSAId> + '_ {
+        self.versions[&version].as_ref().set(id, up_to)
+    }
+
+    pub fn create_version(&mut self, block_id: SSABlockId, block: &SSABlock) {
+        // Update the dominator tree incrementally when adding new SSA blocks.
+        self.dom_tree.visit_block(block_id, block);
+        let version = if let Some(idom) = self.dom_tree.idom(block_id) {
+            let state = self.versions.get_mut(&idom).unwrap();
+            use VersionState::*;
+            let rc = match state {
+                Mutable(version) => {
+                    // Why isn't there a core::mem primitive for this?
+                    let rc = Rc::new(replace(version, Version::root(!0)));
+                    *state = Immutable(Rc::clone(&rc));
+                    rc
+                }
+                Immutable(rc) => Rc::clone(rc),
+            };
+            Version::child(rc, block_id)
+        } else {
+            // The entry block gets the root version.
+            Version::root(block_id)
+        };
+        self.versions
+            .insert(block_id, VersionState::Mutable(version));
+        // In the new version, nothing has been examined yet.
+        self.examined_ids.insert(block_id, HashSet::new());
+    }
+
+    fn move_to_version(&mut self, block_id: SSABlockId, block: &SSABlock) {
+        if let Some(last_block) = self.current_version {
+            if block_id == last_block {
+                return;
+            }
+            assert!(self.delta.is_empty());
+
+            // Traverse up and down the dominator tree from the last block to the new block.
+            let mut up_ids = vec![];
+            let mut down_ids = vec![];
+            self.dom_tree.lca(
+                last_block,
+                block_id,
+                |up_id| up_ids.extend(self.examined_ids[&up_id].iter().cloned()),
+                |down_id| down_ids.extend(self.examined_ids[&down_id].iter().cloned()),
+            );
+
+            // When popping a version, any examined nodes may need to be examined again.
+            for id in up_ids {
+                assert!(self.previously_examined.insert(id));
+            }
+            // When pushing a version, any examined nodes will have their examination inherited by
+            // the destination version, so we don't need to re-examine them.
+            for id in down_ids {
+                self.previously_examined.remove(&id);
+            }
+        } else {
+            assert_eq!(block, &SSABlock::Entry);
+        }
+        self.current_version = Some(block_id);
+    }
+}
+
+impl Saturator {
+    pub fn find(&mut self, id: SSAId) -> SSAId {
+        self.ids.find(id)
+    }
+
+    pub fn find_in_version(&mut self, id: SSAId, version: SSABlockId) -> SSAId {
+        self.ids.find_in_version(id, version)
+    }
+
+    pub fn union(&mut self, x: SSAId, y: SSAId) -> SSAId {
+        assert_eq!(self.ssa.ty(x), self.ssa.ty(y));
+        self.ids.union(x, y)
+    }
+
+    pub fn idom(&self, id: SSABlockId) -> Option<SSABlockId> {
+        self.ids.idom(id)
+    }
+
+    pub fn set_in_version(
+        &self,
+        id: SSAId,
+        up_to: Option<SSABlockId>,
+        version: SSABlockId,
+    ) -> impl Iterator<Item = SSAId> + '_ {
+        self.ids.set_in_version(id, up_to, version)
+    }
+
+    pub fn create_version(&mut self, block: SSABlockId) {
+        self.ids.create_version(block, self.ssa.get_block(block));
+    }
+
+    pub fn move_to_version(&mut self, block: SSABlockId) {
+        self.ids.move_to_version(block, self.ssa.get_block(block));
+    }
+
+    pub fn intern(&mut self, ssa: SSA) -> SSAId {
+        if ssa.is_param_or_knot() {
+            // Param and Knot nodes never get added to the delta set because they are never matched
+            // on by any rules.
+            let id = self.ssa.intern(ssa);
+            self.ids.find(id)
+        } else {
+            let before = self.ssa.num_nodes();
+            let id = self.ssa.intern(ssa);
+            let canon_id = self.ids.find(id);
+            let after = self.ssa.num_nodes();
+            if before != after || self.ids.previously_examined.remove(&canon_id) {
+                self.ids
+                    .examined_ids
+                    .entry(self.ids.current_version.unwrap())
+                    .or_default()
+                    .insert(canon_id);
+                self.ids.delta.insert(canon_id);
+            }
+            canon_id
+        }
+    }
+
+    pub fn saturate(&mut self) {
+        if let VersionState::Immutable(_) = self.ids.versions[&self.ids.current_version.unwrap()] {
+            assert!(self.ids.delta.is_empty());
+            return;
+        };
+        while !self.ids.delta.is_empty() {
+            // As usual, this song and dance is to please the borrow checker.
+            let mut delta = take(&mut self.ids.delta);
+
+            // Prepare worklist for rebuilding. The worklist should always contain only nodes that
+            // use non-canonical SSAIds.
+            let mut worklist = VecDeque::new();
+            for id in &delta {
+                // The only nodes in `delta` that should fail this check are new nodes.
+                if *id != self.ids.find(*id) {
+                    for user in self.ssa.users(*id) {
+                        worklist.push_back(*user);
+                    }
+                }
+            }
+
+            // Perform rebuilding.
+            while let Some(id) = worklist.pop_front() {
+                let old_ssa = self.ssa.get(id);
+                let new_ssa = self.ids.canonicalize(old_ssa);
+                // We should only ever insert a node into the worklist if it's non-canonical.
+                assert_ne!(old_ssa, new_ssa);
+                let new_id = self.intern(new_ssa);
+                self.ids.union_with(id, new_id, |id| {
+                    for user in self.ssa.users(id) {
+                        worklist.push_back(*user);
+                    }
+                });
+            }
+            // Unions during rebuilding might create more delta IDs. At this point, `self.ids.delta`
+            // is empty before we apply rules.
+            delta.extend(self.ids.delta.drain());
 
             // We have to do this song and dance because we want to store the `Tries` struct across
             // calls to `saturate`, but `apply_rws` needs `self` for calls to `intern` and `union`
             // while it needs live references to tries being iterated.
             let mut tries = take(&mut self.tries);
             // The delta tries get created from scratch every iteration.
-            for id in &self.delta {
+            for id in &delta {
                 let node = self.ssa.get(*id);
-                if version.is_canonical(node) {
-                    tries.insert_tuple(version.find_mut(*id), node, *id, true);
+                if self.ids.is_canonical(node) {
+                    tries.insert_tuple(self.ids.find(*id), node, *id, true);
                 }
             }
+            // TODO: Incrementalize the "all" nodes tries!
             for id in 0..self.ssa.num_nodes() {
                 let node = self.ssa.get(id);
-                if version.is_canonical(node) {
-                    tries.insert_tuple(version.find_mut(id), node, id, false);
+                if self.ids.is_canonical(node) {
+                    tries.insert_tuple(self.ids.find(id), node, id, false);
                 }
             }
-            self.delta.clear();
 
-            apply_rws::<false>(&tries, self, version);
+            apply_rws::<false>(&tries, self);
             tries.clear_all();
             self.tries = tries;
-        }
-    }
-
-    fn rebuild(&mut self, version: &mut Version) {
-        let mut worklist = VecDeque::new();
-        for id in &self.delta {
-            // The only nodes in `delta` that should fail this check are new nodes.
-            if *id != version.find_mut(*id) {
-                for user in self.ssa.users(*id) {
-                    worklist.push_back(*user);
-                }
-            }
-        }
-
-        while let Some(id) = worklist.pop_front() {
-            let old_ssa = self.ssa.get(id);
-            let new_ssa = version.canonicalize(old_ssa);
-            // We should only ever insert a node into the worklist if it's non-canonical.
-            assert_ne!(old_ssa, new_ssa);
-            let new_id = self.ssa.intern(new_ssa);
-            version.union_with(id, new_id, |id| {
-                self.delta.insert(id);
-                for user in self.ssa.users(id) {
-                    worklist.push_back(*user);
-                }
-            });
         }
     }
 }
@@ -128,25 +335,27 @@ mod tests {
 
     #[test]
     fn saturator1() {
-        let mut version = Version::root(0);
         let mut saturator = Saturator::default();
-        saturator.saturate(&mut version);
+        let block_id = saturator.ssa.add_block(SSABlock::Entry);
+        saturator.create_version(block_id);
+        saturator.move_to_version(block_id);
+        saturator.saturate();
         assert_eq!(saturator.ssa.num_nodes(), 0);
 
         use SSA::*;
-        let p1 = saturator.intern(Param(0, Type::I64), &version);
-        let p2 = saturator.intern(Param(1, Type::I64), &version);
-        saturator.saturate(&mut version);
+        let p1 = saturator.intern(Param(0, Type::I64));
+        let p2 = saturator.intern(Param(1, Type::I64));
+        saturator.saturate();
         // Param(0), Param(1)
         assert_eq!(saturator.ssa.num_nodes(), 2);
 
-        saturator.intern(Binary(BinaryOp::Add, p1, p2), &version);
-        saturator.saturate(&mut version);
+        saturator.intern(Binary(BinaryOp::Add, p1, p2));
+        saturator.saturate();
         // Param(0), Param(1), Add(p1, p2), Add(p2, p1)
         assert_eq!(saturator.ssa.num_nodes(), 4);
 
-        saturator.union(p1, p2, &mut version);
-        saturator.saturate(&mut version);
+        saturator.union(p1, p2);
+        saturator.saturate();
         // Param(0), Param(1), Add(p1, p2), Add(p2, p1), Add(p1, p1), Constant(2), Mul(c, p1), Mul(p1, c)
         assert_eq!(saturator.ssa.num_nodes(), 8);
     }

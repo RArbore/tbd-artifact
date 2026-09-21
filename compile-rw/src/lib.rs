@@ -388,7 +388,7 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
                 {
                     let lhs = #lhs;
                     let rhs = #rhs;
-                    saturator.union(lhs, rhs, version)
+                    saturator.union(lhs, rhs)
                 }
             }
         }
@@ -403,7 +403,7 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
             quote! {
                 {
                     let input = #input;
-                    saturator.intern(SSA::Constant(Constant::#cons_variant(input)), version)
+                    saturator.intern(SSA::Constant(Constant::#cons_variant(input)))
                 }
             }
         }
@@ -417,7 +417,7 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
             quote! {
                 {
                     let input = #input;
-                    saturator.intern(SSA::Unary(UnaryOp::#op_iden, input), version)
+                    saturator.intern(SSA::Unary(UnaryOp::#op_iden, input))
                 }
             }
         }
@@ -434,7 +434,7 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
                 {
                     let lhs = #lhs;
                     let rhs = #rhs;
-                    saturator.intern(SSA::Binary(BinaryOp::#op_iden, lhs, rhs), version)
+                    saturator.intern(SSA::Binary(BinaryOp::#op_iden, lhs, rhs))
                 }
             }
         }
@@ -786,11 +786,10 @@ pub fn compile_rw(contents: &str) -> String {
         use crate::saturator::Saturator;
         use crate::ssa::{SSA, SSAId};
         use crate::trie::{Trie, TupleValue, tuple_field};
-        use crate::version::Version;
 
         #trie_struct
 
-        pub fn apply_rws<const DUMP: bool>(tries: &Tries, saturator: &mut Saturator, version: &mut Version) {
+        pub fn apply_rws<const DUMP: bool>(tries: &Tries, saturator: &mut Saturator) {
             #wcojs
         }
     };
