@@ -249,7 +249,7 @@ impl Version {
     }
 
     pub fn count(&self, id: SSAId) -> usize {
-        self.count[&id].unwrap()
+        self.count.get(&id).unwrap_or(&Some(1)).unwrap()
     }
 
     fn update_counts(&mut self, x: SSAId, y: SSAId, canon: SSAId) {

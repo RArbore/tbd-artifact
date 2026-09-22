@@ -124,6 +124,12 @@ impl IDManager {
         })
     }
 
+    fn count(&self, id: SSAId) -> usize {
+        self.current_version
+            .map(|current_version| self.versions[&current_version].as_ref().count(id))
+            .unwrap_or(1)
+    }
+
     fn is_canonical(&self, ssa: SSA) -> bool {
         self.current_version
             .map(|current_version| self.versions[&current_version].as_ref().is_canonical(ssa))
@@ -194,6 +200,10 @@ impl Saturator {
                 new_canon_id,
             })
         })
+    }
+
+    pub fn count(&self, id: SSAId) -> usize {
+        self.ids.count(id)
     }
 
     pub fn idom(&self, id: SSABlockId) -> Option<SSABlockId> {

@@ -44,8 +44,10 @@ pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonS
     }
 }
 
-// This is the data type that we would want to change to Okasaki maps to follow Lemerre's advice.
-type VarMap = HashMap<Symbol, SSAId>;
+// We map each program variable to a SSAId and the number of SSAIds that are equal to it in the
+// current version. The latter is needed to ensure termination. This is the data type that we would
+// want to change to Okasaki maps to follow Lemerre's advice.
+type VarMap = HashMap<Symbol, (SSAId, usize)>;
 
 // Intern tuples of BlockId and variable sets to KnotId.
 #[derive(Debug, Default)]
@@ -154,7 +156,7 @@ impl<'a> AIContext<'a> {
         use Expr::*;
         match expr {
             Constant { val } => self.saturator.intern(SSA::Constant(*val)),
-            Variable { var } => self.saturator.find(self.vars[&vars][var]),
+            Variable { var } => self.saturator.find(self.vars[&vars][var].0),
             Unary { op, input } => {
                 let input = self.visit_expr(input, vars);
                 self.saturator.intern(SSA::Unary(*op, input))
@@ -199,7 +201,7 @@ impl<'a> AIContext<'a> {
                     *param,
                     // There is no version for before the entry. That's fine, because we won't have
                     // equated function parameters with anything yet.
-                    self.saturator.intern(SSA::Param(idx, *ty)),
+                    (self.saturator.intern(SSA::Param(idx, *ty)), 1),
                 )
             })
             .collect();
@@ -251,7 +253,8 @@ impl<'a> AIContext<'a> {
         // may cause the delta to be lost.
         self.saturator.saturate();
         let mut vars = self.vars[&pred].clone();
-        vars.insert(var, self.saturator.find(value));
+        let canon_id = self.saturator.find(value);
+        vars.insert(var, (canon_id, self.saturator.count(canon_id)));
         self.update_block(block, ssa_pred) | self.update_vars(block, vars)
     }
 
@@ -280,8 +283,8 @@ impl<'a> AIContext<'a> {
                 self.saturator.saturate();
 
                 let mut pair_to_vars: HashMap<(SSAId, SSAId), HashSet<Symbol>> = HashMap::new();
-                for (var, value1) in &self.vars[&pred1] {
-                    if let Some(value2) = self.vars[&pred2].get(var) {
+                for (var, (value1, _)) in &self.vars[&pred1] {
+                    if let Some((value2, _)) = self.vars[&pred2].get(var) {
                         let value1 = self.saturator.find_in_version(*value1, ssa_pred1);
                         let value2 = self.saturator.find_in_version(*value2, ssa_pred2);
                         // Group variables by pair of joined SSAIds.
@@ -331,8 +334,10 @@ impl<'a> AIContext<'a> {
                     for id in set1.intersection(&set2) {
                         self.saturator.union(knot, *id);
                     }
+                    let canon_id = self.saturator.find(knot);
+                    let count = self.saturator.count(canon_id);
                     for var in vars {
-                        new_vars.insert(var, self.saturator.find(knot));
+                        new_vars.insert(var, (canon_id, count));
                     }
                 }
 
@@ -414,7 +419,7 @@ mod tests {
             let value = values[0];
             saturator.check_trie_consistency();
             saturator.move_to_version(exit);
-            //saturator.check_trie_consistency();
+            saturator.check_trie_consistency();
             return (value, saturator);
         }
         panic!()
