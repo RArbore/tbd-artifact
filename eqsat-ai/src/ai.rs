@@ -178,6 +178,7 @@ impl<'a> AIContext<'a> {
 
     fn visit_block(&mut self, nonssa: &NonSSAFunc, block: BlockId) -> bool {
         use Block::*;
+        println!("visiting {}: {:?}", block, nonssa.cfg[block]);
         match &nonssa.cfg[block] {
             Entry => self.visit_entry(nonssa, block),
             Guard {
@@ -363,10 +364,8 @@ impl<'a> AIContext<'a> {
             .into_iter()
             .map(|id| self.saturator.find(id))
             .collect();
-        self.update_new_block(block, SSABlock::Return(ssa_pred, values));
-        self.saturator
-            .ssa
-            .add_exit(self.name, self.to_ssa_block(block));
+        let (_, new_block) = self.update_new_block(block, SSABlock::Return(ssa_pred, values));
+        self.saturator.ssa.add_exit(self.name, new_block);
         // Returns have no successors;
         false
     }
@@ -720,7 +719,7 @@ fn tricky(x: bool) {
         let text = r#"
 fn simplified(y: i64) {
     while y < 10 {}
-    return y;
+    return y + 0;
 }
 "#;
         let (value, mut saturator) = get_return(text);

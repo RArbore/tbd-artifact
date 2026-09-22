@@ -192,6 +192,10 @@ impl Saturator {
     }
 
     pub fn union(&mut self, x: SSAId, y: SSAId) -> SSAId {
+        println!(
+            "union {} and {} in {:?} (rule)",
+            x, y, self.ids.current_version
+        );
         assert_eq!(self.ssa.ty(x), self.ssa.ty(y));
         self.ids.union_with(x, y, |id, old_canon_id, new_canon_id| {
             self.trie_edits.push(TrieEdit::Union {
@@ -267,6 +271,15 @@ impl Saturator {
                 |down_id| down_ids.push(down_id),
             );
             down_ids.reverse();
+            println!(
+                "moving from {} ({:?}) to {} ({:?}), up_ids: {:?}, down_ids: {:?}",
+                last_block,
+                self.ssa.get_block(last_block),
+                block,
+                self.ssa.get_block(block),
+                up_ids,
+                down_ids
+            );
 
             for block_id in up_ids {
                 // When popping a version, any examined nodes may need to be examined again.
@@ -351,6 +364,10 @@ impl Saturator {
                 // We should only ever insert a node into the worklist if it's non-canonical.
                 assert_ne!(old_ssa, new_ssa);
                 let new_id = self.intern(new_ssa);
+                println!(
+                    "union {} and {} in {:?} (rebuild)",
+                    id, new_id, self.ids.current_version
+                );
                 self.ids
                     .union_with(id, new_id, |id, old_canon_id, new_canon_id| {
                         self.trie_edits.push(TrieEdit::Union {
@@ -393,6 +410,7 @@ impl Saturator {
     }
 
     fn apply_edit(&mut self, edit: TrieEdit) {
+        println!("applying {:?}", edit);
         match edit {
             TrieEdit::Intern { canon_id, id } => {
                 let node = self.ssa.get(id);
@@ -459,7 +477,8 @@ impl Saturator {
                 tries.insert_tuple(canon_id, node, id, false);
             }
         }
-        assert_eq!(tries, self.tries);
+        assert_eq!(tries, self.tries, "{:?}", self.ssa);
+        println!("checked {:?}", tries);
     }
 }
 
