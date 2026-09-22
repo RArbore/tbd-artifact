@@ -390,7 +390,9 @@ mod tests {
             };
             assert_eq!(values.len(), 1);
             let value = values[0];
+            saturator.check_trie_consistency();
             saturator.move_to_version(1);
+            saturator.check_trie_consistency();
             return (value, saturator);
         }
         panic!()
@@ -410,7 +412,9 @@ mod tests {
             };
             assert_eq!(values.len(), 1);
             let value = values[0];
+            saturator.check_trie_consistency();
             saturator.move_to_version(exit);
+            //saturator.check_trie_consistency();
             return (value, saturator);
         }
         panic!()
@@ -718,6 +722,8 @@ fn simplified(y: i64) {
 "#;
         let (value, mut saturator) = get_return(text);
         let correct = saturator.intern(SSA::Param(0, Type::I64));
+        assert_eq!(correct, value);
+        let correct = saturator.intern(SSA::Knot(0, Type::I64));
         assert_eq!(correct, value);
     }
 

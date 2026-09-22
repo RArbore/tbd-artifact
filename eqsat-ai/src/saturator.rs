@@ -379,14 +379,13 @@ impl Saturator {
             tries.clear_delta();
             self.tries = tries;
         }
+        self.check_trie_consistency();
     }
 
     fn apply_edit(&mut self, edit: TrieEdit) {
-        println!("Applying {:?}", edit);
         match edit {
             TrieEdit::Intern { canon_id, id } => {
                 let node = self.ssa.get(id);
-                println!("{}: insert_tuple({canon_id}, {node:?}, {id})", line!());
                 self.tries.insert_tuple(canon_id, node, id, false);
             }
             TrieEdit::Union {
@@ -398,19 +397,12 @@ impl Saturator {
                 if let Some(inserted_id) = self.tries.inserted_as(id)
                     && inserted_id != new_canon_id
                 {
-                    assert_eq!(inserted_id, old_canon_id);
-                    println!("{}: remove_tuple({old_canon_id}, {node:?}, {id})", line!());
-                    self.tries.remove_tuple(old_canon_id, node, id);
-                    println!("{}: insert_tuple({new_canon_id}, {node:?}, {id})", line!());
+                    self.tries.remove_tuple(inserted_id, node, id);
                     self.tries.insert_tuple(new_canon_id, node, id, false);
                 }
                 for user in self.ssa.users(old_canon_id).cloned() {
                     let user_node = self.ssa.get(user);
                     if let Some(inserted_id) = self.tries.inserted_as(user) {
-                        println!(
-                            "{}: remove_tuple({inserted_id}, {user_node:?}, {user})",
-                            line!()
-                        );
                         self.tries.remove_tuple(inserted_id, user_node, user);
                     }
                 }
@@ -425,13 +417,8 @@ impl Saturator {
                 if let Some(inserted_id) = self.tries.inserted_as(id)
                     && inserted_id != new_canon_id
                 {
-                    assert_eq!(
-                        inserted_id, old_canon_id,
-                        "id: {id} old_canon_id: {old_canon_id} new_canon_id: {new_canon_id} inserted_id: {inserted_id} node: {node:?}"
-                    );
-                    println!("{}: remove_tuple({old_canon_id}, {node:?}, {id})", line!());
+                    assert_eq!(inserted_id, old_canon_id,);
                     self.tries.remove_tuple(old_canon_id, node, id);
-                    println!("{}: insert_tuple({new_canon_id}, {node:?}, {id})", line!());
                     self.tries.insert_tuple(new_canon_id, node, id, false);
                 }
                 for user in self.ssa.users(id).cloned() {
@@ -442,10 +429,6 @@ impl Saturator {
                         if let Some(inserted_id) = self.tries.inserted_as(user) {
                             assert_eq!(inserted_id, user_canon);
                         } else {
-                            println!(
-                                "{}: insert_tuple({user_canon}, {user_node:?}, {user})",
-                                line!()
-                            );
                             self.tries.insert_tuple(user_canon, user_node, user, false);
                         }
                     }
