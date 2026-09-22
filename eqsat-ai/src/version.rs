@@ -172,6 +172,10 @@ impl SparseUnionFind {
             uf: self,
         }
     }
+
+    fn non_canon_ids(&self) -> impl Iterator<Item = SSAId> + '_ {
+        self.parents.keys().cloned()
+    }
 }
 
 impl Iterator for SparseUnionFindSet<'_> {
@@ -209,13 +213,15 @@ impl Version {
         }
     }
 
+    pub fn find_in_parent(&self, id: SSAId) -> SSAId {
+        self.parent
+            .as_ref()
+            .map(|parent| parent.find(id))
+            .unwrap_or(id)
+    }
+
     pub fn find(&self, id: SSAId) -> SSAId {
-        self.uf.find(
-            self.parent
-                .as_ref()
-                .map(|parent| parent.find(id))
-                .unwrap_or(id),
-        )
+        self.uf.find(self.find_in_parent(id))
     }
 
     pub fn find_mut(&mut self, id: SSAId) -> SSAId {
@@ -273,11 +279,11 @@ impl Version {
         }
     }
 
-    pub fn is_canonical(&mut self, ssa: SSA) -> bool {
+    pub fn is_canonical(&self, ssa: SSA) -> bool {
         use SSA::*;
         match ssa {
-            Unary(_, input) => input == self.find_mut(input),
-            Binary(_, lhs, rhs) => lhs == self.find_mut(lhs) && rhs == self.find_mut(rhs),
+            Unary(_, input) => input == self.find(input),
+            Binary(_, lhs, rhs) => lhs == self.find(lhs) && rhs == self.find(rhs),
             _ => true,
         }
     }
@@ -289,6 +295,10 @@ impl Version {
             Binary(op, lhs, rhs) => Binary(op, self.find_mut(lhs), self.find_mut(rhs)),
             _ => ssa,
         }
+    }
+
+    pub fn non_canon_ids_at_level(&self) -> impl Iterator<Item = SSAId> + '_ {
+        self.uf.non_canon_ids()
     }
 }
 
@@ -371,6 +381,10 @@ mod tests {
             HashSet::from_iter([2, 5, 9]),
             uf.set(5).collect::<HashSet<_>>()
         );
+        assert_eq!(
+            HashSet::from_iter([3, 4, 5, 9]),
+            uf.non_canon_ids().collect::<HashSet<_>>()
+        );
 
         assert_eq!(uf.union(4, 5), 0);
         assert_eq!(uf.find_mut(2), 0);
@@ -379,6 +393,10 @@ mod tests {
         assert_eq!(
             HashSet::from_iter([0, 2, 4, 5, 9]),
             uf.set(9).collect::<HashSet<_>>()
+        );
+        assert_eq!(
+            HashSet::from_iter([2, 3, 4, 5, 9]),
+            uf.non_canon_ids().collect::<HashSet<_>>()
         );
     }
 
@@ -398,6 +416,10 @@ mod tests {
         for i in 100..200 {
             assert_ne!(uf.find_mut(i), uf.find_mut(i + 1));
         }
+        assert_eq!(
+            HashSet::from_iter(1..=100),
+            uf.non_canon_ids().collect::<HashSet<_>>()
+        );
     }
 
     #[test]

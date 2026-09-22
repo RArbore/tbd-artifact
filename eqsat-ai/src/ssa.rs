@@ -120,8 +120,11 @@ impl SSAHashCons {
         self.vec[id]
     }
 
-    pub fn users(&mut self, id: SSAId) -> &HashSet<SSAId> {
-        self.users.entry(id).or_default()
+    pub fn users(&self, id: SSAId) -> impl Iterator<Item = &SSAId> + '_ {
+        self.users
+            .get(&id)
+            .map(|users| users.iter())
+            .unwrap_or_default()
     }
 }
 
@@ -147,7 +150,7 @@ impl SSAProgram {
         self.types[id]
     }
 
-    pub fn users(&mut self, id: SSAId) -> &HashSet<SSAId> {
+    pub fn users(&self, id: SSAId) -> impl Iterator<Item = &SSAId> + '_ {
         self.ssa.users(id)
     }
 

@@ -60,32 +60,30 @@ struct IDManager {
 pub struct Saturator {
     pub ssa: SSAProgram,
     ids: IDManager,
-
-    // Incrementally maintain the tries that get used for e-matching. Public so that `apply_rws` can
-    // refer to it.
-    pub tries: Tries,
+    // Incrementally maintain the tries that get used for e-matching.
+    tries: Tries,
 }
 
 impl IDManager {
-    pub fn find(&mut self, mut id: SSAId) -> SSAId {
+    fn find(&mut self, mut id: SSAId) -> SSAId {
         if let Some(version) = self.current_version {
             id = self.find_in_version(id, version);
         }
         id
     }
 
-    pub fn find_in_version(&mut self, id: SSAId, version: SSABlockId) -> SSAId {
+    fn find_in_version(&mut self, id: SSAId, version: SSABlockId) -> SSAId {
         match self.versions.get_mut(&version).unwrap() {
             VersionState::Mutable(version) => version.find_mut(id),
             VersionState::Immutable(version) => version.find(id),
         }
     }
 
-    pub fn union(&mut self, x: SSAId, y: SSAId) -> SSAId {
+    fn union(&mut self, x: SSAId, y: SSAId) -> SSAId {
         self.union_with(x, y, |_| {})
     }
 
-    pub fn union_with<F>(&mut self, x: SSAId, y: SSAId, mut f: F) -> SSAId
+    fn union_with<F>(&mut self, x: SSAId, y: SSAId, mut f: F) -> SSAId
     where
         F: FnMut(SSAId),
     {
@@ -107,7 +105,7 @@ impl IDManager {
         })
     }
 
-    pub fn is_canonical(&mut self, ssa: SSA) -> bool {
+    fn is_canonical(&mut self, ssa: SSA) -> bool {
         self.current_version
             .map(|current_version| {
                 let VersionState::Mutable(version) =
@@ -120,7 +118,7 @@ impl IDManager {
             .unwrap_or(true)
     }
 
-    pub fn canonicalize(&mut self, ssa: SSA) -> SSA {
+    fn canonicalize(&mut self, ssa: SSA) -> SSA {
         self.current_version
             .map(|current_version| {
                 let VersionState::Mutable(version) =
@@ -133,11 +131,11 @@ impl IDManager {
             .unwrap_or(ssa)
     }
 
-    pub fn idom(&self, id: SSABlockId) -> Option<SSABlockId> {
+    fn idom(&self, id: SSABlockId) -> Option<SSABlockId> {
         self.dom_tree.idom(id)
     }
 
-    pub fn set_in_version(
+    fn set_in_version(
         &self,
         id: SSAId,
         up_to: Option<SSABlockId>,
@@ -146,7 +144,7 @@ impl IDManager {
         self.versions[&version].as_ref().set(id, up_to)
     }
 
-    pub fn create_version(&mut self, block_id: SSABlockId, block: &SSABlock) {
+    fn create_version(&mut self, block_id: SSABlockId, block: &SSABlock) {
         // Update the dominator tree incrementally when adding new SSA blocks.
         self.dom_tree.visit_block(block_id, block);
         let version = if let Some(idom) = self.dom_tree.idom(block_id) {
@@ -170,38 +168,6 @@ impl IDManager {
             .insert(block_id, VersionState::Mutable(version));
         // In the new version, nothing has been examined yet.
         self.examined_ids.insert(block_id, HashSet::new());
-    }
-
-    fn move_to_version(&mut self, block_id: SSABlockId, block: &SSABlock) {
-        if let Some(last_block) = self.current_version {
-            if block_id == last_block {
-                return;
-            }
-            assert!(self.delta.is_empty());
-
-            // Traverse up and down the dominator tree from the last block to the new block.
-            let mut up_ids = vec![];
-            let mut down_ids = vec![];
-            self.dom_tree.lca(
-                last_block,
-                block_id,
-                |up_id| up_ids.extend(self.examined_ids[&up_id].iter().cloned()),
-                |down_id| down_ids.extend(self.examined_ids[&down_id].iter().cloned()),
-            );
-
-            // When popping a version, any examined nodes may need to be examined again.
-            for id in up_ids {
-                assert!(self.previously_examined.insert(id));
-            }
-            // When pushing a version, any examined nodes will have their examination inherited by
-            // the destination version, so we don't need to re-examine them.
-            for id in down_ids {
-                self.previously_examined.remove(&id);
-            }
-        } else {
-            assert_eq!(block, &SSABlock::Entry);
-        }
-        self.current_version = Some(block_id);
     }
 }
 
@@ -237,7 +203,89 @@ impl Saturator {
     }
 
     pub fn move_to_version(&mut self, block: SSABlockId) {
-        self.ids.move_to_version(block, self.ssa.get_block(block));
+        if let Some(last_block) = self.ids.current_version {
+            if block == last_block {
+                return;
+            }
+            assert!(self.ids.delta.is_empty());
+
+            // Traverse up and down the dominator tree from the last block to the new block.
+            let mut up_ids = vec![];
+            let mut down_ids = vec![];
+            self.ids.dom_tree.lca(
+                last_block,
+                block,
+                |up_id| up_ids.push(up_id),
+                |down_id| down_ids.push(down_id),
+            );
+            down_ids.reverse();
+
+            for block_id in up_ids {
+                // When popping a version, any examined nodes may need to be examined again.
+                for id in &self.ids.examined_ids[&block_id] {
+                    assert!(self.ids.previously_examined.insert(*id));
+                }
+
+                // And any unions that held in the popped version but not the parent version induce
+                // edits in the tries. In particular, if A was a non-canonical SSAId with canonical
+                // SSAId B in the popped version, but A is canonical in the parent version, we must:
+                // 1. Remove and re-add A with canonical SSAId A instead of B.
+                // 2. Add all users of A that are canonical.
+                let version = self.ids.versions[&block_id].as_ref();
+                for id in version.non_canon_ids_at_level() {
+                    assert_eq!(id, version.find_in_parent(id));
+                    let canon_id = version.find(id);
+                    assert_ne!(canon_id, id);
+                    let node = self.ssa.get(id);
+                    if let Some(old_canon_id) = self.tries.inserted_as(id) {
+                        assert_eq!(old_canon_id, canon_id);
+                        self.tries.remove_tuple(old_canon_id, node, id);
+                        self.tries.insert_tuple(id, node, id, false);
+                    }
+                    for user in self.ssa.users(id) {
+                        let canon_user = version.find_in_parent(*user);
+                        let user_node = self.ssa.get(*user);
+                        if version.is_canonical(user_node) {
+                            self.tries.insert_tuple(canon_user, user_node, *user, false);
+                        }
+                    }
+                }
+            }
+
+            for block_id in down_ids {
+                // When pushing a version, any examined nodes will have their examination inherited
+                // by the destination version, so we don't need to re-examine them.
+                for id in &self.ids.examined_ids[&block_id] {
+                    self.ids.previously_examined.remove(id);
+                }
+
+                // Similarly, if A is a non-canonical SSAId with canonical SSAId B in the pushed
+                // version, but A is canonical in the parent version, we must:
+                // 1. Remove and re-add A with canonical SSAId B instead of A.
+                // 2. Remove all users of A, because they are no longer canonical.
+                let version = self.ids.versions[&block_id].as_ref();
+                for id in version.non_canon_ids_at_level() {
+                    let canon_id = version.find(id);
+                    let node = self.ssa.get(id);
+                    assert_ne!(canon_id, id);
+                    if let Some(old_canon_id) = self.tries.inserted_as(id) {
+                        assert_eq!(old_canon_id, id);
+                        self.tries.remove_tuple(id, node, id);
+                        self.tries.insert_tuple(canon_id, node, id, false);
+                    }
+                    for user in self.ssa.users(id) {
+                        let user_node = self.ssa.get(*user);
+                        assert!(!version.is_canonical(user_node));
+                        if let Some(old_canon_id) = self.tries.inserted_as(*user) {
+                            self.tries.remove_tuple(old_canon_id, user_node, *user);
+                        }
+                    }
+                }
+            }
+        } else {
+            assert_eq!(self.ssa.get_block(block), &SSABlock::Entry);
+        }
+        self.ids.current_version = Some(block);
     }
 
     pub fn intern(&mut self, ssa: SSA) -> SSAId {
@@ -305,23 +353,39 @@ impl Saturator {
             // calls to `saturate`, but `apply_rws` needs `self` for calls to `intern` and `union`
             // while it needs live references to tries being iterated.
             let mut tries = take(&mut self.tries);
-            // The delta tries get created from scratch every iteration.
-            for id in &delta {
-                let node = self.ssa.get(*id);
-                if self.ids.is_canonical(node) {
-                    tries.insert_tuple(self.ids.find(*id), node, *id, true);
-                }
-            }
-            // TODO: Incrementalize the "all" nodes tries!
-            for id in 0..self.ssa.num_nodes() {
+            // Delta nodes get added to the delta tries and the all tries. When nodes were previously
+            // inserted into the all tries, they need to have their old entries removed first.
+            for id in delta {
+                let canon_id = self.ids.find(id);
                 let node = self.ssa.get(id);
+
+                // Canonical nodes get added to the tries directly.
                 if self.ids.is_canonical(node) {
-                    tries.insert_tuple(self.ids.find(id), node, id, false);
+                    tries.insert_tuple(canon_id, node, id, true);
+                    if let Some(old_canon_id) = tries.inserted_as(id) {
+                        if old_canon_id != canon_id {
+                            tries.remove_tuple(old_canon_id, node, id);
+                            tries.insert_tuple(canon_id, node, id, false);
+                        }
+                    } else {
+                        tries.insert_tuple(canon_id, node, id, false);
+                    }
+                }
+
+                // Users of newly non-canonical IDs get removed from the "all" tries.
+                if canon_id != id {
+                    for user in self.ssa.users(id) {
+                        if let Some(old_canon_id) = tries.inserted_as(*user) {
+                            let user_node = self.ssa.get(*user);
+                            tries.remove_tuple(old_canon_id, user_node, *user);
+                        }
+                    }
                 }
             }
 
             apply_rws::<false>(&tries, self);
-            tries.clear_all();
+            // The delta tries get created from scratch every iteration.
+            tries.clear_delta();
             self.tries = tries;
         }
     }
