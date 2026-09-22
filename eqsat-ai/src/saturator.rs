@@ -67,7 +67,7 @@ enum TrieEdit {
         old_canon_id: SSAId,
         new_canon_id: SSAId,
     },
-    ReverseUnion {
+    RevertUnion {
         id: SSAId,
         old_canon_id: SSAId,
         new_canon_id: SSAId,
@@ -273,7 +273,7 @@ impl Saturator {
                     let old_canon_id = version.find(id);
                     assert_ne!(old_canon_id, id);
                     for set_id in parent.set(id, None) {
-                        self.trie_edits.push(TrieEdit::ReverseUnion {
+                        self.trie_edits.push(TrieEdit::RevertUnion {
                             id: set_id,
                             old_canon_id,
                             new_canon_id: id,
@@ -415,7 +415,7 @@ impl Saturator {
                     }
                 }
             }
-            TrieEdit::ReverseUnion {
+            TrieEdit::RevertUnion {
                 id,
                 old_canon_id,
                 new_canon_id,
@@ -439,11 +439,15 @@ impl Saturator {
                     let version = self.ids.versions[&parent_version].as_ref();
                     let user_canon = version.find(user);
                     if version.is_canonical(user_node) {
-                        println!(
-                            "{}: insert_tuple({user_canon}, {user_node:?}, {user})",
-                            line!()
-                        );
-                        self.tries.insert_tuple(user_canon, user_node, user, false);
+                        if let Some(inserted_id) = self.tries.inserted_as(user) {
+                            assert_eq!(inserted_id, user_canon);
+                        } else {
+                            println!(
+                                "{}: insert_tuple({user_canon}, {user_node:?}, {user})",
+                                line!()
+                            );
+                            self.tries.insert_tuple(user_canon, user_node, user, false);
+                        }
                     }
                 }
             }
