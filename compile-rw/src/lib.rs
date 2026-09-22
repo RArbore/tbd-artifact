@@ -747,7 +747,7 @@ pub fn compile_rw(contents: &str) -> String {
     let trie_unary_remove = trie_unary_insert_remove(false);
     let trie_binary_remove = trie_binary_insert_remove(false);
     let trie_struct = quote! {
-        #[derive(Default)]
+        #[derive(Default, Debug, PartialEq, Eq)]
         pub struct Tries {
             inserted_as: HashMap<SSAId, SSAId>,
             #trie_fields

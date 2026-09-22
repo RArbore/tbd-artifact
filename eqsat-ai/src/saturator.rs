@@ -176,21 +176,31 @@ impl Saturator {
         self.ids.find_in_version(id, version)
     }
 
+    fn update_tries_on_union(
+        ssa: &SSAProgram,
+        tries: &mut Tries,
+        id: SSAId,
+        old_canon_id: SSAId,
+        new_canon_id: SSAId,
+    ) {
+        let node = ssa.get(id);
+        if let Some(inserted_canon_id) = tries.inserted_as(id) {
+            assert_eq!(inserted_canon_id, old_canon_id);
+            tries.remove_tuple(old_canon_id, node, id);
+            tries.insert_tuple(new_canon_id, node, id, false);
+        }
+        for user in ssa.users(old_canon_id) {
+            let user_node = ssa.get(*user);
+            if let Some(inserted_id) = tries.inserted_as(*user) {
+                tries.remove_tuple(inserted_id, user_node, *user);
+            }
+        }
+    }
+
     pub fn union(&mut self, x: SSAId, y: SSAId) -> SSAId {
         assert_eq!(self.ssa.ty(x), self.ssa.ty(y));
         self.ids.union_with(x, y, |id, old_canon_id, new_canon_id| {
-            let node = self.ssa.get(id);
-            if let Some(inserted_canon_id) = self.tries.inserted_as(id) {
-                assert_eq!(inserted_canon_id, old_canon_id);
-                self.tries.remove_tuple(old_canon_id, node, id);
-                self.tries.insert_tuple(new_canon_id, node, id, false);
-            }
-            for user in self.ssa.users(old_canon_id) {
-                let user_node = self.ssa.get(*user);
-                if let Some(inserted_id) = self.tries.inserted_as(*user) {
-                    self.tries.remove_tuple(inserted_id, user_node, *user);
-                }
-            }
+            Self::update_tries_on_union(&self.ssa, &mut self.tries, id, old_canon_id, new_canon_id);
         })
     }
 
@@ -205,6 +215,32 @@ impl Saturator {
         version: SSABlockId,
     ) -> impl Iterator<Item = SSAId> + '_ {
         self.ids.set_in_version(id, up_to, version)
+    }
+
+    pub fn intern(&mut self, ssa: SSA) -> SSAId {
+        let before = self.ssa.num_nodes();
+        let id = self.ssa.intern(ssa);
+        let (canon_id, after) = if ssa.is_param_or_knot() {
+            // Param and Knot nodes never get added to the delta set because they are never matched
+            // on by any rules.
+            (self.ids.find(id), self.ssa.num_nodes())
+        } else {
+            let canon_id = self.ids.find(id);
+            let after = self.ssa.num_nodes();
+            if before != after || self.ids.previously_examined.remove(&canon_id) {
+                self.ids
+                    .examined_ids
+                    .entry(self.ids.current_version.unwrap())
+                    .or_default()
+                    .insert(canon_id);
+                self.ids.delta.insert(canon_id);
+            }
+            (canon_id, after)
+        };
+        if before != after {
+            self.tries.insert_tuple(canon_id, ssa, id, false);
+        }
+        canon_id
     }
 
     pub fn create_version(&mut self, block: SSABlockId) {
@@ -297,32 +333,6 @@ impl Saturator {
         self.ids.current_version = Some(block);
     }
 
-    pub fn intern(&mut self, ssa: SSA) -> SSAId {
-        if ssa.is_param_or_knot() {
-            // Param and Knot nodes never get added to the delta set because they are never matched
-            // on by any rules.
-            let id = self.ssa.intern(ssa);
-            self.ids.find(id)
-        } else {
-            let before = self.ssa.num_nodes();
-            let id = self.ssa.intern(ssa);
-            let canon_id = self.ids.find(id);
-            let after = self.ssa.num_nodes();
-            if before != after || self.ids.previously_examined.remove(&canon_id) {
-                self.ids
-                    .examined_ids
-                    .entry(self.ids.current_version.unwrap())
-                    .or_default()
-                    .insert(canon_id);
-                self.ids.delta.insert(canon_id);
-            }
-            if before != after {
-                self.tries.insert_tuple(id, ssa, id, false);
-            }
-            canon_id
-        }
-    }
-
     pub fn saturate(&mut self) {
         if let VersionState::Immutable(_) = self.ids.versions[&self.ids.current_version.unwrap()] {
             assert!(self.ids.delta.is_empty());
@@ -353,19 +363,13 @@ impl Saturator {
                 let new_id = self.intern(new_ssa);
                 self.ids
                     .union_with(id, new_id, |id, old_canon_id, new_canon_id| {
-                        let node = self.ssa.get(id);
-                        if let Some(inserted_canon_id) = self.tries.inserted_as(id) {
-                            assert_eq!(inserted_canon_id, old_canon_id);
-                            self.tries.remove_tuple(old_canon_id, node, id);
-                            self.tries.insert_tuple(new_canon_id, node, id, false);
-                        }
-                        for user in self.ssa.users(old_canon_id) {
-                            let user_node = self.ssa.get(*user);
-                            if let Some(inserted_id) = self.tries.inserted_as(*user) {
-                                self.tries.remove_tuple(inserted_id, user_node, *user);
-                            }
-                        }
-
+                        Self::update_tries_on_union(
+                            &self.ssa,
+                            &mut self.tries,
+                            id,
+                            old_canon_id,
+                            new_canon_id,
+                        );
                         for user in self.ssa.users(id) {
                             worklist.push_back(*user);
                         }
@@ -394,6 +398,17 @@ impl Saturator {
             self.tries = tries;
         }
     }
+
+    pub fn check_trie_consistency(&mut self) {
+        let mut tries = Tries::default();
+        for id in 0..self.ssa.num_nodes() {
+            let node = self.ssa.get(id);
+            if self.ids.is_canonical(node) {
+                tries.insert_tuple(self.ids.find(id), node, id, false);
+            }
+        }
+        assert_eq!(tries, self.tries);
+    }
 }
 
 #[cfg(test)]
@@ -408,23 +423,31 @@ mod tests {
         let block_id = saturator.ssa.add_block(SSABlock::Entry);
         saturator.create_version(block_id);
         saturator.move_to_version(block_id);
+        saturator.check_trie_consistency();
         saturator.saturate();
+        saturator.check_trie_consistency();
         assert_eq!(saturator.ssa.num_nodes(), 0);
 
         use SSA::*;
         let p1 = saturator.intern(Param(0, Type::I64));
         let p2 = saturator.intern(Param(1, Type::I64));
+        saturator.check_trie_consistency();
         saturator.saturate();
+        saturator.check_trie_consistency();
         // Param(0), Param(1)
         assert_eq!(saturator.ssa.num_nodes(), 2);
 
         saturator.intern(Binary(BinaryOp::Add, p1, p2));
+        saturator.check_trie_consistency();
         saturator.saturate();
+        saturator.check_trie_consistency();
         // Param(0), Param(1), Add(p1, p2), Add(p2, p1)
         assert_eq!(saturator.ssa.num_nodes(), 4);
 
         saturator.union(p1, p2);
+        saturator.check_trie_consistency();
         saturator.saturate();
+        saturator.check_trie_consistency();
         // Param(0), Param(1), Add(p1, p2), Add(p2, p1), Add(p1, p1), Constant(2), Mul(c, p1), Mul(p1, c)
         assert_eq!(saturator.ssa.num_nodes(), 8);
     }
