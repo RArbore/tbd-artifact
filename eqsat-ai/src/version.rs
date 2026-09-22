@@ -215,6 +215,10 @@ impl Version {
         }
     }
 
+    pub fn parent_id(&self) -> Option<SSABlockId> {
+        self.parent.as_ref().map(|parent| parent.block)
+    }
+
     pub fn find_in_parent(&self, id: SSAId) -> SSAId {
         self.parent
             .as_ref()
@@ -290,11 +294,11 @@ impl Version {
         }
     }
 
-    pub fn canonicalize(&mut self, ssa: SSA) -> SSA {
+    pub fn canonicalize(&self, ssa: SSA) -> SSA {
         use SSA::*;
         match ssa {
-            Unary(op, input) => Unary(op, self.find_mut(input)),
-            Binary(op, lhs, rhs) => Binary(op, self.find_mut(lhs), self.find_mut(rhs)),
+            Unary(op, input) => Unary(op, self.find(input)),
+            Binary(op, lhs, rhs) => Binary(op, self.find(lhs), self.find(rhs)),
             _ => ssa,
         }
     }

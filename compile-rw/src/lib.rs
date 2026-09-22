@@ -747,7 +747,7 @@ pub fn compile_rw(contents: &str) -> String {
     let trie_unary_remove = trie_unary_insert_remove(false);
     let trie_binary_remove = trie_binary_insert_remove(false);
     let trie_struct = quote! {
-        #[derive(Default, Debug, PartialEq, Eq)]
+        #[derive(Default, PartialEq, Eq)]
         pub struct Tries {
             inserted_as: HashMap<SSAId, SSAId>,
             #trie_fields
@@ -803,6 +803,12 @@ pub fn compile_rw(contents: &str) -> String {
                 #trie_clear_all
             }
         }
+
+        impl Debug for Tries {
+            fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+                f.debug_struct("Tries").field("inserted_as", &self.inserted_as.iter().collect::<BTreeMap<_, _>>()).finish()
+            }
+        }
     };
 
     // Fourth, emit the code that implements WCOJ.
@@ -826,7 +832,8 @@ pub fn compile_rw(contents: &str) -> String {
 
     // Finally, emit the top level rewriting function.
     let rw_fn = quote! {
-        use std::collections::HashMap;
+        use core::fmt::{Debug, Formatter, Result};
+        use std::collections::{BTreeMap, HashMap};
         
         use crate::nonssa::{BinaryOp, Constant, UnaryOp};
         use crate::saturator::Saturator;
