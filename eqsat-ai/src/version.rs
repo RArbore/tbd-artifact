@@ -215,8 +215,12 @@ impl Version {
         }
     }
 
-    pub fn parent_id(&self) -> Option<SSABlockId> {
-        self.parent.as_ref().map(|parent| parent.block)
+    pub fn parent(&self) -> Option<&Version> {
+        self.parent.as_ref().map(|v| &**v)
+    }
+
+    pub fn block(&self) -> SSABlockId {
+        self.block
     }
 
     pub fn find_in_parent(&self, id: SSAId) -> SSAId {

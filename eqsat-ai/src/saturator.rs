@@ -70,6 +70,7 @@ enum TrieEdit {
     ReverseUnion {
         id: SSAId,
         old_canon_id: SSAId,
+        new_canon_id: SSAId,
         parent_version: SSABlockId,
     },
 }
@@ -266,15 +267,19 @@ impl Saturator {
                 // And any unions that held in the popped version but not the parent version induce
                 // edits in the tries.
                 let version = self.ids.versions[&block_id].as_ref();
+                let parent = version.parent().unwrap();
                 for id in version.non_canon_ids_at_level() {
                     assert_eq!(id, version.find_in_parent(id));
                     let old_canon_id = version.find(id);
                     assert_ne!(old_canon_id, id);
-                    self.trie_edits.push(TrieEdit::ReverseUnion {
-                        id,
-                        old_canon_id,
-                        parent_version: version.parent_id().unwrap(),
-                    });
+                    for set_id in parent.set(id, None) {
+                        self.trie_edits.push(TrieEdit::ReverseUnion {
+                            id: set_id,
+                            old_canon_id,
+                            new_canon_id: id,
+                            parent_version: parent.block(),
+                        });
+                    }
                 }
             }
 
@@ -288,15 +293,18 @@ impl Saturator {
                 // And any unions that hold in the pushed version but not the parent version induce
                 // edits in the tries.
                 let version = self.ids.versions[&block_id].as_ref();
+                let parent = version.parent().unwrap();
                 for id in version.non_canon_ids_at_level() {
                     assert_eq!(id, version.find_in_parent(id));
                     let new_canon_id = version.find(id);
                     assert_ne!(new_canon_id, id);
-                    self.trie_edits.push(TrieEdit::Union {
-                        id,
-                        old_canon_id: id,
-                        new_canon_id,
-                    })
+                    for set_id in parent.set(id, None) {
+                        self.trie_edits.push(TrieEdit::Union {
+                            id: set_id,
+                            old_canon_id: id,
+                            new_canon_id,
+                        });
+                    }
                 }
             }
         } else {
@@ -374,9 +382,11 @@ impl Saturator {
     }
 
     fn apply_edit(&mut self, edit: TrieEdit) {
+        println!("Applying {:?}", edit);
         match edit {
             TrieEdit::Intern { canon_id, id } => {
                 let node = self.ssa.get(id);
+                println!("{}: insert_tuple({canon_id}, {node:?}, {id})", line!());
                 self.tries.insert_tuple(canon_id, node, id, false);
             }
             TrieEdit::Union {
@@ -385,35 +395,55 @@ impl Saturator {
                 new_canon_id,
             } => {
                 let node = self.ssa.get(id);
-                if let Some(inserted_canon_id) = self.tries.inserted_as(id) {
-                    assert_eq!(inserted_canon_id, old_canon_id);
+                if let Some(inserted_id) = self.tries.inserted_as(id)
+                    && inserted_id != new_canon_id
+                {
+                    assert_eq!(inserted_id, old_canon_id);
+                    println!("{}: remove_tuple({old_canon_id}, {node:?}, {id})", line!());
                     self.tries.remove_tuple(old_canon_id, node, id);
+                    println!("{}: insert_tuple({new_canon_id}, {node:?}, {id})", line!());
                     self.tries.insert_tuple(new_canon_id, node, id, false);
                 }
-                for user in self.ssa.users(old_canon_id) {
-                    let user_node = self.ssa.get(*user);
-                    if let Some(inserted_id) = self.tries.inserted_as(*user) {
-                        self.tries.remove_tuple(inserted_id, user_node, *user);
+                for user in self.ssa.users(old_canon_id).cloned() {
+                    let user_node = self.ssa.get(user);
+                    if let Some(inserted_id) = self.tries.inserted_as(user) {
+                        println!(
+                            "{}: remove_tuple({inserted_id}, {user_node:?}, {user})",
+                            line!()
+                        );
+                        self.tries.remove_tuple(inserted_id, user_node, user);
                     }
                 }
             }
             TrieEdit::ReverseUnion {
                 id,
                 old_canon_id,
+                new_canon_id,
                 parent_version,
             } => {
                 let node = self.ssa.get(id);
-                if let Some(inserted_id) = self.tries.inserted_as(id) {
-                    assert_eq!(inserted_id, old_canon_id);
-                    self.tries.remove_tuple(inserted_id, node, id);
-                    self.tries.insert_tuple(id, node, id, false);
+                if let Some(inserted_id) = self.tries.inserted_as(id)
+                    && inserted_id != new_canon_id
+                {
+                    assert_eq!(
+                        inserted_id, old_canon_id,
+                        "id: {id} old_canon_id: {old_canon_id} new_canon_id: {new_canon_id} inserted_id: {inserted_id} node: {node:?}"
+                    );
+                    println!("{}: remove_tuple({old_canon_id}, {node:?}, {id})", line!());
+                    self.tries.remove_tuple(old_canon_id, node, id);
+                    println!("{}: insert_tuple({new_canon_id}, {node:?}, {id})", line!());
+                    self.tries.insert_tuple(new_canon_id, node, id, false);
                 }
-                for user in self.ssa.users(id) {
-                    let user_node = self.ssa.get(*user);
+                for user in self.ssa.users(id).cloned() {
+                    let user_node = self.ssa.get(user);
                     let version = self.ids.versions[&parent_version].as_ref();
+                    let user_canon = version.find(user);
                     if version.is_canonical(user_node) {
-                        self.tries
-                            .insert_tuple(version.find(*user), user_node, *user, false);
+                        println!(
+                            "{}: insert_tuple({user_canon}, {user_node:?}, {user})",
+                            line!()
+                        );
+                        self.tries.insert_tuple(user_canon, user_node, user, false);
                     }
                 }
             }
@@ -429,10 +459,7 @@ impl Saturator {
             let node = self.ssa.get(id);
             let canon_id = self.ids.find(id);
             if self.ids.is_canonical(node) {
-                println!("canonical: {:?}, id {id} and canon id {canon_id}", node);
                 tries.insert_tuple(canon_id, node, id, false);
-            } else {
-                println!("not canonical: {:?}, id {id} and canon id {canon_id}", node);
             }
         }
         assert_eq!(tries, self.tries);
