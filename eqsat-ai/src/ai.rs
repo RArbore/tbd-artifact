@@ -302,15 +302,8 @@ impl<'a> AIContext<'a> {
                     let knot_id = self
                         .knot_map
                         .intern_knot(block, vars.iter().cloned().collect());
-                    // Knots can't be unioned with anything in a version above the block they are
-                    // defined in.
-                    let ty1 = self.saturator.ssa.ty(value1);
-                    let ty2 = self.saturator.ssa.ty(value2);
-                    assert_eq!(ty1, ty2);
-                    // In the predecessor versions, this Knot should not be unioned with anything.
-                    let knot = self.saturator.intern(SSA::Knot(knot_id, ty1));
                     knot_values.insert(knot_id, (value1, value2));
-                    pair_to_knot.insert((value1, value2), (vars, knot));
+                    pair_to_knot.insert((value1, value2), (vars, knot_id));
                 }
                 let (block_changed, new_block) = self
                     .update_new_block(block, SSABlock::Merge(ssa_pred1, ssa_pred2, knot_values));
@@ -322,7 +315,12 @@ impl<'a> AIContext<'a> {
                 // the sets in the predecessor versions with the knots.
                 let mut new_vars = HashMap::new();
                 let idom = self.saturator.idom(new_block).unwrap();
-                for ((value1, value2), (vars, knot)) in pair_to_knot {
+                for ((value1, value2), (vars, knot_id)) in pair_to_knot {
+                    let ty1 = self.saturator.ssa.ty(value1);
+                    let ty2 = self.saturator.ssa.ty(value2);
+                    assert_eq!(ty1, ty2);
+                    let mut knot = self.saturator.intern(SSA::Knot(knot_id, ty1));
+
                     let set1: HashSet<_> = self
                         .saturator
                         .set_in_version(value1, Some(idom), ssa_pred1)
@@ -332,12 +330,12 @@ impl<'a> AIContext<'a> {
                         .set_in_version(value2, Some(idom), ssa_pred2)
                         .collect();
                     for id in set1.intersection(&set2) {
-                        self.saturator.union(knot, *id);
+                        knot = self.saturator.union(knot, *id);
                     }
-                    let canon_id = self.saturator.find(knot);
-                    let count = self.saturator.count(canon_id);
+
+                    let count = self.saturator.count(knot);
                     for var in vars {
-                        new_vars.insert(var, (canon_id, count));
+                        new_vars.insert(var, (knot, count));
                     }
                 }
 
