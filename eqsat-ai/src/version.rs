@@ -128,7 +128,7 @@ impl SparseUnionFind {
     // the IDs in the set that's about to be entirely non-canonical).
     fn union_with<F>(&mut self, mut x: SSAId, mut y: SSAId, mut fn_for_changed_set: F) -> SSAId
     where
-        F: FnMut(SSAId),
+        F: FnMut(SSAId, SSAId, SSAId),
     {
         loop {
             let px = self.parent(x);
@@ -139,22 +139,24 @@ impl SparseUnionFind {
 
             if px > py {
                 if x == px {
-                    self.set_parent(x, py);
+                    let canon_id = self.find_mut(py);
+                    self.set_parent(x, canon_id);
                     // The only difference with `union`.
                     for id in self.set(x) {
-                        fn_for_changed_set(id);
+                        fn_for_changed_set(id, x, canon_id);
                     }
                     self.exchange_siblings(x, y);
-                    break self.find_mut(py);
+                    break canon_id;
                 }
                 self.set_parent(x, py);
                 x = px;
             } else {
                 if y == py {
-                    self.set_parent(y, px);
+                    let canon_id = self.find_mut(px);
+                    self.set_parent(y, canon_id);
                     // And here.
                     for id in self.set(y) {
-                        fn_for_changed_set(id);
+                        fn_for_changed_set(id, y, canon_id);
                     }
                     self.exchange_siblings(x, y);
                     break self.find_mut(px);
@@ -244,22 +246,22 @@ impl Version {
     // See `SparseUnionFind::union_with` for an explanation of `fn_for_changed_set`.
     pub fn union_with<F>(&mut self, mut x: SSAId, mut y: SSAId, mut fn_for_changed_set: F) -> SSAId
     where
-        F: FnMut(SSAId),
+        F: FnMut(SSAId, SSAId, SSAId),
     {
         if let Some(parent) = self.parent.as_ref() {
             x = parent.find(x);
             y = parent.find(y);
         }
-        self.uf.union_with(x, y, |outer_id| {
+        self.uf.union_with(x, y, |id, old_canon_id, new_canon_id| {
             // `SparseUnionFind::union` will call `fn_for_changed_set` on all IDs in the set *at the
-            // current layer* (the `outer_id`s), but we want to call it on all IDs in the *multi-
-            // layer* set of the losing ID.
+            // current layer*, but we want to call it on all IDs in the *multi-layer* set of the
+            // losing ID.
             if let Some(parent) = self.parent.as_ref() {
-                for id in parent.set(outer_id, None) {
-                    fn_for_changed_set(id);
+                for set_id in parent.set(id, None) {
+                    fn_for_changed_set(set_id, old_canon_id, new_canon_id);
                 }
             } else {
-                fn_for_changed_set(outer_id);
+                fn_for_changed_set(id, old_canon_id, new_canon_id);
             }
         })
     }
@@ -426,18 +428,24 @@ mod tests {
     fn uf3() {
         let mut uf = SparseUnionFind::default();
         let mut set = HashSet::new();
-        uf.union_with(1, 2, |id| {
+        uf.union_with(1, 2, |id, old_canon_id, new_canon_id| {
             set.insert(id);
+            assert_eq!(old_canon_id, 2);
+            assert_eq!(new_canon_id, 1);
         });
         assert_eq!(set, HashSet::from([2]));
         let mut set = HashSet::new();
-        uf.union_with(2, 0, |id| {
+        uf.union_with(2, 0, |id, old_canon_id, new_canon_id| {
             set.insert(id);
+            assert_eq!(old_canon_id, 1);
+            assert_eq!(new_canon_id, 0);
         });
         assert_eq!(set, HashSet::from([1, 2]));
         let mut set = HashSet::new();
-        uf.union_with(3, 0, |id| {
+        uf.union_with(3, 0, |id, old_canon_id, new_canon_id| {
             set.insert(id);
+            assert_eq!(old_canon_id, 3);
+            assert_eq!(new_canon_id, 0);
         });
         assert_eq!(set, HashSet::from([3]));
     }
@@ -512,8 +520,10 @@ mod tests {
         let parent = Rc::new(parent);
         let mut child = Version::child(Rc::clone(&parent), 1);
         let mut set = HashSet::new();
-        child.union_with(0, 3, |id| {
+        child.union_with(0, 3, |id, old_canon_id, new_canon_id| {
             set.insert(id);
+            assert_eq!(old_canon_id, 2);
+            assert_eq!(new_canon_id, 0);
         });
         assert_eq!(set, HashSet::from([2, 3]));
     }

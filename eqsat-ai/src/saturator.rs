@@ -79,13 +79,9 @@ impl IDManager {
         }
     }
 
-    fn union(&mut self, x: SSAId, y: SSAId) -> SSAId {
-        self.union_with(x, y, |_| {})
-    }
-
     fn union_with<F>(&mut self, x: SSAId, y: SSAId, mut f: F) -> SSAId
     where
-        F: FnMut(SSAId),
+        F: FnMut(SSAId, SSAId, SSAId),
     {
         let VersionState::Mutable(version) = self
             .versions
@@ -94,14 +90,14 @@ impl IDManager {
         else {
             panic!()
         };
-        version.union_with(x, y, |id| {
+        version.union_with(x, y, |id, old_canon_id, new_canon_id| {
             // Record any SSAId whose canonical SSAId changed as a delta ID. Notably, the SSAId
             // inserted here is itself *not* canonical.
             // NOTE: This should really ignore Param and Knot nodes, just as in `Saturator::intern`,
             // but we don't have a good way to map from SSAId to SSA in this context. It's fine for
             // these nodes to be added to the delta set, they will just be ignored by `apply_rws`.
             self.delta.insert(id);
-            f(id);
+            f(id, old_canon_id, new_canon_id);
         })
     }
 
@@ -182,7 +178,20 @@ impl Saturator {
 
     pub fn union(&mut self, x: SSAId, y: SSAId) -> SSAId {
         assert_eq!(self.ssa.ty(x), self.ssa.ty(y));
-        self.ids.union(x, y)
+        self.ids.union_with(x, y, |id, old_canon_id, new_canon_id| {
+            let node = self.ssa.get(id);
+            if let Some(inserted_canon_id) = self.tries.inserted_as(id) {
+                assert_eq!(inserted_canon_id, old_canon_id);
+                self.tries.remove_tuple(old_canon_id, node, id);
+                self.tries.insert_tuple(new_canon_id, node, id, false);
+            }
+            for user in self.ssa.users(old_canon_id) {
+                let user_node = self.ssa.get(*user);
+                if let Some(inserted_id) = self.tries.inserted_as(*user) {
+                    self.tries.remove_tuple(inserted_id, user_node, *user);
+                }
+            }
+        })
     }
 
     pub fn idom(&self, id: SSABlockId) -> Option<SSABlockId> {
@@ -307,6 +316,9 @@ impl Saturator {
                     .insert(canon_id);
                 self.ids.delta.insert(canon_id);
             }
+            if before != after {
+                self.tries.insert_tuple(id, ssa, id, false);
+            }
             canon_id
         }
     }
@@ -339,11 +351,25 @@ impl Saturator {
                 // We should only ever insert a node into the worklist if it's non-canonical.
                 assert_ne!(old_ssa, new_ssa);
                 let new_id = self.intern(new_ssa);
-                self.ids.union_with(id, new_id, |id| {
-                    for user in self.ssa.users(id) {
-                        worklist.push_back(*user);
-                    }
-                });
+                self.ids
+                    .union_with(id, new_id, |id, old_canon_id, new_canon_id| {
+                        let node = self.ssa.get(id);
+                        if let Some(inserted_canon_id) = self.tries.inserted_as(id) {
+                            assert_eq!(inserted_canon_id, old_canon_id);
+                            self.tries.remove_tuple(old_canon_id, node, id);
+                            self.tries.insert_tuple(new_canon_id, node, id, false);
+                        }
+                        for user in self.ssa.users(old_canon_id) {
+                            let user_node = self.ssa.get(*user);
+                            if let Some(inserted_id) = self.tries.inserted_as(*user) {
+                                self.tries.remove_tuple(inserted_id, user_node, *user);
+                            }
+                        }
+
+                        for user in self.ssa.users(id) {
+                            worklist.push_back(*user);
+                        }
+                    });
             }
             // Unions during rebuilding might create more delta IDs. At this point, `self.ids.delta`
             // is empty before we apply rules.
@@ -356,30 +382,9 @@ impl Saturator {
             // Delta nodes get added to the delta tries and the all tries. When nodes were previously
             // inserted into the all tries, they need to have their old entries removed first.
             for id in delta {
-                let canon_id = self.ids.find(id);
                 let node = self.ssa.get(id);
-
-                // Canonical nodes get added to the tries directly.
                 if self.ids.is_canonical(node) {
-                    tries.insert_tuple(canon_id, node, id, true);
-                    if let Some(old_canon_id) = tries.inserted_as(id) {
-                        if old_canon_id != canon_id {
-                            tries.remove_tuple(old_canon_id, node, id);
-                            tries.insert_tuple(canon_id, node, id, false);
-                        }
-                    } else {
-                        tries.insert_tuple(canon_id, node, id, false);
-                    }
-                }
-
-                // Users of newly non-canonical IDs get removed from the "all" tries.
-                if canon_id != id {
-                    for user in self.ssa.users(id) {
-                        if let Some(old_canon_id) = tries.inserted_as(*user) {
-                            let user_node = self.ssa.get(*user);
-                            tries.remove_tuple(old_canon_id, user_node, *user);
-                        }
-                    }
+                    tries.insert_tuple(self.ids.find(id), node, id, true);
                 }
             }
 
