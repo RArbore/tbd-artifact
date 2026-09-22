@@ -19,6 +19,9 @@ struct SparseUnionFind {
 #[derive(Debug)]
 pub struct Version {
     uf: SparseUnionFind,
+    // Track the size of the multi-layer set for every canonical SSAId. Store an Option<usize>, since
+    // the count when a SSAId is not mapped is actually 1, not 0.
+    count: HashMap<SSAId, Option<usize>>,
     // Store a pointer to the parent version. This is ref-counted to simplify the code in the
     // saturator w.r.t. ownership of versions.
     parent: Option<Rc<Version>>,
@@ -202,6 +205,7 @@ impl Version {
     pub fn root(block: SSABlockId) -> Self {
         Self {
             uf: Default::default(),
+            count: HashMap::new(),
             parent: None,
             block,
         }
@@ -210,6 +214,7 @@ impl Version {
     pub fn child(parent: Rc<Version>, block: SSABlockId) -> Self {
         Self {
             uf: Default::default(),
+            count: parent.count.clone(),
             parent: Some(parent),
             block,
         }
@@ -243,12 +248,32 @@ impl Version {
         )
     }
 
-    pub fn union(&mut self, mut x: SSAId, mut y: SSAId) -> SSAId {
-        if let Some(parent) = self.parent.as_ref() {
-            x = parent.find(x);
-            y = parent.find(y);
+    pub fn count(&self, id: SSAId) -> usize {
+        self.count[&id].unwrap()
+    }
+
+    fn update_counts(&mut self, x: SSAId, y: SSAId, canon: SSAId) {
+        if canon == x {
+            *self.count.entry(x).or_insert(Some(1)).as_mut().unwrap() +=
+                self.count.get(&y).unwrap_or(&Some(1)).unwrap();
+            self.count.insert(y, None);
+        } else {
+            *self.count.entry(y).or_insert(Some(1)).as_mut().unwrap() +=
+                self.count.get(&x).unwrap_or(&Some(1)).unwrap();
+            self.count.insert(x, None);
         }
-        self.uf.union(x, y)
+    }
+
+    pub fn union(&mut self, mut x: SSAId, mut y: SSAId) -> SSAId {
+        x = self.find_mut(x);
+        y = self.find_mut(y);
+        if x == y {
+            x
+        } else {
+            let canon = self.uf.union(x, y);
+            self.update_counts(x, y, canon);
+            canon
+        }
     }
 
     // See `SparseUnionFind::union_with` for an explanation of `fn_for_changed_set`.
@@ -256,22 +281,26 @@ impl Version {
     where
         F: FnMut(SSAId, SSAId, SSAId),
     {
-        if let Some(parent) = self.parent.as_ref() {
-            x = parent.find(x);
-            y = parent.find(y);
-        }
-        self.uf.union_with(x, y, |id, old_canon_id, new_canon_id| {
-            // `SparseUnionFind::union` will call `fn_for_changed_set` on all IDs in the set *at the
-            // current layer*, but we want to call it on all IDs in the *multi-layer* set of the
-            // losing ID.
-            if let Some(parent) = self.parent.as_ref() {
-                for set_id in parent.set(id, None) {
-                    fn_for_changed_set(set_id, old_canon_id, new_canon_id);
+        x = self.find_mut(x);
+        y = self.find_mut(y);
+        if x == y {
+            x
+        } else {
+            let canon = self.uf.union_with(x, y, |id, old_canon_id, new_canon_id| {
+                // `SparseUnionFind::union` will call `fn_for_changed_set` on all IDs in the set *at the
+                // current layer*, but we want to call it on all IDs in the *multi-layer* set of the
+                // losing ID.
+                if let Some(parent) = self.parent.as_ref() {
+                    for set_id in parent.set(id, None) {
+                        fn_for_changed_set(set_id, old_canon_id, new_canon_id);
+                    }
+                } else {
+                    fn_for_changed_set(id, old_canon_id, new_canon_id);
                 }
-            } else {
-                fn_for_changed_set(id, old_canon_id, new_canon_id);
-            }
-        })
+            });
+            self.update_counts(x, y, canon);
+            canon
+        }
     }
 
     pub fn set(&self, id: SSAId, up_to: Option<SSABlockId>) -> impl Iterator<Item = SSAId> + '_ {
@@ -474,6 +503,8 @@ mod tests {
             HashSet::from_iter([2, 3]),
             parent.set(2, None).collect::<HashSet<_>>()
         );
+        assert_eq!(parent.count(0), 2);
+        assert_eq!(parent.count(2), 2);
 
         let parent = Rc::new(parent);
         let mut child = Version::child(Rc::clone(&parent), 1);
@@ -517,6 +548,9 @@ mod tests {
                 parent.set(i, Some(0)).collect::<HashSet<_>>()
             );
         }
+        assert_eq!(parent.count(0), 2);
+        assert_eq!(parent.count(2), 2);
+        assert_eq!(child.count(0), 4);
     }
 
     #[test]
@@ -524,6 +558,8 @@ mod tests {
         let mut parent = Version::root(0);
         parent.union(0, 1);
         parent.union(2, 3);
+        assert_eq!(parent.count(0), 2);
+        assert_eq!(parent.count(2), 2);
 
         let parent = Rc::new(parent);
         let mut child = Version::child(Rc::clone(&parent), 1);
@@ -534,5 +570,8 @@ mod tests {
             assert_eq!(new_canon_id, 0);
         });
         assert_eq!(set, HashSet::from([2, 3]));
+        assert_eq!(parent.count(0), 2);
+        assert_eq!(parent.count(2), 2);
+        assert_eq!(child.count(0), 4);
     }
 }
