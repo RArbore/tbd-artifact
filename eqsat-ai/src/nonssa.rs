@@ -1,5 +1,5 @@
 use core::fmt::{Display, Formatter, Result};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use symbol_table::GlobalSymbol as Symbol;
 
@@ -100,27 +100,41 @@ impl Block {
 
 impl NonSSAFunc {
     pub fn rpo(&self) -> Vec<BlockId> {
-        let exit = self.cfg.iter().position(|block| block.is_return()).unwrap();
+        let mut succ: HashMap<BlockId, Vec<BlockId>> = HashMap::new();
+        for (id, block) in self.cfg.iter().enumerate().rev() {
+            match block {
+                Block::Entry => {}
+                Block::Guard { pred, .. }
+                | Block::Assign { pred, .. }
+                | Block::Return { pred, .. } => {
+                    succ.entry(*pred).or_default().push(id);
+                }
+                Block::Merge { pred1, pred2 } => {
+                    succ.entry(*pred1).or_default().push(id);
+                    succ.entry(*pred2).or_default().push(id);
+                }
+            }
+        }
         let mut rpo = vec![];
         let mut visited = HashSet::new();
-        self.rpo_helper(exit, &mut rpo, &mut visited);
+        self.rpo_helper(0, &succ, &mut rpo, &mut visited);
+        rpo.reverse();
         rpo
     }
 
-    fn rpo_helper(&self, id: BlockId, rpo: &mut Vec<BlockId>, visited: &mut HashSet<BlockId>) {
+    fn rpo_helper(
+        &self,
+        id: BlockId,
+        succ: &HashMap<BlockId, Vec<BlockId>>,
+        rpo: &mut Vec<BlockId>,
+        visited: &mut HashSet<BlockId>,
+    ) {
         if visited.contains(&id) {
             return;
         }
         visited.insert(id);
-        match &self.cfg[id] {
-            Block::Entry => {}
-            Block::Guard { pred, .. } | Block::Assign { pred, .. } | Block::Return { pred, .. } => {
-                self.rpo_helper(*pred, rpo, visited);
-            }
-            Block::Merge { pred1, pred2 } => {
-                self.rpo_helper(*pred1, rpo, visited);
-                self.rpo_helper(*pred2, rpo, visited);
-            }
+        for id in succ.get(&id).unwrap_or(&vec![]) {
+            self.rpo_helper(*id, succ, rpo, visited);
         }
         rpo.push(id);
     }
@@ -246,6 +260,6 @@ mod tests {
                 },
             ],
         };
-        assert_eq!(func.rpo(), vec![0, 2, 1, 3, 4]);
+        assert_eq!(func.rpo(), vec![0, 1, 2, 3, 4]);
     }
 }
