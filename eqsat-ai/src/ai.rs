@@ -1,4 +1,3 @@
-use core::assert_matches;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use symbol_table::GlobalSymbol as Symbol;
@@ -8,22 +7,7 @@ use crate::saturator::Saturator;
 use crate::ssa::{KnotId, SSA, SSABlock, SSABlockId, SSAId};
 
 pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonSSAFunc) {
-    use Block::*;
-    assert_matches!(nonssa.cfg[0], Entry);
-    let mut deps: HashMap<BlockId, HashSet<BlockId>> = HashMap::new();
-    for (id, block) in nonssa.cfg.iter().enumerate() {
-        deps.entry(id).or_default();
-        match block {
-            Entry => assert_eq!(id, 0),
-            Guard { pred, .. } | Assign { pred, .. } | Return { pred, .. } => {
-                deps.entry(*pred).or_default().insert(id);
-            }
-            Merge { pred1, pred2 } => {
-                deps.entry(*pred1).or_default().insert(id);
-                deps.entry(*pred2).or_default().insert(id);
-            }
-        }
-    }
+    let rpo = nonssa.rpo();
     let mut context = AIContext {
         name,
         vars: HashMap::new(),
@@ -32,14 +16,15 @@ pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonS
         saturator,
     };
 
-    // A faster interpreter would walk the non-SSA CFG in WTO. We use a worklist for two reasons.
-    // 1. Laziness.
-    // 2. We could randomize the order of blocks in the worklist to stress test the interpreter,
-    //    because the order shouldn't affect the final results.
-    let mut worklist = vec![0];
-    while let Some(block) = worklist.pop() {
-        if context.visit_block(nonssa, block) {
-            worklist.extend(deps[&block].iter());
+    loop {
+        println!("new traversal");
+        let mut changed = false;
+        for block in &rpo {
+            println!("rpo: {}", block);
+            changed = changed | context.visit_block(&nonssa, *block);
+        }
+        if !changed {
+            break;
         }
     }
 }
@@ -210,6 +195,9 @@ impl<'a> AIContext<'a> {
     }
 
     fn visit_guard(&mut self, block: BlockId, pred: BlockId, cond: &Expr, direction: bool) -> bool {
+        if self.is_bottom(pred) {
+            return false;
+        }
         let ssa_pred = self.to_ssa_block(pred);
         self.saturator.move_to_version(ssa_pred);
         let value = self.visit_expr(cond, pred);
@@ -247,6 +235,9 @@ impl<'a> AIContext<'a> {
     }
 
     fn visit_assign(&mut self, block: BlockId, pred: BlockId, var: Symbol, expr: &Expr) -> bool {
+        if self.is_bottom(pred) {
+            return false;
+        }
         let ssa_pred = self.to_ssa_block(pred);
         self.saturator.move_to_version(ssa_pred);
         let value = self.visit_expr(expr, pred);
@@ -349,6 +340,9 @@ impl<'a> AIContext<'a> {
     }
 
     fn visit_return(&mut self, block: BlockId, pred: BlockId, exprs: &[Expr]) -> bool {
+        if self.is_bottom(pred) {
+            return false;
+        }
         let ssa_pred = self.to_ssa_block(pred);
         self.saturator.move_to_version(ssa_pred);
         let values: Vec<_> = exprs
