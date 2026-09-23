@@ -71,7 +71,7 @@ enum TrieEdit {
         id: SSAId,
         old_canon_id: SSAId,
         new_canon_id: SSAId,
-        parent_version: SSABlockId,
+        parent_version: Option<SSABlockId>,
     },
 }
 
@@ -85,6 +85,11 @@ pub struct Saturator {
     // so we delay editing the tries until after e-matching (and after rebuilding) by recording
     // intern and union operations.
     trie_edits: Vec<TrieEdit>,
+    // Whenever the abstract interpreter creates a new version, it always moves to that version next.
+    // If that version is replacing some old version, we need to pop the old version and push the new
+    // version, which requires delaying actually inserting the new version into `ids` until during
+    // the move into it. This is kind of hacky.
+    new_version: Option<VersionState>,
 }
 
 impl IDManager {
@@ -154,32 +159,6 @@ impl IDManager {
     ) -> impl Iterator<Item = SSAId> + '_ {
         self.versions[&version].as_ref().set(id, up_to)
     }
-
-    fn create_version(&mut self, block_id: SSABlockId, block: &SSABlock) {
-        // Update the dominator tree incrementally when adding new SSA blocks.
-        self.dom_tree.visit_block(block_id, block);
-        let version = if let Some(idom) = self.dom_tree.idom(block_id) {
-            let state = self.versions.get_mut(&idom).unwrap();
-            use VersionState::*;
-            let rc = match state {
-                Mutable(version) => {
-                    // Why isn't there a core::mem primitive for this?
-                    let rc = Rc::new(replace(version, Version::root(!0)));
-                    *state = Immutable(Rc::clone(&rc));
-                    rc
-                }
-                Immutable(rc) => Rc::clone(rc),
-            };
-            Version::child(rc, block_id)
-        } else {
-            // The entry block gets the root version.
-            Version::root(block_id)
-        };
-        self.versions
-            .insert(block_id, VersionState::Mutable(version));
-        // In the new version, nothing has been examined yet.
-        self.examined_ids.insert(block_id, HashSet::new());
-    }
 }
 
 impl Saturator {
@@ -192,10 +171,6 @@ impl Saturator {
     }
 
     pub fn union(&mut self, x: SSAId, y: SSAId) -> SSAId {
-        println!(
-            "union {} and {} in {:?} (rule)",
-            x, y, self.ids.current_version
-        );
         assert_eq!(self.ssa.ty(x), self.ssa.ty(y));
         self.ids.union_with(x, y, |id, old_canon_id, new_canon_id| {
             self.trie_edits.push(TrieEdit::Union {
@@ -251,14 +226,120 @@ impl Saturator {
     }
 
     pub fn create_version(&mut self, block: SSABlockId) {
-        self.ids.create_version(block, self.ssa.get_block(block));
+        // Update the dominator tree incrementally when adding new SSA blocks.
+        self.ids
+            .dom_tree
+            .visit_block(block, self.ssa.get_block(block));
+        let version = if let Some(idom) = self.ids.dom_tree.idom(block) {
+            let state = self.ids.versions.get_mut(&idom).unwrap();
+            use VersionState::*;
+            let rc = match state {
+                Mutable(version) => {
+                    // Why isn't there a core::mem primitive for this?
+                    let rc = Rc::new(replace(version, Version::root(!0)));
+                    *state = Immutable(Rc::clone(&rc));
+                    rc
+                }
+                Immutable(rc) => Rc::clone(rc),
+            };
+            Version::child(rc, block)
+        } else {
+            // The entry block gets the root version.
+            Version::root(block)
+        };
+        // In the new version, nothing has been examined yet.
+        self.new_version = Some(VersionState::Mutable(version));
+    }
+
+    fn commit_new_version(&mut self) {
+        let Some(version) = self.new_version.take() else {
+            panic!()
+        };
+        let block = version.as_ref().block();
+        self.ids.versions.insert(block, version);
+        self.ids.examined_ids.insert(block, HashSet::new());
+    }
+
+    fn pop_version(&mut self, block_id: SSABlockId) {
+        // If the version for this block hasn't been committed yet, then there's nothing to do.
+        if !self.ids.versions.contains_key(&block_id) {
+            return;
+        }
+
+        // When popping a version, any examined nodes may need to be examined again.
+        for id in &self.ids.examined_ids[&block_id] {
+            assert!(self.ids.previously_examined.insert(*id));
+        }
+
+        // And any unions that held in the popped version but not the parent version induce
+        // edits in the tries.
+        let version = self.ids.versions[&block_id].as_ref();
+        let parent = version.parent();
+        for id in version.non_canon_ids_at_level() {
+            assert_eq!(id, version.find_in_parent(id));
+            let old_canon_id = version.find(id);
+            assert_ne!(old_canon_id, id);
+            if let Some(parent) = parent {
+                for set_id in parent.set(id, None) {
+                    self.trie_edits.push(TrieEdit::RevertUnion {
+                        id: set_id,
+                        old_canon_id,
+                        new_canon_id: id,
+                        parent_version: Some(parent.block()),
+                    });
+                }
+            } else {
+                self.trie_edits.push(TrieEdit::RevertUnion {
+                    id: id,
+                    old_canon_id,
+                    new_canon_id: id,
+                    parent_version: None,
+                });
+            }
+        }
+    }
+
+    fn push_version(&mut self, block_id: SSABlockId) {
+        // If the version for this block hasn't been committed yet, then there's nothing to do.
+        if !self.ids.versions.contains_key(&block_id) {
+            return;
+        }
+
+        // When pushing a version, any examined nodes will have their examination inherited
+        // by the destination version, so we don't need to re-examine them.
+        for id in &self.ids.examined_ids[&block_id] {
+            self.ids.previously_examined.remove(id);
+        }
+
+        // And any unions that hold in the pushed version but not the parent version induce
+        // edits in the tries.
+        let version = self.ids.versions[&block_id].as_ref();
+        let parent = version.parent();
+        for id in version.non_canon_ids_at_level() {
+            assert_eq!(id, version.find_in_parent(id));
+            let new_canon_id = version.find(id);
+            assert_ne!(new_canon_id, id);
+            if let Some(parent) = parent {
+                for set_id in parent.set(id, None) {
+                    self.trie_edits.push(TrieEdit::Union {
+                        id: set_id,
+                        old_canon_id: id,
+                        new_canon_id,
+                    });
+                }
+            } else {
+                self.trie_edits.push(TrieEdit::Union {
+                    id: id,
+                    old_canon_id: id,
+                    new_canon_id,
+                });
+            }
+        }
     }
 
     pub fn move_to_version(&mut self, block: SSABlockId) {
+        println!("moving to version for block {}", block);
         if let Some(last_block) = self.ids.current_version {
-            if block == last_block {
-                return;
-            }
             assert!(self.ids.delta.is_empty());
 
             // Traverse up and down the dominator tree from the last block to the new block.
@@ -282,56 +363,25 @@ impl Saturator {
             );
 
             for block_id in up_ids {
-                // When popping a version, any examined nodes may need to be examined again.
-                for id in &self.ids.examined_ids[&block_id] {
-                    assert!(self.ids.previously_examined.insert(*id));
-                }
-
-                // And any unions that held in the popped version but not the parent version induce
-                // edits in the tries.
-                let version = self.ids.versions[&block_id].as_ref();
-                let parent = version.parent().unwrap();
-                for id in version.non_canon_ids_at_level() {
-                    assert_eq!(id, version.find_in_parent(id));
-                    let old_canon_id = version.find(id);
-                    assert_ne!(old_canon_id, id);
-                    for set_id in parent.set(id, None) {
-                        self.trie_edits.push(TrieEdit::RevertUnion {
-                            id: set_id,
-                            old_canon_id,
-                            new_canon_id: id,
-                            parent_version: parent.block(),
-                        });
-                    }
-                }
+                self.pop_version(block_id);
             }
 
             for block_id in down_ids {
-                // When pushing a version, any examined nodes will have their examination inherited
-                // by the destination version, so we don't need to re-examine them.
-                for id in &self.ids.examined_ids[&block_id] {
-                    self.ids.previously_examined.remove(id);
-                }
+                self.push_version(block_id);
+            }
 
-                // And any unions that hold in the pushed version but not the parent version induce
-                // edits in the tries.
-                let version = self.ids.versions[&block_id].as_ref();
-                let parent = version.parent().unwrap();
-                for id in version.non_canon_ids_at_level() {
-                    assert_eq!(id, version.find_in_parent(id));
-                    let new_canon_id = version.find(id);
-                    assert_ne!(new_canon_id, id);
-                    for set_id in parent.set(id, None) {
-                        self.trie_edits.push(TrieEdit::Union {
-                            id: set_id,
-                            old_canon_id: id,
-                            new_canon_id,
-                        });
-                    }
-                }
+            if let Some(block) = self
+                .new_version
+                .as_ref()
+                .map(|version| version.as_ref().block())
+            {
+                self.pop_version(block);
+                self.commit_new_version();
+                self.push_version(block);
             }
         } else {
             assert_eq!(self.ssa.get_block(block), &SSABlock::Entry);
+            self.commit_new_version();
         }
         self.ids.current_version = Some(block);
     }
@@ -364,10 +414,6 @@ impl Saturator {
                 // We should only ever insert a node into the worklist if it's non-canonical.
                 assert_ne!(old_ssa, new_ssa);
                 let new_id = self.intern(new_ssa);
-                println!(
-                    "union {} and {} in {:?} (rebuild)",
-                    id, new_id, self.ids.current_version
-                );
                 self.ids
                     .union_with(id, new_id, |id, old_canon_id, new_canon_id| {
                         self.trie_edits.push(TrieEdit::Union {
@@ -451,9 +497,13 @@ impl Saturator {
                 }
                 for user in self.ssa.users(id).cloned() {
                     let user_node = self.ssa.get(user);
-                    let version = self.ids.versions[&parent_version].as_ref();
-                    let user_canon = version.find(user);
-                    if version.is_canonical(user_node) {
+                    let version = parent_version
+                        .map(|parent_version| self.ids.versions[&parent_version].as_ref());
+                    let user_canon = version.map(|version| version.find(user)).unwrap_or(user);
+                    if version
+                        .map(|version| version.is_canonical(user_node))
+                        .unwrap_or(true)
+                    {
                         if let Some(inserted_id) = self.tries.inserted_as(user) {
                             assert_eq!(inserted_id, user_canon);
                         } else {

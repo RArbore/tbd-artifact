@@ -17,10 +17,8 @@ pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonS
     };
 
     loop {
-        println!("new traversal");
         let mut changed = false;
         for block in &rpo {
-            println!("rpo: {}", block);
             changed = changed | context.visit_block(&nonssa, *block);
         }
         if !changed {
@@ -191,7 +189,9 @@ impl<'a> AIContext<'a> {
                 )
             })
             .collect();
-        self.update_new_block(block, SSABlock::Entry).0 | self.update_vars(block, vars)
+        let (block_changed, new_block) = self.update_new_block(block, SSABlock::Entry);
+        self.saturator.move_to_version(new_block);
+        block_changed | self.update_vars(block, vars)
     }
 
     fn visit_guard(&mut self, block: BlockId, pred: BlockId, cond: &Expr, direction: bool) -> bool {
@@ -359,6 +359,7 @@ impl<'a> AIContext<'a> {
             .map(|id| self.saturator.find(id))
             .collect();
         let (_, new_block) = self.update_new_block(block, SSABlock::Return(ssa_pred, values));
+        self.saturator.move_to_version(new_block);
         self.saturator.ssa.add_exit(self.name, new_block);
         // Returns have no successors;
         false
