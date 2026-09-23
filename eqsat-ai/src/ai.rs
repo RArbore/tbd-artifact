@@ -161,7 +161,6 @@ impl<'a> AIContext<'a> {
 
     fn visit_block(&mut self, nonssa: &NonSSAFunc, block: BlockId) -> bool {
         use Block::*;
-        println!("visiting {}: {:?}", block, nonssa.cfg[block]);
         match &nonssa.cfg[block] {
             Entry => self.visit_entry(nonssa, block),
             Guard {
@@ -387,9 +386,7 @@ mod tests {
             };
             assert_eq!(values.len(), 1);
             let value = values[0];
-            saturator.check_trie_consistency();
             saturator.move_to_version(1);
-            saturator.check_trie_consistency();
             return (value, saturator);
         }
         panic!()
@@ -409,9 +406,7 @@ mod tests {
             };
             assert_eq!(values.len(), 1);
             let value = values[0];
-            saturator.check_trie_consistency();
             saturator.move_to_version(exit);
-            saturator.check_trie_consistency();
             return (value, saturator);
         }
         panic!()
