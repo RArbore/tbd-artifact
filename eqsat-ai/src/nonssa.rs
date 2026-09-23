@@ -1,4 +1,5 @@
 use core::fmt::{Display, Formatter, Result};
+use std::collections::HashSet;
 
 use symbol_table::GlobalSymbol as Symbol;
 
@@ -87,6 +88,44 @@ pub struct NonSSAFunc {
     pub cfg: Vec<Block>,
 }
 
+impl Block {
+    pub fn is_return(&self) -> bool {
+        if let Block::Return { .. } = self {
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl NonSSAFunc {
+    pub fn rpo(&self) -> Vec<BlockId> {
+        let exit = self.cfg.iter().position(|block| block.is_return()).unwrap();
+        let mut rpo = vec![];
+        let mut visited = HashSet::new();
+        self.rpo_helper(exit, &mut rpo, &mut visited);
+        rpo
+    }
+
+    fn rpo_helper(&self, id: BlockId, rpo: &mut Vec<BlockId>, visited: &mut HashSet<BlockId>) {
+        if visited.contains(&id) {
+            return;
+        }
+        visited.insert(id);
+        match &self.cfg[id] {
+            Block::Entry => {}
+            Block::Guard { pred, .. } | Block::Assign { pred, .. } | Block::Return { pred, .. } => {
+                self.rpo_helper(*pred, rpo, visited);
+            }
+            Block::Merge { pred1, pred2 } => {
+                self.rpo_helper(*pred1, rpo, visited);
+                self.rpo_helper(*pred2, rpo, visited);
+            }
+        }
+        rpo.push(id);
+    }
+}
+
 impl Display for Type {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
@@ -141,5 +180,72 @@ impl Display for BinaryOp {
             BinaryOp::GT => ">".fmt(f),
             BinaryOp::GE => ">=".fmt(f),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rpo1() {
+        use Block::*;
+        let cond = Expr::Constant {
+            val: Constant::Bool(true),
+        };
+        let func = NonSSAFunc {
+            name: "".into(),
+            params: vec![],
+            cfg: vec![
+                Entry,
+                Guard {
+                    pred: 0,
+                    cond: cond.clone(),
+                    direction: true,
+                },
+                Guard {
+                    pred: 0,
+                    cond,
+                    direction: true,
+                },
+                Merge { pred1: 1, pred2: 2 },
+                Return {
+                    pred: 3,
+                    exprs: vec![],
+                },
+            ],
+        };
+        assert_eq!(func.rpo(), vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn rpo2() {
+        use Block::*;
+        let cond = Expr::Constant {
+            val: Constant::Bool(true),
+        };
+        let func = NonSSAFunc {
+            name: "".into(),
+            params: vec![],
+            cfg: vec![
+                Entry,
+                Merge { pred1: 0, pred2: 2 },
+                Guard {
+                    pred: 1,
+                    cond: cond.clone(),
+                    direction: true,
+                },
+                Guard {
+                    pred: 1,
+                    cond,
+                    direction: true,
+                },
+                Return {
+                    pred: 3,
+                    exprs: vec![],
+                },
+            ],
+        };
+        assert_eq!(func.rpo(), vec![0, 2, 1, 3, 4]);
     }
 }
