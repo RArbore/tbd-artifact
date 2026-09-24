@@ -27,7 +27,7 @@ impl AsRef<Version> for VersionState {
 
 // Because Rust does not have field borrows, we have to do silly things sometimes to convey to the
 // borrow checker that we are not violating any of its rules. This struct should be considered as
-// part of `Saturator` directly. It handles all the facilities that just deal with SSAIds.
+// part of `Saturator` directly.
 #[derive(Default)]
 struct IDManager {
     // What nodes have either been:
@@ -124,21 +124,6 @@ impl IDManager {
             .map(|current_version| self.versions[&current_version].as_ref().canonicalize(ssa))
             .unwrap_or(ssa)
     }
-
-    fn idom(&self, id: SSABlockId) -> Option<SSABlockId> {
-        self.dom_tree.idom(id)
-    }
-
-    fn set_in_version(
-        &self,
-        id: SSAId,
-        up_to: Option<SSABlockId>,
-        version: SSABlockId,
-    ) -> impl Iterator<Item = SSAId> + '_ {
-        self.versions[&version]
-            .as_ref()
-            .set(id, up_to.map(|up_to| self.versions[&up_to].as_ref()))
-    }
 }
 
 impl Saturator {
@@ -159,17 +144,8 @@ impl Saturator {
         self.ids.count(id)
     }
 
-    pub fn idom(&self, id: SSABlockId) -> Option<SSABlockId> {
-        self.ids.idom(id)
-    }
-
-    pub fn set_in_version(
-        &self,
-        id: SSAId,
-        up_to: Option<SSABlockId>,
-        version: SSABlockId,
-    ) -> impl Iterator<Item = SSAId> + '_ {
-        self.ids.set_in_version(id, up_to, version)
+    pub fn version(&self, id: SSABlockId) -> &Version {
+        self.ids.versions[&id].as_ref()
     }
 
     pub fn intern(&mut self, mut ssa: SSA) -> SSAId {

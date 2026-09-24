@@ -757,7 +757,7 @@ pub fn compile_rw(contents: &str) -> String {
             pub fn inserted_as(&self, non_canon_id: SSAId) -> Option<SSAId> {
                 self.inserted_as.get(&non_canon_id).cloned()
             }
-            
+
             pub fn insert_tuple(&mut self, canon_id: SSAId, node: SSA, non_canon_id: SSAId, is_delta: bool) {
                 if !is_delta {
                     assert!(self.inserted_as.insert(non_canon_id, canon_id).is_none());
@@ -834,7 +834,7 @@ pub fn compile_rw(contents: &str) -> String {
     let rw_fn = quote! {
         use core::fmt::{Debug, Formatter, Result};
         use std::collections::{BTreeMap, HashMap};
-        
+
         use crate::nonssa::{BinaryOp, Constant, UnaryOp};
         use crate::saturator::Saturator;
         use crate::ssa::{SSA, SSAId};

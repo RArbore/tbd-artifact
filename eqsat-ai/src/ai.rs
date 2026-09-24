@@ -305,20 +305,22 @@ impl<'a> AIContext<'a> {
                 // Now that we have a version for this block, merge the IDs in the intersection of
                 // the sets in the predecessor versions with the knots.
                 let mut new_vars = HashMap::new();
-                let idom = self.saturator.idom(new_block).unwrap();
                 for ((value1, value2), (vars, knot_id)) in pair_to_knot {
                     let ty1 = self.saturator.ssa.ty(value1);
                     let ty2 = self.saturator.ssa.ty(value2);
                     assert_eq!(ty1, ty2);
                     let mut knot = self.saturator.intern(SSA::Knot(knot_id, ty1));
 
+                    let idom = self.saturator.version(new_block).parent().unwrap();
                     let set1: HashSet<_> = self
                         .saturator
-                        .set_in_version(value1, Some(idom), ssa_pred1)
+                        .version(ssa_pred1)
+                        .set(value1, Some(idom))
                         .collect();
                     let set2: HashSet<_> = self
                         .saturator
-                        .set_in_version(value2, Some(idom), ssa_pred2)
+                        .version(ssa_pred2)
+                        .set(value2, Some(idom))
                         .collect();
                     for id in set1.intersection(&set2) {
                         knot = self.saturator.union(knot, *id);
