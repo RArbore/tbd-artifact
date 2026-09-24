@@ -1,5 +1,5 @@
 use core::ptr::eq;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::ssa::{SSA, SSAId};
@@ -28,6 +28,11 @@ pub struct Version {
     parent: Option<Rc<Version>>,
     // Track which level in the version hierarchy this version corresponds to.
     level: usize,
+    // Track which SSAIds have been "examined" in this version. A SSAId is considered "examined" in a
+    // version if it was ever 1. added as a new node in the hash-cons while this is the current
+    // version or 2. was ever interned when the SSAId was in `IDManager::previously_examined` (see
+    // `saturator.rs`) while this is the current version.
+    examined_ids: HashSet<SSAId>,
 }
 
 #[derive(Debug)]
@@ -206,10 +211,11 @@ impl Version {
     pub fn child(parent: Rc<Version>) -> Self {
         let level = parent.level + 1;
         Self {
-            uf: Default::default(),
+            uf: SparseUnionFind::default(),
             count: parent.count.clone(),
             parent: Some(parent),
             level,
+            examined_ids: HashSet::new(),
         }
     }
 
@@ -369,6 +375,14 @@ impl Version {
 
     pub fn non_canon_ids_at_level(&self) -> impl Iterator<Item = SSAId> + '_ {
         self.uf.non_canon_ids()
+    }
+
+    pub fn examine(&mut self, id: SSAId) {
+        self.examined_ids.insert(id);
+    }
+
+    pub fn examined(&self) -> impl Iterator<Item = SSAId> + '_ {
+        self.examined_ids.iter().cloned()
     }
 }
 

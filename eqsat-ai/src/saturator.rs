@@ -45,17 +45,13 @@ struct IDManager {
     // Store the "current" version. Moving between versions requires careful maintenance of the delta
     // set, so we use `move_to_version` to explicitly change this member.
     current_version: Option<SSABlockId>,
-    // Store the set of SSAIds that were "examined" in each version. A SSAId is considered "examined"
-    // in a version if it was ever 1. added as a new node in the hash-cons while at that version or
-    // 2. was ever interned when the SSAId was in `previously_examined` while at that version. When
-    // moving out of a version with examined SSAIds, those SSAIds need to be added to
-    // `previously_examined`, so that they are re-examined if they are re-interned. When moving
-    // into a version with examined SSAIds, those SSAIds need to be removed from
-    // `previously_examined`, so that they are not re-examined unnecessarily.
-    examined_ids: HashMap<SSABlockId, HashSet<SSAId>>,
     // Store the set of SSAIds that were examined in versions that we've since left. At any point in
     // time, if we intern a SSAId that is in this set, we treat it as a new node and add it to the
-    // delta set (and remove it from this set), even if it was already in the hash-cons.
+    // delta set (and remove it from this set), even if it was already in the hash-cons. When moving
+    // out of a version with examined SSAIds, those SSAIds need to be added to `previously_examined`,
+    // so that they are re-examined if they are re-interned. When moving into a version with examined
+    // SSAIds, those SSAIds need to be removed from `previously_examined`, so that they are not re-
+    // examined unnecessarily.
     previously_examined: HashSet<SSAId>,
 }
 
@@ -160,11 +156,15 @@ impl Saturator {
             let canon_id = self.ids.find(id);
             let after = self.ssa.num_nodes();
             if before != after || self.ids.previously_examined.remove(&canon_id) {
-                self.ids
-                    .examined_ids
-                    .entry(self.ids.current_version.unwrap())
-                    .or_default()
-                    .insert(canon_id);
+                let VersionState::Mutable(version) = self
+                    .ids
+                    .versions
+                    .get_mut(&self.ids.current_version.unwrap())
+                    .unwrap()
+                else {
+                    panic!()
+                };
+                version.examine(canon_id);
                 self.ids.delta.insert(canon_id);
             }
             canon_id
@@ -214,7 +214,6 @@ impl Saturator {
             panic!()
         };
         self.ids.versions.insert(block, version);
-        self.ids.examined_ids.insert(block, HashSet::new());
     }
 
     fn pop_version(&mut self, block_id: SSABlockId) {
@@ -224,8 +223,8 @@ impl Saturator {
         }
 
         // When popping a version, any examined nodes may need to be examined again.
-        for id in &self.ids.examined_ids[&block_id] {
-            self.ids.previously_examined.insert(*id);
+        for id in self.ids.versions[&block_id].as_ref().examined() {
+            self.ids.previously_examined.insert(id);
         }
     }
 
@@ -237,8 +236,8 @@ impl Saturator {
 
         // When pushing a version, any examined nodes will have their examination inherited
         // by the destination version, so we don't need to re-examine them.
-        for id in &self.ids.examined_ids[&block_id] {
-            self.ids.previously_examined.remove(id);
+        for id in self.ids.versions[&block_id].as_ref().examined() {
+            self.ids.previously_examined.remove(&id);
         }
     }
 
