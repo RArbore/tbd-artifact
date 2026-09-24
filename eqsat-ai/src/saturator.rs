@@ -201,30 +201,33 @@ impl Saturator {
     }
 
     pub fn traverse_to_version(&mut self, version: &Version) {
-        if let Some(last_block) = self.ids.current_version {
-            assert!(self.ids.delta.is_empty());
+        assert!(self.ids.delta.is_empty());
+        let last_version = self
+            .ids
+            .current_version
+            .map(|last_block| self.ids.versions[&last_block].as_ref())
+            .unwrap_or(&self.ids.root_version);
 
-            // Traverse up and down the dominator tree from the last block to the new block.
-            let mut up_versions = vec![];
-            let mut down_versions = vec![];
-            Version::lca(
-                self.ids.versions[&last_block].as_ref(),
-                version,
-                |up_version| up_versions.push(up_version),
-                |down_version| down_versions.push(down_version),
-            );
-            down_versions.reverse();
+        // Traverse up and down the dominator tree from the last block to the new block.
+        let mut up_versions = vec![];
+        let mut down_versions = vec![];
+        Version::lca(
+            last_version,
+            version,
+            |up_version| up_versions.push(up_version),
+            |down_version| down_versions.push(down_version),
+        );
+        down_versions.reverse();
 
-            for version in up_versions {
-                for id in version.examined() {
-                    self.ids.previously_examined.insert(id);
-                }
+        for version in up_versions {
+            for id in version.examined() {
+                self.ids.previously_examined.insert(id);
             }
+        }
 
-            for version in down_versions {
-                for id in version.examined() {
-                    self.ids.previously_examined.remove(&id);
-                }
+        for version in down_versions {
+            for id in version.examined() {
+                self.ids.previously_examined.remove(&id);
             }
         }
     }
