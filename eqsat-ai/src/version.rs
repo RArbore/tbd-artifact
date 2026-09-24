@@ -230,8 +230,8 @@ impl Version {
         mut f2: F2,
     ) -> Option<Rc<Version>>
     where
-        F1: FnMut(&Version),
-        F2: FnMut(&Version),
+        F1: FnMut(&'a Version),
+        F2: FnMut(&'a Version),
     {
         let mut a_rc: Option<&Rc<Version>> = None;
         let mut b_rc: Option<&Rc<Version>> = None;

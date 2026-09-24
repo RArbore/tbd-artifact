@@ -2,7 +2,6 @@ use core::mem::take;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
-use crate::dom::DomTree;
 use crate::rw::{Tries, apply_rws};
 use crate::ssa::{SSA, SSABlock, SSABlockId, SSAId, SSAProgram};
 use crate::version::Version;
@@ -35,8 +34,6 @@ struct IDManager {
     // 2. Have had their canonical SSAId changed (due to a union)...
     // ...since the last iteration of rewriting.
     delta: HashSet<SSAId>,
-    // Incrementally maintain dominator analysis.
-    dom_tree: DomTree,
     // Store an empty root version. This is needed so we have a well-defined LCA between old and new
     // versions for the entry block.
     root_version: Rc<Version>,
@@ -59,11 +56,6 @@ struct IDManager {
 pub struct Saturator {
     pub ssa: SSAProgram,
     ids: IDManager,
-    // Whenever the abstract interpreter creates a new version, it always moves to that version next.
-    // If that version is replacing some old version, we need to pop the old version and push the new
-    // version, which requires delaying actually inserting the new version into `ids` until during
-    // the move into it. This is kind of hacky.
-    new_version: Option<(SSABlockId, VersionState)>,
 }
 
 impl IDManager {
@@ -173,11 +165,6 @@ impl Saturator {
     }
 
     pub fn create_version(&mut self, block: SSABlockId) {
-        // Update the dominator tree incrementally when adding new SSA blocks.
-        self.ids
-            .dom_tree
-            .visit_block(block, self.ssa.get_block(block));
-
         use SSABlock::*;
         use VersionState::*;
         let pred_version_rc = match self.ssa.get_block(block) {
@@ -206,73 +193,47 @@ impl Saturator {
         let version = pred_version_rc
             .map(|rc| Version::child(rc))
             .unwrap_or_else(|| Version::child(Rc::clone(&self.ids.root_version)));
-        self.new_version = Some((block, VersionState::Mutable(version)));
+        self.traverse_to_version(&version);
+        self.ids.versions.insert(block, VersionState::Mutable(version));
+        self.ids.current_version = Some(block);
     }
 
-    fn commit_new_version(&mut self) {
-        let Some((block, version)) = self.new_version.take() else {
-            panic!()
-        };
-        self.ids.versions.insert(block, version);
-    }
-
-    fn pop_version(&mut self, block_id: SSABlockId) {
-        // If the version for this block hasn't been committed yet, then there's nothing to do.
-        if !self.ids.versions.contains_key(&block_id) {
-            return;
-        }
-
-        // When popping a version, any examined nodes may need to be examined again.
-        for id in self.ids.versions[&block_id].as_ref().examined() {
-            self.ids.previously_examined.insert(id);
-        }
-    }
-
-    fn push_version(&mut self, block_id: SSABlockId) {
-        // If the version for this block hasn't been committed yet, then there's nothing to do.
-        if !self.ids.versions.contains_key(&block_id) {
-            return;
-        }
-
-        // When pushing a version, any examined nodes will have their examination inherited
-        // by the destination version, so we don't need to re-examine them.
-        for id in self.ids.versions[&block_id].as_ref().examined() {
-            self.ids.previously_examined.remove(&id);
-        }
-    }
-
-    pub fn move_to_version(&mut self, block: SSABlockId) {
+    pub fn traverse_to_version(&mut self, version: &Version) {
         if let Some(last_block) = self.ids.current_version {
             assert!(self.ids.delta.is_empty());
 
             // Traverse up and down the dominator tree from the last block to the new block.
-            let mut up_ids = vec![];
-            let mut down_ids = vec![];
-            self.ids.dom_tree.lca(
-                last_block,
-                block,
-                |up_id| up_ids.push(up_id),
-                |down_id| down_ids.push(down_id),
+            let mut up_versions = vec![];
+            let mut down_versions = vec![];
+            Version::lca(
+                self.ids.versions[&last_block].as_ref(),
+                version,
+                |up_version| up_versions.push(up_version),
+                |down_version| down_versions.push(down_version),
             );
-            down_ids.reverse();
+            down_versions.reverse();
 
-            for block_id in up_ids {
-                self.pop_version(block_id);
+            for version in up_versions {
+                for id in version.examined() {
+                    self.ids.previously_examined.insert(id);
+                }
             }
 
-            for block_id in down_ids {
-                self.push_version(block_id);
+            for version in down_versions {
+                for id in version.examined() {
+                    self.ids.previously_examined.remove(&id);
+                }
             }
-
-            if let Some(block) = self.new_version.as_ref().map(|(block, _)| *block) {
-                self.pop_version(block);
-                self.commit_new_version();
-                self.push_version(block);
-            }
-        } else {
-            assert_eq!(self.ssa.get_block(block), &SSABlock::Entry);
-            self.commit_new_version();
         }
+    }
+
+    pub fn move_to_version(&mut self, block: SSABlockId) {
+        if self.ids.current_version == Some(block) {
+            return;
+        }
+        let version = self.ids.versions.remove(&block).unwrap();
+        self.traverse_to_version(version.as_ref());
+        self.ids.versions.insert(block, version);
         self.ids.current_version = Some(block);
     }
 

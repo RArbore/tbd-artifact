@@ -188,8 +188,7 @@ impl<'a> AIContext<'a> {
                 )
             })
             .collect();
-        let (block_changed, new_block) = self.update_new_block(block, SSABlock::Entry);
-        self.saturator.move_to_version(new_block);
+        let (block_changed, _) = self.update_new_block(block, SSABlock::Entry);
         block_changed | self.update_vars(block, vars)
     }
 
@@ -216,10 +215,9 @@ impl<'a> AIContext<'a> {
             let block_changed = if always_false && !direction || always_true && direction {
                 self.update_block(block, ssa_pred)
             } else {
-                let (block_changed, new_block) =
+                let (block_changed, _) =
                     self.update_new_block(block, SSABlock::Guard(ssa_pred, value, direction));
 
-                self.saturator.move_to_version(new_block);
                 // When the guard is necessary, we want to assume the guard condition is either true
                 // or false (depending on `direction`) in the created version.
                 self.assume(value, direction);
@@ -300,7 +298,6 @@ impl<'a> AIContext<'a> {
                     .update_new_block(block, SSABlock::Merge(ssa_pred1, ssa_pred2, knot_values));
                 assert_ne!(new_block, ssa_pred1);
                 assert_ne!(new_block, ssa_pred2);
-                self.saturator.move_to_version(new_block);
 
                 // Now that we have a version for this block, merge the IDs in the intersection of
                 // the sets in the predecessor versions with the knots.
@@ -360,7 +357,6 @@ impl<'a> AIContext<'a> {
             .map(|id| self.saturator.find(id))
             .collect();
         let (_, new_block) = self.update_new_block(block, SSABlock::Return(ssa_pred, values));
-        self.saturator.move_to_version(new_block);
         self.saturator.ssa.add_exit(self.name, new_block);
         // Returns have no successors;
         false
