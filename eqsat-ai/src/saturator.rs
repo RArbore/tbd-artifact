@@ -25,8 +25,9 @@ impl AsRef<Version> for VersionState {
 }
 
 // Because Rust does not have field borrows, we have to do silly things sometimes to convey to the
-// borrow checker that we are not violating any of its rules. This struct should be considered as
-// part of `Saturator` directly.
+// borrow checker that we are not violating any of its rules. In particular, the `saturate` method of
+// `Saturator` needs simultaneous access to the `union_with` method and the `ssa` member. This struct
+// should be considered as part of `Saturator` directly.
 #[derive(Default)]
 struct IDManager {
     // What nodes have either been:
@@ -59,18 +60,15 @@ pub struct Saturator {
 }
 
 impl IDManager {
-    fn find(&mut self, mut id: SSAId) -> SSAId {
+    fn find(&self, mut id: SSAId) -> SSAId {
         if let Some(version) = self.current_version {
             id = self.find_in_version(id, version);
         }
         id
     }
 
-    fn find_in_version(&mut self, id: SSAId, version: SSABlockId) -> SSAId {
-        match self.versions.get_mut(&version).unwrap() {
-            VersionState::Mutable(version) => version.find_mut(id),
-            VersionState::Immutable(version) => version.find(id),
-        }
+    fn find_in_version(&self, id: SSAId, version: SSABlockId) -> SSAId {
+        self.versions[&version].as_ref().find(id)
     }
 
     fn union_with<F>(&mut self, x: SSAId, y: SSAId, mut f: F) -> SSAId
@@ -115,7 +113,7 @@ impl IDManager {
 }
 
 impl Saturator {
-    pub fn find(&mut self, id: SSAId) -> SSAId {
+    pub fn find(&self, id: SSAId) -> SSAId {
         self.ids.find(id)
     }
 
@@ -208,7 +206,7 @@ impl Saturator {
             .map(|last_block| self.ids.versions[&last_block].as_ref())
             .unwrap_or(&self.ids.root_version);
 
-        // Traverse up and down the dominator tree from the last block to the new block.
+        // Traverse up and down the version hierarchy from the last version to the current version.
         let mut up_versions = vec![];
         let mut down_versions = vec![];
         Version::lca(
@@ -248,13 +246,10 @@ impl Saturator {
             return;
         };
         while !self.ids.delta.is_empty() {
-            // As usual, this song and dance is to please the borrow checker.
-            let mut delta = take(&mut self.ids.delta);
-
             // Prepare worklist for rebuilding. The worklist should always contain only nodes that
             // use non-canonical SSAIds.
             let mut worklist = VecDeque::new();
-            for id in &delta {
+            for id in &self.ids.delta {
                 // The only nodes in `delta` that should fail this check are new nodes.
                 if *id != self.ids.find(*id) {
                     for user in self.ssa.users(*id) {
@@ -276,17 +271,14 @@ impl Saturator {
                     }
                 });
             }
-            // Unions during rebuilding might create more delta IDs. At this point, `self.ids.delta`
-            // is empty before we apply rules.
-            delta.extend(self.ids.delta.drain());
 
             let mut tries = Tries::default();
             // Add all the nodes into the "all" tries and add the delta nodes into the delta tries.
             // TODO: Incrementalize trie building!
-            for id in delta {
-                let node = self.ssa.get(id);
+            for id in &self.ids.delta {
+                let node = self.ssa.get(*id);
                 if self.ids.is_canonical(node) {
-                    tries.insert_tuple(self.ids.find(id), node, id, true);
+                    tries.insert_tuple(self.ids.find(*id), node, *id, true);
                 }
             }
             for id in 0..self.ssa.num_nodes() {
@@ -295,6 +287,7 @@ impl Saturator {
                     tries.insert_tuple(self.ids.find(id), node, id, false);
                 }
             }
+            self.ids.delta.clear();
 
             apply_rws::<false>(&tries, self);
         }

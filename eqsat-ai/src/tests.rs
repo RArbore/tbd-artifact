@@ -629,10 +629,10 @@ fn uf1() {
     assert_eq!(uf.union(2, 9), 2);
     assert_eq!(uf.find(0), 0);
     assert_eq!(uf.find(4), 0);
-    assert_eq!(uf.find_mut(1), 1);
-    assert_eq!(uf.find_mut(3), 1);
+    assert_eq!(uf.find(1), 1);
+    assert_eq!(uf.find(3), 1);
     assert_eq!(uf.find(2), 2);
-    assert_eq!(uf.find_mut(5), 2);
+    assert_eq!(uf.find(5), 2);
     assert_eq!(uf.find(9), 2);
     assert_eq!(
         HashSet::from_iter([0, 4]),
@@ -646,45 +646,48 @@ fn uf1() {
         HashSet::from_iter([2, 5, 9]),
         uf.set(5).collect::<HashSet<_>>()
     );
-    assert_eq!(
-        HashSet::from_iter([3, 4, 5, 9]),
-        uf.non_canon_ids().collect::<HashSet<_>>()
-    );
+    let mut children = HashSet::new();
+    uf.non_canon_ids(|id| {
+        children.insert(id);
+    });
+    assert_eq!(HashSet::from_iter([3, 4, 5, 9]), children,);
 
     assert_eq!(uf.union(4, 5), 0);
-    assert_eq!(uf.find_mut(2), 0);
+    assert_eq!(uf.find(2), 0);
     assert_eq!(uf.find(5), 0);
-    assert_eq!(uf.find_mut(9), 0);
+    assert_eq!(uf.find(9), 0);
     assert_eq!(
         HashSet::from_iter([0, 2, 4, 5, 9]),
         uf.set(9).collect::<HashSet<_>>()
     );
-    assert_eq!(
-        HashSet::from_iter([2, 3, 4, 5, 9]),
-        uf.non_canon_ids().collect::<HashSet<_>>()
-    );
+    let mut children = HashSet::new();
+    uf.non_canon_ids(|id| {
+        children.insert(id);
+    });
+    assert_eq!(HashSet::from_iter([2, 3, 4, 5, 9]), children);
 }
 
 #[test]
 fn uf2() {
     let mut uf = SparseUnionFind::default();
     for i in 0..100 {
-        assert_ne!(uf.find(i), uf.find_mut(i + 1));
-        assert_eq!(uf.find_mut(i), i);
+        assert_ne!(uf.find(i), uf.find(i + 1));
+        assert_eq!(uf.find(i), i);
     }
     for i in 0..100 {
         assert_eq!(uf.union(i, i + 1), 0);
     }
     for i in 0..100 {
-        assert_eq!(uf.find_mut(i), uf.find(i + 1));
+        assert_eq!(uf.find(i), uf.find(i + 1));
     }
     for i in 100..200 {
-        assert_ne!(uf.find_mut(i), uf.find_mut(i + 1));
+        assert_ne!(uf.find(i), uf.find(i + 1));
     }
-    assert_eq!(
-        HashSet::from_iter(1..=100),
-        uf.non_canon_ids().collect::<HashSet<_>>()
-    );
+    let mut children = HashSet::new();
+    uf.non_canon_ids(|id| {
+        children.insert(id);
+    });
+    assert_eq!(HashSet::from_iter(1..=100), children);
 }
 
 #[test]
@@ -718,9 +721,9 @@ fn luf1() {
     let mut parent = Version::default();
     parent.union(0, 1);
     parent.union(2, 3);
-    assert_eq!(parent.find_mut(0), parent.find_mut(1));
-    assert_eq!(parent.find_mut(2), parent.find_mut(3));
-    assert_ne!(parent.find_mut(0), parent.find_mut(2));
+    assert_eq!(parent.find(0), parent.find(1));
+    assert_eq!(parent.find(2), parent.find(3));
+    assert_ne!(parent.find(0), parent.find(2));
     assert_eq!(
         HashSet::from_iter([0, 1]),
         parent.set(1, None).collect::<HashSet<_>>()
@@ -735,8 +738,8 @@ fn luf1() {
     let parent = Rc::new(parent);
     let mut child = Version::child(Rc::clone(&parent));
     child.union(0, 3);
-    assert_eq!(child.find_mut(0), child.find_mut(1));
-    assert_eq!(child.find_mut(2), child.find_mut(3));
+    assert_eq!(child.find(0), child.find(1));
+    assert_eq!(child.find(2), child.find(3));
     assert_eq!(child.find(0), child.find(2));
     assert_eq!(child.find(0), child.find(3));
     assert_ne!(parent.find(0), parent.find(3));

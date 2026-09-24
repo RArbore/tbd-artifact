@@ -1,3 +1,4 @@
+use core::cell::RefCell;
 use core::ptr::eq;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -9,7 +10,7 @@ use crate::ssa::{SSA, SSAId};
 // store sibling pointers for set traversal (each set corresponds to a circular linked list).
 #[derive(Debug, Default)]
 pub struct SparseUnionFind {
-    parents: HashMap<SSAId, SSAId>,
+    parents: RefCell<HashMap<SSAId, SSAId>>,
     siblings: HashMap<SSAId, SSAId>,
 }
 
@@ -54,12 +55,12 @@ pub enum VersionSet<'a> {
 
 impl SparseUnionFind {
     fn parent(&self, id: SSAId) -> SSAId {
-        self.parents.get(&id).cloned().unwrap_or(id)
+        self.parents.borrow().get(&id).cloned().unwrap_or(id)
     }
 
-    fn set_parent(&mut self, id: SSAId, parent: SSAId) {
+    fn set_parent(&self, id: SSAId, parent: SSAId) {
         if id != parent {
-            self.parents.insert(id, parent);
+            self.parents.borrow_mut().insert(id, parent);
         }
     }
 
@@ -81,16 +82,6 @@ impl SparseUnionFind {
     }
 
     pub fn find(&self, mut id: SSAId) -> SSAId {
-        loop {
-            let p = self.parent(id);
-            if p == id {
-                break id;
-            }
-            id = p;
-        }
-    }
-
-    pub fn find_mut(&mut self, mut id: SSAId) -> SSAId {
         let mut p = self.parent(id);
         while p != id {
             let gp = self.parent(p);
@@ -114,7 +105,7 @@ impl SparseUnionFind {
                 if x == px {
                     self.set_parent(x, py);
                     self.exchange_siblings(x, y);
-                    break self.find_mut(py);
+                    break self.find(py);
                 }
                 self.set_parent(x, py);
                 x = px;
@@ -122,7 +113,7 @@ impl SparseUnionFind {
                 if y == py {
                     self.set_parent(y, px);
                     self.exchange_siblings(x, y);
-                    break self.find_mut(px);
+                    break self.find(px);
                 }
                 self.set_parent(y, px);
                 y = py;
@@ -148,7 +139,7 @@ impl SparseUnionFind {
 
             if px > py {
                 if x == px {
-                    let canon_id = self.find_mut(py);
+                    let canon_id = self.find(py);
                     self.set_parent(x, canon_id);
                     // The only difference with `union`.
                     for id in self.set(x) {
@@ -161,14 +152,14 @@ impl SparseUnionFind {
                 x = px;
             } else {
                 if y == py {
-                    let canon_id = self.find_mut(px);
+                    let canon_id = self.find(px);
                     self.set_parent(y, canon_id);
                     // And here.
                     for id in self.set(y) {
                         fn_for_changed_set(id, y, canon_id);
                     }
                     self.exchange_siblings(x, y);
-                    break self.find_mut(px);
+                    break canon_id;
                 }
                 self.set_parent(y, px);
                 y = py;
@@ -184,8 +175,11 @@ impl SparseUnionFind {
         }
     }
 
-    pub fn non_canon_ids(&self) -> impl Iterator<Item = SSAId> + '_ {
-        self.parents.keys().cloned()
+    pub fn non_canon_ids<F>(&self, mut f: F)
+    where
+        F: FnMut(SSAId),
+    {
+        self.parents.borrow().keys().for_each(|id| f(*id))
     }
 }
 
@@ -272,15 +266,6 @@ impl Version {
         self.uf.find(self.find_in_parent(id))
     }
 
-    pub fn find_mut(&mut self, id: SSAId) -> SSAId {
-        self.uf.find_mut(
-            self.parent
-                .as_ref()
-                .map(|parent| parent.find(id))
-                .unwrap_or(id),
-        )
-    }
-
     pub fn count(&self, id: SSAId) -> usize {
         self.count.get(&id).unwrap_or(&Some(1)).unwrap()
     }
@@ -298,8 +283,8 @@ impl Version {
     }
 
     pub fn union(&mut self, mut x: SSAId, mut y: SSAId) -> SSAId {
-        x = self.find_mut(x);
-        y = self.find_mut(y);
+        x = self.find(x);
+        y = self.find(y);
         if x == y {
             x
         } else {
@@ -314,8 +299,8 @@ impl Version {
     where
         F: FnMut(SSAId, SSAId, SSAId),
     {
-        x = self.find_mut(x);
-        y = self.find_mut(y);
+        x = self.find(x);
+        y = self.find(y);
         if x == y {
             x
         } else {
@@ -373,8 +358,11 @@ impl Version {
         }
     }
 
-    pub fn non_canon_ids_at_level(&self) -> impl Iterator<Item = SSAId> + '_ {
-        self.uf.non_canon_ids()
+    pub fn non_canon_ids_at_level<F>(&self, f: F)
+    where
+        F: FnMut(SSAId),
+    {
+        self.uf.non_canon_ids(f)
     }
 
     pub fn examine(&mut self, id: SSAId) {
