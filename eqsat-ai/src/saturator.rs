@@ -132,7 +132,9 @@ impl IDManager {
         up_to: Option<SSABlockId>,
         version: SSABlockId,
     ) -> impl Iterator<Item = SSAId> + '_ {
-        self.versions[&version].as_ref().set(id, up_to)
+        self.versions[&version]
+            .as_ref()
+            .set(id, up_to.map(|up_to| self.versions[&up_to].as_ref()))
     }
 }
 

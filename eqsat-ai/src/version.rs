@@ -45,7 +45,7 @@ enum VersionSet<'a> {
     NonTrivial {
         set_stack: Vec<SparseUnionFindSet<'a>>,
         version_stack: Vec<&'a Version>,
-        up_to: Option<SSABlockId>,
+        up_to: Option<&'a Version>,
     },
 }
 
@@ -337,10 +337,14 @@ impl Version {
         }
     }
 
-    pub fn set(&self, id: SSAId, up_to: Option<SSABlockId>) -> impl Iterator<Item = SSAId> + '_ {
+    pub fn set<'a>(
+        &'a self,
+        id: SSAId,
+        up_to: Option<&'a Version>,
+    ) -> impl Iterator<Item = SSAId> + 'a {
         let canon_id = self.find(id);
         if let Some(up_to) = up_to
-            && self.block == up_to
+            && eq(self, up_to)
         {
             VersionSet::Trivial(Some(canon_id))
         } else {
@@ -401,7 +405,7 @@ impl Iterator for VersionSet<'_> {
                         // that version (version must be an ancestor of the original version).
                         if let Some(parent_version) = last_version.parent.as_ref()
                             && up_to
-                                .map(|up_to| up_to != parent_version.block)
+                                .map(|up_to| !eq(up_to, &**parent_version))
                                 .unwrap_or(true)
                         {
                             set_stack.push(parent_version.uf.set(id));
@@ -565,21 +569,21 @@ mod tests {
         for i in [0, 1, 2, 3] {
             assert_eq!(
                 HashSet::from_iter([0, 2]),
-                child.set(i, Some(0)).collect::<HashSet<_>>()
+                child.set(i, Some(&*parent)).collect::<HashSet<_>>()
             );
         }
         assert_eq!(
             HashSet::from_iter([5]),
-            child.set(5, Some(0)).collect::<HashSet<_>>()
+            child.set(5, Some(&*parent)).collect::<HashSet<_>>()
         );
         for i in [0, 1, 2, 3] {
             assert_eq!(
                 HashSet::from_iter([child.find(i)]),
-                child.set(i, Some(1)).collect::<HashSet<_>>()
+                child.set(i, Some(&child)).collect::<HashSet<_>>()
             );
             assert_eq!(
                 HashSet::from_iter([parent.find(i)]),
-                parent.set(i, Some(0)).collect::<HashSet<_>>()
+                parent.set(i, Some(&*parent)).collect::<HashSet<_>>()
             );
         }
         assert_eq!(parent.count(0), 2);
