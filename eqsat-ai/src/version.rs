@@ -1,3 +1,4 @@
+use core::ptr::eq;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -25,6 +26,8 @@ pub struct Version {
     // Store a pointer to the parent version. This is ref-counted to simplify the code in the
     // saturator w.r.t. ownership of versions.
     parent: Option<Rc<Version>>,
+    // Track which level in the version hierarchy this version corresponds to.
+    level: usize,
     // Track which SSA block this version corresponds to.
     block: SSABlockId,
 }
@@ -207,21 +210,52 @@ impl Version {
             uf: Default::default(),
             count: HashMap::new(),
             parent: None,
+            level: 0,
             block,
         }
     }
 
     pub fn child(parent: Rc<Version>, block: SSABlockId) -> Self {
+        let level = parent.level + 1;
         Self {
             uf: Default::default(),
             count: parent.count.clone(),
             parent: Some(parent),
+            level,
             block,
         }
     }
 
     pub fn parent(&self) -> Option<&Version> {
         self.parent.as_ref().map(|v| &**v)
+    }
+
+    pub fn lca<'a, F1, F2>(
+        mut a: &'a Version,
+        mut b: &'a Version,
+        mut f1: F1,
+        mut f2: F2,
+    ) -> &'a Version
+    where
+        F1: FnMut(&Version),
+        F2: FnMut(&Version),
+    {
+        loop {
+            if a.level < b.level {
+                f2(b);
+                b = b.parent.as_ref().unwrap();
+            } else if a.level > b.level {
+                f1(a);
+                a = a.parent.as_ref().unwrap();
+            } else if !eq(a, b) {
+                f1(a);
+                f2(b);
+                a = a.parent.as_ref().unwrap();
+                b = b.parent.as_ref().unwrap();
+            } else {
+                break a;
+            }
+        }
     }
 
     pub fn block(&self) -> SSABlockId {
@@ -551,6 +585,7 @@ mod tests {
         assert_eq!(parent.count(0), 2);
         assert_eq!(parent.count(2), 2);
         assert_eq!(child.count(0), 4);
+        assert!(eq(Version::lca(&child, &parent, |_| {}, |_| {}), &*parent));
     }
 
     #[test]
@@ -573,5 +608,6 @@ mod tests {
         assert_eq!(parent.count(0), 2);
         assert_eq!(parent.count(2), 2);
         assert_eq!(child.count(0), 4);
+        assert!(eq(Version::lca(&child, &parent, |_| {}, |_| {}), &*parent));
     }
 }
