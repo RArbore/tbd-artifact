@@ -1,4 +1,4 @@
-use core::mem::{replace, take};
+use core::mem::take;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
@@ -37,6 +37,9 @@ struct IDManager {
     delta: HashSet<SSAId>,
     // Incrementally maintain dominator analysis.
     dom_tree: DomTree,
+    // Store an empty root version. This is needed so we have a well-defined LCA between old and new
+    // versions for the entry block.
+    root_version: Rc<Version>,
     // Store the latest version for each SSA block.
     versions: HashMap<SSABlockId, VersionState>,
     // Store the "current" version. Moving between versions requires careful maintenance of the delta
@@ -198,24 +201,35 @@ impl Saturator {
         self.ids
             .dom_tree
             .visit_block(block, self.ssa.get_block(block));
-        let version = if let Some(idom) = self.ids.dom_tree.idom(block) {
-            let state = self.ids.versions.get_mut(&idom).unwrap();
-            use VersionState::*;
-            let rc = match state {
-                Mutable(version) => {
-                    // Why isn't there a core::mem primitive for this?
-                    let rc = Rc::new(replace(version, Version::root()));
-                    *state = Immutable(Rc::clone(&rc));
-                    rc
-                }
-                Immutable(rc) => Rc::clone(rc),
-            };
-            Version::child(rc)
-        } else {
-            // The entry block gets the root version.
-            Version::root()
+
+        use SSABlock::*;
+        use VersionState::*;
+        let pred_version_rc = match self.ssa.get_block(block) {
+            Entry => None,
+            Guard(pred, _, _) | Return(pred, _) => {
+                let state = self.ids.versions.get_mut(pred).unwrap();
+                let rc = match state {
+                    Mutable(version) => {
+                        // Why isn't there a core::mem primitive for this?
+                        let rc = Rc::new(take(version));
+                        *state = Immutable(Rc::clone(&rc));
+                        rc
+                    }
+                    Immutable(rc) => Rc::clone(rc),
+                };
+                Some(rc)
+            }
+            Merge(pred1, pred2, _) => {
+                let pred1 = self.ids.versions[&pred1].as_ref();
+                let pred2 = self.ids.versions[&pred2].as_ref();
+                // This looks weird, but we do want to make sure that we get an Rc in this situation.
+                Some(Version::lca(pred1, pred2, |_| {}, |_| {}).unwrap())
+            }
         };
-        // In the new version, nothing has been examined yet.
+
+        let version = pred_version_rc
+            .map(|rc| Version::child(rc))
+            .unwrap_or_else(|| Version::child(Rc::clone(&self.ids.root_version)));
         self.new_version = Some((block, VersionState::Mutable(version)));
     }
 

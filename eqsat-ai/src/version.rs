@@ -17,7 +17,7 @@ struct SparseUnionFind {
 // union find over the canonical IDs of the parent union find. Versions form a hierarchy. We get away
 // with using a layered union find, rather than the more complicated versioned union find, because we
 // only ever modify (at-the-moment) leaf versions.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Version {
     uf: SparseUnionFind,
     // Track the size of the multi-layer set for every canonical SSAId. Store an Option<usize>, since
@@ -203,15 +203,6 @@ impl Iterator for SparseUnionFindSet<'_> {
 }
 
 impl Version {
-    pub fn root() -> Self {
-        Self {
-            uf: Default::default(),
-            count: HashMap::new(),
-            parent: None,
-            level: 0,
-        }
-    }
-
     pub fn child(parent: Rc<Version>) -> Self {
         let level = parent.level + 1;
         Self {
@@ -231,25 +222,35 @@ impl Version {
         mut b: &'a Version,
         mut f1: F1,
         mut f2: F2,
-    ) -> &'a Version
+    ) -> Option<Rc<Version>>
     where
         F1: FnMut(&Version),
         F2: FnMut(&Version),
     {
+        let mut a_rc: Option<&Rc<Version>> = None;
+        let mut b_rc: Option<&Rc<Version>> = None;
         loop {
             if a.level < b.level {
                 f2(b);
-                b = b.parent.as_ref().unwrap();
+                let b_parent = b.parent.as_ref().unwrap();
+                b_rc = Some(b_parent);
+                b = b_parent;
             } else if a.level > b.level {
                 f1(a);
-                a = a.parent.as_ref().unwrap();
+                let a_parent = a.parent.as_ref().unwrap();
+                a_rc = Some(a_parent);
+                a = a_parent;
             } else if !eq(a, b) {
                 f1(a);
                 f2(b);
-                a = a.parent.as_ref().unwrap();
-                b = b.parent.as_ref().unwrap();
+                let a_parent = a.parent.as_ref().unwrap();
+                let b_parent = b.parent.as_ref().unwrap();
+                a_rc = Some(a_parent);
+                b_rc = Some(b_parent);
+                a = a_parent;
+                b = b_parent;
             } else {
-                break a;
+                break a_rc.or(b_rc).map(|rc| Rc::clone(rc));
             }
         }
     }
@@ -519,7 +520,7 @@ mod tests {
 
     #[test]
     fn luf1() {
-        let mut parent = Version::root();
+        let mut parent = Version::default();
         parent.union(0, 1);
         parent.union(2, 3);
         assert_eq!(parent.find_mut(0), parent.find_mut(1));
@@ -581,12 +582,15 @@ mod tests {
         assert_eq!(parent.count(0), 2);
         assert_eq!(parent.count(2), 2);
         assert_eq!(child.count(0), 4);
-        assert!(eq(Version::lca(&child, &parent, |_| {}, |_| {}), &*parent));
+        assert!(eq(
+            &*Version::lca(&child, &parent, |_| {}, |_| {}).unwrap(),
+            &*parent
+        ));
     }
 
     #[test]
     fn luf2() {
-        let mut parent = Version::root();
+        let mut parent = Version::default();
         parent.union(0, 1);
         parent.union(2, 3);
         assert_eq!(parent.count(0), 2);
@@ -604,6 +608,9 @@ mod tests {
         assert_eq!(parent.count(0), 2);
         assert_eq!(parent.count(2), 2);
         assert_eq!(child.count(0), 4);
-        assert!(eq(Version::lca(&child, &parent, |_| {}, |_| {}), &*parent));
+        assert!(eq(
+            &*Version::lca(&child, &parent, |_| {}, |_| {}).unwrap(),
+            &*parent
+        ));
     }
 }
