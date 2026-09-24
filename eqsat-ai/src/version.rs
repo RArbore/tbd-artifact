@@ -2,7 +2,7 @@ use core::ptr::eq;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::ssa::{SSA, SSABlockId, SSAId};
+use crate::ssa::{SSA, SSAId};
 
 // We use a sparse representation for union finds, because in the majority of versions there are
 // relatively few unions compared to the number of SSAIds. We use Rem's algorithm for unions and
@@ -28,8 +28,6 @@ pub struct Version {
     parent: Option<Rc<Version>>,
     // Track which level in the version hierarchy this version corresponds to.
     level: usize,
-    // Track which SSA block this version corresponds to.
-    block: SSABlockId,
 }
 
 #[derive(Debug)]
@@ -205,24 +203,22 @@ impl Iterator for SparseUnionFindSet<'_> {
 }
 
 impl Version {
-    pub fn root(block: SSABlockId) -> Self {
+    pub fn root() -> Self {
         Self {
             uf: Default::default(),
             count: HashMap::new(),
             parent: None,
             level: 0,
-            block,
         }
     }
 
-    pub fn child(parent: Rc<Version>, block: SSABlockId) -> Self {
+    pub fn child(parent: Rc<Version>) -> Self {
         let level = parent.level + 1;
         Self {
             uf: Default::default(),
             count: parent.count.clone(),
             parent: Some(parent),
             level,
-            block,
         }
     }
 
@@ -256,10 +252,6 @@ impl Version {
                 break a;
             }
         }
-    }
-
-    pub fn block(&self) -> SSABlockId {
-        self.block
     }
 
     pub fn find_in_parent(&self, id: SSAId) -> SSAId {
@@ -527,7 +519,7 @@ mod tests {
 
     #[test]
     fn luf1() {
-        let mut parent = Version::root(0);
+        let mut parent = Version::root();
         parent.union(0, 1);
         parent.union(2, 3);
         assert_eq!(parent.find_mut(0), parent.find_mut(1));
@@ -545,7 +537,7 @@ mod tests {
         assert_eq!(parent.count(2), 2);
 
         let parent = Rc::new(parent);
-        let mut child = Version::child(Rc::clone(&parent), 1);
+        let mut child = Version::child(Rc::clone(&parent));
         child.union(0, 3);
         assert_eq!(child.find_mut(0), child.find_mut(1));
         assert_eq!(child.find_mut(2), child.find_mut(3));
@@ -594,14 +586,14 @@ mod tests {
 
     #[test]
     fn luf2() {
-        let mut parent = Version::root(0);
+        let mut parent = Version::root();
         parent.union(0, 1);
         parent.union(2, 3);
         assert_eq!(parent.count(0), 2);
         assert_eq!(parent.count(2), 2);
 
         let parent = Rc::new(parent);
-        let mut child = Version::child(Rc::clone(&parent), 1);
+        let mut child = Version::child(Rc::clone(&parent));
         let mut set = HashSet::new();
         child.union_with(0, 3, |id, old_canon_id, new_canon_id| {
             set.insert(id);

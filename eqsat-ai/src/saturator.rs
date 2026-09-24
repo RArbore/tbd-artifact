@@ -64,7 +64,7 @@ pub struct Saturator {
     // If that version is replacing some old version, we need to pop the old version and push the new
     // version, which requires delaying actually inserting the new version into `ids` until during
     // the move into it. This is kind of hacky.
-    new_version: Option<VersionState>,
+    new_version: Option<(SSABlockId, VersionState)>,
 }
 
 impl IDManager {
@@ -204,26 +204,25 @@ impl Saturator {
             let rc = match state {
                 Mutable(version) => {
                     // Why isn't there a core::mem primitive for this?
-                    let rc = Rc::new(replace(version, Version::root(!0)));
+                    let rc = Rc::new(replace(version, Version::root()));
                     *state = Immutable(Rc::clone(&rc));
                     rc
                 }
                 Immutable(rc) => Rc::clone(rc),
             };
-            Version::child(rc, block)
+            Version::child(rc)
         } else {
             // The entry block gets the root version.
-            Version::root(block)
+            Version::root()
         };
         // In the new version, nothing has been examined yet.
-        self.new_version = Some(VersionState::Mutable(version));
+        self.new_version = Some((block, VersionState::Mutable(version)));
     }
 
     fn commit_new_version(&mut self) {
-        let Some(version) = self.new_version.take() else {
+        let Some((block, version)) = self.new_version.take() else {
             panic!()
         };
-        let block = version.as_ref().block();
         self.ids.versions.insert(block, version);
         self.ids.examined_ids.insert(block, HashSet::new());
     }
@@ -276,11 +275,7 @@ impl Saturator {
                 self.push_version(block_id);
             }
 
-            if let Some(block) = self
-                .new_version
-                .as_ref()
-                .map(|version| version.as_ref().block())
-            {
+            if let Some(block) = self.new_version.as_ref().map(|(block, _)| *block) {
                 self.pop_version(block);
                 self.commit_new_version();
                 self.push_version(block);
