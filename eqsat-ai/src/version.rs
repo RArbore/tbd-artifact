@@ -8,7 +8,7 @@ use crate::ssa::{SSA, SSAId};
 // relatively few unions compared to the number of SSAIds. We use Rem's algorithm for unions and
 // store sibling pointers for set traversal (each set corresponds to a circular linked list).
 #[derive(Debug, Default)]
-struct SparseUnionFind {
+pub struct SparseUnionFind {
     parents: HashMap<SSAId, SSAId>,
     siblings: HashMap<SSAId, SSAId>,
 }
@@ -36,14 +36,14 @@ pub struct Version {
 }
 
 #[derive(Debug)]
-struct SparseUnionFindSet<'a> {
+pub struct SparseUnionFindSet<'a> {
     start: SSAId,
     curr: Option<SSAId>,
     uf: &'a SparseUnionFind,
 }
 
 #[derive(Debug)]
-enum VersionSet<'a> {
+pub enum VersionSet<'a> {
     Trivial(Option<SSAId>),
     NonTrivial {
         set_stack: Vec<SparseUnionFindSet<'a>>,
@@ -80,7 +80,7 @@ impl SparseUnionFind {
         self.set_sibling(y, sx);
     }
 
-    fn find(&self, mut id: SSAId) -> SSAId {
+    pub fn find(&self, mut id: SSAId) -> SSAId {
         loop {
             let p = self.parent(id);
             if p == id {
@@ -90,7 +90,7 @@ impl SparseUnionFind {
         }
     }
 
-    fn find_mut(&mut self, mut id: SSAId) -> SSAId {
+    pub fn find_mut(&mut self, mut id: SSAId) -> SSAId {
         let mut p = self.parent(id);
         while p != id {
             let gp = self.parent(p);
@@ -101,7 +101,7 @@ impl SparseUnionFind {
         id
     }
 
-    fn union(&mut self, mut x: SSAId, mut y: SSAId) -> SSAId {
+    pub fn union(&mut self, mut x: SSAId, mut y: SSAId) -> SSAId {
         loop {
             let px = self.parent(x);
             let py = self.parent(y);
@@ -135,7 +135,7 @@ impl SparseUnionFind {
     // disjoint set that "lost" the comparison on a union (that is, when unioning two sets, right
     // before joining the two sets with `exchange_siblings`, we call `fn_for_changed_set` on all of
     // the IDs in the set that's about to be entirely non-canonical).
-    fn union_with<F>(&mut self, mut x: SSAId, mut y: SSAId, mut fn_for_changed_set: F) -> SSAId
+    pub fn union_with<F>(&mut self, mut x: SSAId, mut y: SSAId, mut fn_for_changed_set: F) -> SSAId
     where
         F: FnMut(SSAId, SSAId, SSAId),
     {
@@ -176,7 +176,7 @@ impl SparseUnionFind {
         }
     }
 
-    fn set(&self, id: SSAId) -> SparseUnionFindSet<'_> {
+    pub fn set(&self, id: SSAId) -> SparseUnionFindSet<'_> {
         SparseUnionFindSet {
             start: id,
             curr: Some(id),
@@ -184,7 +184,7 @@ impl SparseUnionFind {
         }
     }
 
-    fn non_canon_ids(&self) -> impl Iterator<Item = SSAId> + '_ {
+    pub fn non_canon_ids(&self) -> impl Iterator<Item = SSAId> + '_ {
         self.parents.keys().cloned()
     }
 }
@@ -428,203 +428,5 @@ impl Iterator for VersionSet<'_> {
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashSet;
-    use std::rc::Rc;
-
-    use super::*;
-
-    #[test]
-    fn uf1() {
-        let mut uf = SparseUnionFind::default();
-        assert_eq!(uf.union(0, 4), 0);
-        assert_eq!(uf.union(1, 3), 1);
-        assert_eq!(uf.union(2, 5), 2);
-        assert_eq!(uf.union(5, 9), 2);
-        assert_eq!(uf.union(2, 9), 2);
-        assert_eq!(uf.find(0), 0);
-        assert_eq!(uf.find(4), 0);
-        assert_eq!(uf.find_mut(1), 1);
-        assert_eq!(uf.find_mut(3), 1);
-        assert_eq!(uf.find(2), 2);
-        assert_eq!(uf.find_mut(5), 2);
-        assert_eq!(uf.find(9), 2);
-        assert_eq!(
-            HashSet::from_iter([0, 4]),
-            uf.set(4).collect::<HashSet<_>>()
-        );
-        assert_eq!(
-            HashSet::from_iter([1, 3]),
-            uf.set(1).collect::<HashSet<_>>()
-        );
-        assert_eq!(
-            HashSet::from_iter([2, 5, 9]),
-            uf.set(5).collect::<HashSet<_>>()
-        );
-        assert_eq!(
-            HashSet::from_iter([3, 4, 5, 9]),
-            uf.non_canon_ids().collect::<HashSet<_>>()
-        );
-
-        assert_eq!(uf.union(4, 5), 0);
-        assert_eq!(uf.find_mut(2), 0);
-        assert_eq!(uf.find(5), 0);
-        assert_eq!(uf.find_mut(9), 0);
-        assert_eq!(
-            HashSet::from_iter([0, 2, 4, 5, 9]),
-            uf.set(9).collect::<HashSet<_>>()
-        );
-        assert_eq!(
-            HashSet::from_iter([2, 3, 4, 5, 9]),
-            uf.non_canon_ids().collect::<HashSet<_>>()
-        );
-    }
-
-    #[test]
-    fn uf2() {
-        let mut uf = SparseUnionFind::default();
-        for i in 0..100 {
-            assert_ne!(uf.find(i), uf.find_mut(i + 1));
-            assert_eq!(uf.find_mut(i), i);
-        }
-        for i in 0..100 {
-            assert_eq!(uf.union(i, i + 1), 0);
-        }
-        for i in 0..100 {
-            assert_eq!(uf.find_mut(i), uf.find(i + 1));
-        }
-        for i in 100..200 {
-            assert_ne!(uf.find_mut(i), uf.find_mut(i + 1));
-        }
-        assert_eq!(
-            HashSet::from_iter(1..=100),
-            uf.non_canon_ids().collect::<HashSet<_>>()
-        );
-    }
-
-    #[test]
-    fn uf3() {
-        let mut uf = SparseUnionFind::default();
-        let mut set = HashSet::new();
-        uf.union_with(1, 2, |id, old_canon_id, new_canon_id| {
-            set.insert(id);
-            assert_eq!(old_canon_id, 2);
-            assert_eq!(new_canon_id, 1);
-        });
-        assert_eq!(set, HashSet::from([2]));
-        let mut set = HashSet::new();
-        uf.union_with(2, 0, |id, old_canon_id, new_canon_id| {
-            set.insert(id);
-            assert_eq!(old_canon_id, 1);
-            assert_eq!(new_canon_id, 0);
-        });
-        assert_eq!(set, HashSet::from([1, 2]));
-        let mut set = HashSet::new();
-        uf.union_with(3, 0, |id, old_canon_id, new_canon_id| {
-            set.insert(id);
-            assert_eq!(old_canon_id, 3);
-            assert_eq!(new_canon_id, 0);
-        });
-        assert_eq!(set, HashSet::from([3]));
-    }
-
-    #[test]
-    fn luf1() {
-        let mut parent = Version::default();
-        parent.union(0, 1);
-        parent.union(2, 3);
-        assert_eq!(parent.find_mut(0), parent.find_mut(1));
-        assert_eq!(parent.find_mut(2), parent.find_mut(3));
-        assert_ne!(parent.find_mut(0), parent.find_mut(2));
-        assert_eq!(
-            HashSet::from_iter([0, 1]),
-            parent.set(1, None).collect::<HashSet<_>>()
-        );
-        assert_eq!(
-            HashSet::from_iter([2, 3]),
-            parent.set(2, None).collect::<HashSet<_>>()
-        );
-        assert_eq!(parent.count(0), 2);
-        assert_eq!(parent.count(2), 2);
-
-        let parent = Rc::new(parent);
-        let mut child = Version::child(Rc::clone(&parent));
-        child.union(0, 3);
-        assert_eq!(child.find_mut(0), child.find_mut(1));
-        assert_eq!(child.find_mut(2), child.find_mut(3));
-        assert_eq!(child.find(0), child.find(2));
-        assert_eq!(child.find(0), child.find(3));
-        assert_ne!(parent.find(0), parent.find(3));
-        for i in [0, 1, 2, 3] {
-            assert_eq!(
-                HashSet::from_iter([0, 1, 2, 3]),
-                child.set(i, None).collect::<HashSet<_>>()
-            );
-        }
-        assert_eq!(
-            HashSet::from_iter([0, 1]),
-            parent.set(1, None).collect::<HashSet<_>>()
-        );
-        assert_eq!(
-            HashSet::from_iter([2, 3]),
-            parent.set(2, None).collect::<HashSet<_>>()
-        );
-        for i in [0, 1, 2, 3] {
-            assert_eq!(
-                HashSet::from_iter([0, 2]),
-                child.set(i, Some(&*parent)).collect::<HashSet<_>>()
-            );
-        }
-        assert_eq!(
-            HashSet::from_iter([5]),
-            child.set(5, Some(&*parent)).collect::<HashSet<_>>()
-        );
-        for i in [0, 1, 2, 3] {
-            assert_eq!(
-                HashSet::from_iter([child.find(i)]),
-                child.set(i, Some(&child)).collect::<HashSet<_>>()
-            );
-            assert_eq!(
-                HashSet::from_iter([parent.find(i)]),
-                parent.set(i, Some(&*parent)).collect::<HashSet<_>>()
-            );
-        }
-        assert_eq!(parent.count(0), 2);
-        assert_eq!(parent.count(2), 2);
-        assert_eq!(child.count(0), 4);
-        assert!(eq(
-            &*Version::lca(&child, &parent, |_| {}, |_| {}).unwrap(),
-            &*parent
-        ));
-    }
-
-    #[test]
-    fn luf2() {
-        let mut parent = Version::default();
-        parent.union(0, 1);
-        parent.union(2, 3);
-        assert_eq!(parent.count(0), 2);
-        assert_eq!(parent.count(2), 2);
-
-        let parent = Rc::new(parent);
-        let mut child = Version::child(Rc::clone(&parent));
-        let mut set = HashSet::new();
-        child.union_with(0, 3, |id, old_canon_id, new_canon_id| {
-            set.insert(id);
-            assert_eq!(old_canon_id, 2);
-            assert_eq!(new_canon_id, 0);
-        });
-        assert_eq!(set, HashSet::from([2, 3]));
-        assert_eq!(parent.count(0), 2);
-        assert_eq!(parent.count(2), 2);
-        assert_eq!(child.count(0), 4);
-        assert!(eq(
-            &*Version::lca(&child, &parent, |_| {}, |_| {}).unwrap(),
-            &*parent
-        ));
     }
 }

@@ -214,39 +214,3 @@ impl Display for ImpStmt {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use symbol_table::GlobalSymbol as Symbol;
-
-    use crate::imp::grammar::ProgramParser;
-
-    #[test]
-    fn parse1() {
-        let program = r#"
-fn test1(x: bool) return x;
-fn test2(y: i64) { y = 3; return y + 1; }
-"#;
-        let parsed = ProgramParser::new().parse(&program).unwrap();
-        assert_eq!(
-            format!("{}", parsed[&Symbol::from("test1")]),
-            "fn test1(x: bool) return x;"
-        );
-        assert_eq!(
-            format!("{}", parsed[&Symbol::from("test2")]),
-            "fn test2(y: i64) { y = 3; return (y + 1); }"
-        );
-    }
-
-    #[test]
-    fn parse2() {
-        let program = r#"
-fn test(x: i64, y: i64) { while x < 7 { x = x + 1; } if y < x { return y; } return x + 9; }
-"#;
-        let parsed = ProgramParser::new().parse(&program).unwrap();
-        assert_eq!(
-            format!("{}", parsed[&Symbol::from("test")]),
-            "fn test(x: i64, y: i64) { while (x < 7) { { x = (x + 1); } } if (y < x) { { return y; } } else { { } } return (x + 9); }"
-        );
-    }
-}

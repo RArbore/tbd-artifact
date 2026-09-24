@@ -194,7 +194,9 @@ impl Saturator {
             .map(|rc| Version::child(rc))
             .unwrap_or_else(|| Version::child(Rc::clone(&self.ids.root_version)));
         self.traverse_to_version(&version);
-        self.ids.versions.insert(block, VersionState::Mutable(version));
+        self.ids
+            .versions
+            .insert(block, VersionState::Mutable(version));
         self.ids.current_version = Some(block);
     }
 
@@ -293,84 +295,5 @@ impl Saturator {
 
             apply_rws::<false>(&tries, self);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::nonssa::{BinaryOp, Type, UnaryOp};
-
-    use super::*;
-
-    #[test]
-    fn saturator1() {
-        let mut saturator = Saturator::default();
-        let block_id = saturator.ssa.add_block(SSABlock::Entry);
-        saturator.create_version(block_id);
-        saturator.move_to_version(block_id);
-        saturator.saturate();
-        assert_eq!(saturator.ssa.num_nodes(), 0);
-
-        use SSA::*;
-        let p1 = saturator.intern(Param(0, Type::I64));
-        let p2 = saturator.intern(Param(1, Type::I64));
-        saturator.saturate();
-        // Param(0), Param(1)
-        assert_eq!(saturator.ssa.num_nodes(), 2);
-
-        saturator.intern(Binary(BinaryOp::Add, p1, p2));
-        saturator.saturate();
-        // Param(0), Param(1), Add(p1, p2), Add(p2, p1)
-        assert_eq!(saturator.ssa.num_nodes(), 4);
-
-        saturator.union(p1, p2);
-        saturator.saturate();
-        // Param(0), Param(1), Add(p1, p2), Add(p2, p1), Add(p1, p1), Constant(2), Mul(c, p1), Mul(p1, c)
-        assert_eq!(saturator.ssa.num_nodes(), 8);
-    }
-
-    #[test]
-    fn saturator2() {
-        let mut saturator = Saturator::default();
-        let entry = saturator.ssa.add_block(SSABlock::Entry);
-        saturator.create_version(entry);
-        saturator.move_to_version(entry);
-
-        use BinaryOp::*;
-        use SSA::*;
-        use UnaryOp::*;
-        let one = saturator.intern(Constant(crate::nonssa::Constant::I64(1)));
-        let p1 = saturator.intern(Param(0, Type::I64));
-        let p2 = saturator.intern(Param(1, Type::I64));
-        let n1 = saturator.intern(Unary(Neg, p1));
-        let n2 = saturator.intern(Unary(Neg, p2));
-        let eq1 = saturator.intern(Binary(EE, n1, one));
-        saturator.saturate();
-
-        saturator.union(p1, p2);
-        saturator.saturate();
-
-        let guard_true = saturator.ssa.add_block(SSABlock::Guard(entry, eq1, true));
-        saturator.create_version(guard_true);
-        saturator.move_to_version(guard_true);
-        let add1 = saturator.intern(Binary(Add, n1, n2));
-        let add2 = saturator.intern(Binary(Add, n2, n1));
-        let eq2 = saturator.intern(Binary(NE, add1, add2));
-        let false_constant = saturator.intern(Constant(crate::nonssa::Constant::Bool(false)));
-        saturator.saturate();
-        assert_eq!(saturator.find(false_constant), saturator.find(eq2));
-
-        let guard_false = saturator
-            .ssa
-            .add_block(SSABlock::Guard(guard_true, eq1, false));
-        saturator.create_version(guard_false);
-        saturator.move_to_version(guard_false);
-        let mul1 = saturator.intern(Binary(Mul, n2, one));
-        let add1 = saturator.intern(Binary(Add, n1, n2));
-        saturator.intern(Binary(Add, mul1, add1));
-        saturator.saturate();
-
-        saturator.move_to_version(guard_true);
-        saturator.move_to_version(guard_false);
     }
 }
