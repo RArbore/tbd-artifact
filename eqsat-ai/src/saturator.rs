@@ -256,9 +256,7 @@ impl Saturator {
 
             // And any unions that held in the popped version but not its parent induce trie edits.
             let parent = version.parent().unwrap();
-            let mut non_canon_ids = vec![];
-            version.non_canon_ids_at_level(|id| non_canon_ids.push(id));
-            for id in non_canon_ids {
+            for id in version.non_canon_ids_at_level() {
                 assert_eq!(id, version.find_in_parent(id));
                 let old_canon_id = version.find(id);
                 assert_ne!(old_canon_id, id);
@@ -284,9 +282,7 @@ impl Saturator {
 
             // And any unions that hold in the pushed version but not its parent induce trie edits.
             let parent = version.parent().unwrap();
-            let mut non_canon_ids = vec![];
-            version.non_canon_ids_at_level(|id| non_canon_ids.push(id));
-            for id in non_canon_ids {
+            for id in version.non_canon_ids_at_level() {
                 assert_eq!(id, version.find_in_parent(id));
                 let new_canon_id = version.find(id);
                 assert_ne!(new_canon_id, id);

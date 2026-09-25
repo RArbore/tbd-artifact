@@ -648,11 +648,10 @@ fn uf1() {
         HashSet::from_iter([2, 5, 9]),
         uf.set(5).collect::<HashSet<_>>()
     );
-    let mut children = HashSet::new();
-    uf.non_canon_ids(|id| {
-        children.insert(id);
-    });
-    assert_eq!(HashSet::from_iter([3, 4, 5, 9]), children,);
+    assert_eq!(
+        HashSet::from_iter([3, 4, 5, 9]),
+        uf.non_canon_ids().into_iter().collect::<HashSet<_>>()
+    );
 
     assert_eq!(uf.union(4, 5), 0);
     assert_eq!(uf.find(2), 0);
@@ -662,11 +661,10 @@ fn uf1() {
         HashSet::from_iter([0, 2, 4, 5, 9]),
         uf.set(9).collect::<HashSet<_>>()
     );
-    let mut children = HashSet::new();
-    uf.non_canon_ids(|id| {
-        children.insert(id);
-    });
-    assert_eq!(HashSet::from_iter([2, 3, 4, 5, 9]), children);
+    assert_eq!(
+        HashSet::from_iter([2, 3, 4, 5, 9]),
+        uf.non_canon_ids().into_iter().collect::<HashSet<_>>()
+    );
 }
 
 #[test]
@@ -685,11 +683,10 @@ fn uf2() {
     for i in 100..200 {
         assert_ne!(uf.find(i), uf.find(i + 1));
     }
-    let mut children = HashSet::new();
-    uf.non_canon_ids(|id| {
-        children.insert(id);
-    });
-    assert_eq!(HashSet::from_iter(1..=100), children);
+    assert_eq!(
+        HashSet::from_iter(1..=100),
+        uf.non_canon_ids().into_iter().collect::<HashSet<_>>()
+    );
 }
 
 #[test]

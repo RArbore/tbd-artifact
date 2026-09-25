@@ -175,11 +175,8 @@ impl SparseUnionFind {
         }
     }
 
-    pub fn non_canon_ids<F>(&self, mut f: F)
-    where
-        F: FnMut(SSAId),
-    {
-        self.parents.borrow().keys().for_each(|id| f(*id))
+    pub fn non_canon_ids(&self) -> Vec<SSAId> {
+        self.parents.borrow().keys().cloned().collect()
     }
 }
 
@@ -358,11 +355,8 @@ impl Version {
         }
     }
 
-    pub fn non_canon_ids_at_level<F>(&self, f: F)
-    where
-        F: FnMut(SSAId),
-    {
-        self.uf.non_canon_ids(f)
+    pub fn non_canon_ids_at_level(&self) -> Vec<SSAId> {
+        self.uf.non_canon_ids()
     }
 
     pub fn examine(&mut self, id: SSAId) {
