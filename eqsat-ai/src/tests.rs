@@ -27,6 +27,7 @@ fn get_return_no_control_flow(text: &str) -> (SSAId, Saturator) {
         assert_eq!(values.len(), 1);
         let value = values[0];
         saturator.move_to_version(1);
+        saturator.check_trie_consistency();
         return (value, saturator);
     }
     panic!()
@@ -47,6 +48,7 @@ fn get_return(text: &str) -> (SSAId, Saturator) {
         assert_eq!(values.len(), 1);
         let value = values[0];
         saturator.move_to_version(exit);
+        saturator.check_trie_consistency();
         return (value, saturator);
     }
     panic!()

@@ -24,6 +24,24 @@ impl AsRef<Version> for VersionState {
     }
 }
 
+#[derive(Debug)]
+enum TrieEdit<'a> {
+    Intern {
+        id: SSAId,
+        canon_id: SSAId,
+    },
+    PushUnion {
+        id: SSAId,
+        old_canon_id: SSAId,
+        new_canon_id: SSAId,
+    },
+    PopUnion {
+        id: SSAId,
+        new_canon_id: SSAId,
+        parent: &'a Version,
+    },
+}
+
 // Because Rust does not have field borrows, we have to do silly things sometimes to convey to the
 // borrow checker that we are not violating any of its rules. In particular, the `saturate` method of
 // `Saturator` needs simultaneous access to the `union_with` method and the `ssa` member. This struct
@@ -57,6 +75,9 @@ struct IDManager {
 pub struct Saturator {
     pub ssa: SSAProgram,
     ids: IDManager,
+    tries: Tries,
+    // `apply_rws` never creates any edits needing a reference to a `Version`.
+    trie_edits: Vec<TrieEdit<'static>>,
 }
 
 impl IDManager {
@@ -123,7 +144,13 @@ impl Saturator {
 
     pub fn union(&mut self, x: SSAId, y: SSAId) -> SSAId {
         assert_eq!(self.ssa.ty(x), self.ssa.ty(y));
-        self.ids.union_with(x, y, |_, _, _| {})
+        self.ids.union_with(x, y, |id, old_canon_id, new_canon_id| {
+            self.trie_edits.push(TrieEdit::PushUnion {
+                id,
+                old_canon_id,
+                new_canon_id,
+            })
+        })
     }
 
     pub fn count(&self, id: SSAId) -> usize {
@@ -138,10 +165,10 @@ impl Saturator {
         let before = self.ssa.num_nodes();
         ssa = self.ids.canonicalize(ssa);
         let id = self.ssa.intern(ssa);
-        let canon_id = if ssa.is_param_or_knot() {
+        let (canon_id, after) = if ssa.is_param_or_knot() {
             // Param and Knot nodes never get added to the delta set because they are never matched
             // on by any rules.
-            self.ids.find(id)
+            (self.ids.find(id), self.ssa.num_nodes())
         } else {
             let canon_id = self.ids.find(id);
             let after = self.ssa.num_nodes();
@@ -157,8 +184,11 @@ impl Saturator {
                 version.examine(canon_id);
                 self.ids.delta.insert(canon_id);
             }
-            canon_id
+            (canon_id, after)
         };
+        if before != after {
+            self.trie_edits.push(TrieEdit::Intern { id, canon_id });
+        }
         canon_id
     }
 
@@ -200,6 +230,7 @@ impl Saturator {
 
     pub fn traverse_to_version(&mut self, version: &Version) {
         assert!(self.ids.delta.is_empty());
+        self.apply_edits();
         let last_version = self
             .ids
             .current_version
@@ -218,14 +249,58 @@ impl Saturator {
         down_versions.reverse();
 
         for version in up_versions {
+            // When popping a version, any examined nodes may need to be re-examined.
             for id in version.examined() {
                 self.ids.previously_examined.insert(id);
+            }
+
+            // And any unions that held in the popped version but not its parent induce trie edits.
+            let parent = version.parent().unwrap();
+            let mut non_canon_ids = vec![];
+            version.non_canon_ids_at_level(|id| non_canon_ids.push(id));
+            for id in non_canon_ids {
+                assert_eq!(id, version.find_in_parent(id));
+                let old_canon_id = version.find(id);
+                assert_ne!(old_canon_id, id);
+                for set_id in parent.set(id, None) {
+                    Self::apply_edit(
+                        TrieEdit::PopUnion {
+                            id: set_id,
+                            new_canon_id: id,
+                            parent,
+                        },
+                        &self.ssa,
+                        &mut self.tries,
+                    );
+                }
             }
         }
 
         for version in down_versions {
+            // When pushing a version, any already examined nodes don't need to be re-examined.
             for id in version.examined() {
                 self.ids.previously_examined.remove(&id);
+            }
+
+            // And any unions that hold in the pushed version but not its parent induce trie edits.
+            let parent = version.parent().unwrap();
+            let mut non_canon_ids = vec![];
+            version.non_canon_ids_at_level(|id| non_canon_ids.push(id));
+            for id in non_canon_ids {
+                assert_eq!(id, version.find_in_parent(id));
+                let new_canon_id = version.find(id);
+                assert_ne!(new_canon_id, id);
+                for set_id in parent.set(id, None) {
+                    Self::apply_edit(
+                        TrieEdit::PushUnion {
+                            id: set_id,
+                            old_canon_id: id,
+                            new_canon_id,
+                        },
+                        &self.ssa,
+                        &mut self.tries,
+                    );
+                }
             }
         }
     }
@@ -240,12 +315,71 @@ impl Saturator {
         self.ids.current_version = Some(block);
     }
 
+    fn apply_edit(edit: TrieEdit<'_>, ssa: &SSAProgram, tries: &mut Tries) {
+        use TrieEdit::*;
+        match edit {
+            Intern { id, canon_id } => {
+                tries.insert_tuple(canon_id, ssa.get(id), id, false);
+            }
+            PushUnion {
+                id,
+                old_canon_id,
+                new_canon_id,
+            } => {
+                let node = ssa.get(id);
+                if let Some(inserted_id) = tries.inserted_as(id)
+                    && inserted_id != new_canon_id
+                {
+                    tries.remove_tuple(inserted_id, node, id);
+                    tries.insert_tuple(new_canon_id, node, id, false);
+                }
+                for user in ssa.users(old_canon_id).cloned() {
+                    if let Some(inserted_id) = tries.inserted_as(user) {
+                        tries.remove_tuple(inserted_id, ssa.get(user), user);
+                    }
+                }
+            }
+            PopUnion {
+                id,
+                new_canon_id,
+                parent,
+            } => {
+                let node = ssa.get(id);
+                if let Some(inserted_id) = tries.inserted_as(id)
+                    && inserted_id != new_canon_id
+                {
+                    tries.remove_tuple(inserted_id, node, id);
+                    tries.insert_tuple(new_canon_id, node, id, false);
+                }
+                for user in ssa.users(new_canon_id).cloned() {
+                    let user_node = ssa.get(user);
+                    if parent.is_canonical(user_node) {
+                        let user_canon = parent.find(user);
+                        if let Some(inserted_id) = tries.inserted_as(user) {
+                            assert_eq!(inserted_id, user_canon);
+                        } else {
+                            tries.insert_tuple(user_canon, user_node, user, false);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn apply_edits(&mut self) {
+        for edit in take(&mut self.trie_edits) {
+            Self::apply_edit(edit, &self.ssa, &mut self.tries);
+        }
+    }
+
     pub fn saturate(&mut self) {
         if let VersionState::Immutable(_) = self.ids.versions[&self.ids.current_version.unwrap()] {
             assert!(self.ids.delta.is_empty());
             return;
         };
         while !self.ids.delta.is_empty() {
+            self.apply_edits();
+
             // Prepare worklist for rebuilding. The worklist should always contain only nodes that
             // use non-canonical SSAIds.
             let mut worklist = VecDeque::new();
@@ -265,31 +399,47 @@ impl Saturator {
                 // We should only ever insert a node into the worklist if it's non-canonical.
                 assert_ne!(old_ssa, new_ssa);
                 let new_id = self.intern(new_ssa);
-                self.ids.union_with(id, new_id, |id, _, _| {
-                    for user in self.ssa.users(id) {
-                        worklist.push_back(*user);
-                    }
-                });
+                self.ids
+                    .union_with(id, new_id, |id, old_canon_id, new_canon_id| {
+                        self.trie_edits.push(TrieEdit::PushUnion {
+                            id,
+                            old_canon_id,
+                            new_canon_id,
+                        });
+                        for user in self.ssa.users(id) {
+                            worklist.push_back(*user);
+                        }
+                    });
             }
 
-            let mut tries = Tries::default();
-            // Add all the nodes into the "all" tries and add the delta nodes into the delta tries.
-            // TODO: Incrementalize trie building!
+            self.apply_edits();
+            let mut tries = take(&mut self.tries);
+            // Each iteration, construct the delta tries from scratch.
             for id in &self.ids.delta {
                 let node = self.ssa.get(*id);
                 if self.ids.is_canonical(node) {
                     tries.insert_tuple(self.ids.find(*id), node, *id, true);
                 }
             }
-            for id in 0..self.ssa.num_nodes() {
-                let node = self.ssa.get(id);
-                if self.ids.is_canonical(node) {
-                    tries.insert_tuple(self.ids.find(id), node, id, false);
-                }
-            }
             self.ids.delta.clear();
 
             apply_rws::<false>(&tries, self);
+            tries.clear_delta();
+            self.tries = tries;
         }
+        self.apply_edits();
+    }
+
+    pub fn check_trie_consistency(&self) {
+        assert!(self.trie_edits.is_empty());
+        let mut correct = Tries::default();
+        for id in 0..self.ssa.num_nodes() {
+            let node = self.ssa.get(id);
+            let canon_id = self.ids.find(id);
+            if self.ids.is_canonical(node) {
+                correct.insert_tuple(canon_id, node, id, false);
+            }
+        }
+        assert_eq!(correct, self.tries);
     }
 }
