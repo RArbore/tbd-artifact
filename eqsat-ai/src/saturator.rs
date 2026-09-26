@@ -25,7 +25,7 @@ impl AsRef<Version> for VersionState {
 }
 
 #[derive(Debug)]
-enum TrieEdit<'a> {
+enum TrieEdit {
     Intern {
         id: SSAId,
         canon_id: SSAId,
@@ -38,7 +38,7 @@ enum TrieEdit<'a> {
     PopUnion {
         id: SSAId,
         new_canon_id: SSAId,
-        parent: &'a Version,
+        parent: Rc<Version>,
     },
 }
 
@@ -77,7 +77,7 @@ pub struct Saturator {
     ids: IDManager,
     tries: Tries,
     // `apply_rws` never creates any edits needing a reference to a `Version`.
-    trie_edits: Vec<TrieEdit<'static>>,
+    trie_edits: Vec<TrieEdit>,
 }
 
 impl IDManager {
@@ -265,7 +265,7 @@ impl Saturator {
                         TrieEdit::PopUnion {
                             id: set_id,
                             new_canon_id: id,
-                            parent,
+                            parent: Rc::clone(parent),
                         },
                         &self.ssa,
                         &mut self.tries,
@@ -311,7 +311,7 @@ impl Saturator {
         self.ids.current_version = Some(block);
     }
 
-    fn apply_edit(edit: TrieEdit<'_>, ssa: &SSAProgram, tries: &mut Tries) {
+    fn apply_edit(edit: TrieEdit, ssa: &SSAProgram, tries: &mut Tries) {
         use TrieEdit::*;
         match edit {
             Intern { id, canon_id } => {

@@ -210,8 +210,8 @@ impl Version {
         }
     }
 
-    pub fn parent(&self) -> Option<&Version> {
-        self.parent.as_ref().map(|v| &**v)
+    pub fn parent(&self) -> Option<&Rc<Version>> {
+        self.parent.as_ref()
     }
 
     pub fn lca<'a, F1, F2>(
