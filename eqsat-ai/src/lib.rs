@@ -1,5 +1,6 @@
 pub mod ai;
 pub mod imp;
+pub mod lattice;
 pub mod nonssa;
 pub mod saturator;
 pub mod ssa;

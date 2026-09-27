@@ -76,7 +76,6 @@ pub struct Saturator {
     pub ssa: SSAProgram,
     ids: IDManager,
     tries: Tries,
-    // `apply_rws` never creates any edits needing a reference to a `Version`.
     trie_edits: Vec<TrieEdit>,
 }
 

@@ -53,10 +53,7 @@ impl SSA {
                 assert_eq!(types[input], Type::I64);
                 Type::I64
             }
-            SSA::Unary(UnaryOp::Not, input) => {
-                assert_eq!(types[input], Type::Bool);
-                Type::Bool
-            }
+            SSA::Unary(UnaryOp::Not, input) => types[input],
             SSA::Binary(op, lhs, rhs) => match op {
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul => {
                     assert_eq!(types[lhs], Type::I64);

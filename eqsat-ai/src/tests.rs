@@ -2,11 +2,13 @@ use std::collections::{HashMap, HashSet};
 use std::ptr::eq;
 use std::rc::Rc;
 
+use rand::random;
 use symbol_table::GlobalSymbol as Symbol;
 
 use crate::ai::*;
 use crate::imp::ast::*;
 use crate::imp::grammar::*;
+use crate::lattice::*;
 use crate::nonssa::*;
 use crate::saturator::*;
 use crate::ssa::*;
@@ -809,4 +811,139 @@ fn luf2() {
         &*Version::lca(&child, &parent, |_| {}, |_| {}).unwrap(),
         &*parent
     ));
+}
+
+#[test]
+fn known_bits1() {
+    assert!(
+        KnownBits {
+            low_high: 42,
+            concrete: !0
+        }
+        .is_constant(42)
+    );
+    assert_eq!(
+        KnownBits {
+            low_high: 42,
+            concrete: !0
+        }
+        .try_constant(),
+        Some(42)
+    );
+    assert!(
+        KnownBits {
+            low_high: 0,
+            concrete: 0
+        }
+        .is_constant(777)
+    );
+    assert!(
+        !KnownBits {
+            low_high: 0,
+            concrete: !0
+        }
+        .is_constant(777)
+    );
+    assert_eq!(
+        KnownBits {
+            low_high: 42,
+            concrete: 0
+        }
+        .try_constant(),
+        None
+    );
+    assert_eq!(
+        KnownBits::from_constant(3).join(&KnownBits::from_constant(1)),
+        KnownBits {
+            low_high: 3,
+            concrete: !2
+        }
+    );
+}
+
+#[test]
+fn known_bits2() {
+    for _ in 0..100 {
+        let cons = random::<i64>();
+        let kb = KnownBits::from_constant(cons);
+        let not_kb = kb.not();
+        assert!(not_kb.is_constant(!cons));
+    }
+    for _ in 0..100 {
+        let cons1 = random::<i64>();
+        let cons2 = random::<i64>();
+        let kb1 = KnownBits::from_constant(cons1);
+        let kb2 = KnownBits::from_constant(cons2);
+        assert_eq!(kb1.join(&kb2), kb2.join(&kb1));
+        assert_eq!(kb1.meet(&kb2), kb2.meet(&kb1));
+        assert_eq!(kb1.and(&kb2), kb2.and(&kb1));
+        assert!(kb1.and(&kb2).is_constant(cons1 & cons2));
+    }
+}
+
+#[test]
+fn known_bits3() {
+    for _ in 0..100 {
+        let num = random::<u8>() % 10;
+        let mut cons = vec![];
+        let mut join = KnownBits::bot();
+        let mut meet = KnownBits::top();
+        for _ in 0..num {
+            let kb = KnownBits::from_constant(random::<i64>());
+            join = join.join(&kb);
+            meet = meet.meet(&kb);
+            cons.push(kb);
+        }
+        for i in 0..num {
+            let kb = cons[i as usize];
+            assert!(kb.leq(&join), "{:?}, {:?} is join of {} kbs", kb, join, num);
+            assert!(meet.leq(&kb), "{:?}, {:?} is meet of {} kbs", kb, meet, num);
+        }
+    }
+}
+
+#[test]
+fn known_bits4() {
+    for _ in 0..100 {
+        let num = random::<u8>() % 10;
+        let mut cons1 = vec![];
+        let mut cons2 = vec![];
+        let mut join1 = KnownBits::bot();
+        let mut join2 = KnownBits::bot();
+        let mut meet1 = KnownBits::top();
+        let mut meet2 = KnownBits::top();
+        for _ in 0..num {
+            let c1 = random::<i64>();
+            let kb1 = KnownBits::from_constant(c1);
+            join1 = join1.join(&kb1);
+            meet1 = meet1.meet(&kb1);
+            cons1.push(c1);
+            let c2 = random::<i64>();
+            let kb2 = KnownBits::from_constant(c2);
+            join2 = join2.join(&kb2);
+            meet2 = meet2.meet(&kb2);
+            cons2.push(c2);
+        }
+        if num > 0 {
+            assert!(meet1.leq(&join1));
+            assert!(meet2.leq(&join2));
+        }
+        let join_and = join1.and(&join2);
+        let meet_and = meet1.and(&meet2);
+        let join_or = join1.or(&join2);
+        let meet_or = meet1.or(&meet2);
+        let join_xor = join1.xor(&join2);
+        let meet_xor = meet1.xor(&meet2);
+        for i in 0..num {
+            let and = cons1[i as usize] & cons2[i as usize];
+            let or = cons1[i as usize] | cons2[i as usize];
+            let xor = cons1[i as usize] ^ cons2[i as usize];
+            assert!(join_and.contains_constant(and));
+            assert!(meet_and.is_constant(and));
+            assert!(join_or.contains_constant(or));
+            assert!(meet_or.is_constant(or));
+            assert!(join_xor.contains_constant(xor));
+            assert!(meet_xor.is_constant(xor));
+        }
+    }
 }
