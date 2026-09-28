@@ -14,19 +14,44 @@ pub struct SparseUnionFind {
     siblings: HashMap<SSAId, SSAId>,
 }
 
+pub trait CommutativeMonoid: Clone {
+    fn identity() -> Self;
+    fn plus(&self, other: &Self) -> Self;
+}
+
+impl CommutativeMonoid for () {
+    fn identity() -> Self {
+        ()
+    }
+
+    fn plus(&self, _: &Self) -> Self {
+        ()
+    }
+}
+
+impl CommutativeMonoid for usize {
+    fn identity() -> Self {
+        0
+    }
+
+    fn plus(&self, other: &Self) -> Self {
+        *self + *other
+    }
+}
+
 // A version is a layer of a layered union find. Each layer of the layered union find is "just" a
 // union find over the canonical IDs of the parent union find. Versions form a hierarchy. We get away
 // with using a layered union find, rather than the more complicated versioned union find, because we
 // only ever modify (at-the-moment) leaf versions.
 #[derive(Debug, Default)]
-pub struct Version {
+pub struct Version<A: CommutativeMonoid> {
     uf: SparseUnionFind,
-    // Track the size of the multi-layer set for every canonical SSAId. Store an Option<usize>, since
-    // the count when a SSAId is not mapped is actually 1, not 0.
-    count: HashMap<SSAId, Option<usize>>,
+    // Track an "analysis" value per e-class. If the map at this version doesn't contain an entry,
+    // then the analysis value for the e-class is given by the parent version (recursively).
+    analysis: HashMap<SSAId, A>,
     // Store a pointer to the parent version. This is ref-counted to simplify the code in the
     // saturator w.r.t. ownership of versions.
-    parent: Option<Rc<Version>>,
+    parent: Option<Rc<Version<A>>>,
     // Track which level in the version hierarchy this version corresponds to.
     level: usize,
     // Track which SSAIds have been "examined" in this version. A SSAId is considered "examined" in a
@@ -44,12 +69,12 @@ pub struct SparseUnionFindSet<'a> {
 }
 
 #[derive(Debug)]
-pub enum VersionSet<'a> {
+pub enum VersionSet<'a, A: CommutativeMonoid> {
     Trivial(Option<SSAId>),
     NonTrivial {
         set_stack: Vec<SparseUnionFindSet<'a>>,
-        version_stack: Vec<&'a Version>,
-        up_to: Option<&'a Version>,
+        version_stack: Vec<&'a Version<A>>,
+        up_to: Option<&'a Version<A>>,
     },
 }
 
@@ -198,34 +223,34 @@ impl Iterator for SparseUnionFindSet<'_> {
     }
 }
 
-impl Version {
-    pub fn child(parent: Rc<Version>) -> Self {
+impl<A: CommutativeMonoid> Version<A> {
+    pub fn child(parent: Rc<Version<A>>) -> Self {
         let level = parent.level + 1;
         Self {
             uf: SparseUnionFind::default(),
-            count: parent.count.clone(),
+            analysis: HashMap::new(),
             parent: Some(parent),
             level,
             examined_ids: HashSet::new(),
         }
     }
 
-    pub fn parent(&self) -> Option<&Rc<Version>> {
+    pub fn parent(&self) -> Option<&Rc<Version<A>>> {
         self.parent.as_ref()
     }
 
     pub fn lca<'a, F1, F2>(
-        mut a: &'a Version,
-        mut b: &'a Version,
+        mut a: &'a Version<A>,
+        mut b: &'a Version<A>,
         mut f1: F1,
         mut f2: F2,
-    ) -> Option<Rc<Version>>
+    ) -> Option<Rc<Version<A>>>
     where
-        F1: FnMut(&'a Version),
-        F2: FnMut(&'a Version),
+        F1: FnMut(&'a Version<A>),
+        F2: FnMut(&'a Version<A>),
     {
-        let mut a_rc: Option<&Rc<Version>> = None;
-        let mut b_rc: Option<&Rc<Version>> = None;
+        let mut a_rc: Option<&Rc<Version<A>>> = None;
+        let mut b_rc: Option<&Rc<Version<A>>> = None;
         loop {
             if a.level < b.level {
                 f2(b);
@@ -263,20 +288,21 @@ impl Version {
         self.uf.find(self.find_in_parent(id))
     }
 
-    pub fn count(&self, id: SSAId) -> usize {
-        self.count.get(&id).unwrap_or(&Some(1)).unwrap()
+    pub fn analysis(&self, mut id: SSAId) -> A {
+        id = self.find(id);
+        self.analysis.get(&id).cloned().unwrap_or_else(|| {
+            self.parent
+                .as_ref()
+                .map(|parent| parent.analysis(id))
+                .unwrap_or_else(|| A::identity())
+        })
     }
 
-    fn update_counts(&mut self, x: SSAId, y: SSAId, canon: SSAId) {
-        if canon == x {
-            *self.count.entry(x).or_insert(Some(1)).as_mut().unwrap() +=
-                self.count.get(&y).unwrap_or(&Some(1)).unwrap();
-            self.count.insert(y, None);
-        } else {
-            *self.count.entry(y).or_insert(Some(1)).as_mut().unwrap() +=
-                self.count.get(&x).unwrap_or(&Some(1)).unwrap();
-            self.count.insert(x, None);
-        }
+    fn update_analysis(&mut self, x: SSAId, y: SSAId, canon: SSAId) {
+        let x_analysis = self.analysis(x);
+        let y_analysis = self.analysis(y);
+        let combined = x_analysis.plus(&y_analysis);
+        self.analysis.insert(canon, combined);
     }
 
     pub fn union(&mut self, mut x: SSAId, mut y: SSAId) -> SSAId {
@@ -286,7 +312,7 @@ impl Version {
             x
         } else {
             let canon = self.uf.union(x, y);
-            self.update_counts(x, y, canon);
+            self.update_analysis(x, y, canon);
             canon
         }
     }
@@ -313,7 +339,7 @@ impl Version {
                     fn_for_changed_set(id, old_canon_id, new_canon_id);
                 }
             });
-            self.update_counts(x, y, canon);
+            self.update_analysis(x, y, canon);
             canon
         }
     }
@@ -321,7 +347,7 @@ impl Version {
     pub fn set<'a>(
         &'a self,
         id: SSAId,
-        up_to: Option<&'a Version>,
+        up_to: Option<&'a Version<A>>,
     ) -> impl Iterator<Item = SSAId> + 'a {
         let canon_id = self.find(id);
         if let Some(up_to) = up_to
@@ -359,7 +385,8 @@ impl Version {
         self.uf.non_canon_ids()
     }
 
-    pub fn examine(&mut self, id: SSAId) {
+    pub fn examine(&mut self, id: SSAId, analysis: A) {
+        self.analysis.insert(id, analysis);
         self.examined_ids.insert(id);
     }
 
@@ -368,7 +395,7 @@ impl Version {
     }
 }
 
-impl Iterator for VersionSet<'_> {
+impl<A: CommutativeMonoid> Iterator for VersionSet<'_, A> {
     type Item = SSAId;
 
     fn next(&mut self) -> Option<SSAId> {

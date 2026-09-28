@@ -6,16 +6,18 @@ use crate::rw::{Tries, apply_rws};
 use crate::ssa::{SSA, SSABlock, SSABlockId, SSAId, SSAProgram};
 use crate::version::Version;
 
+type Analysis = usize;
+
 #[derive(Debug)]
 enum VersionState {
     // If the version is mutable, it is a leaf version.
-    Mutable(Version),
+    Mutable(Version<Analysis>),
     // If the version is immutable, it is a parent version of some child version.
-    Immutable(Rc<Version>),
+    Immutable(Rc<Version<Analysis>>),
 }
 
-impl AsRef<Version> for VersionState {
-    fn as_ref(&self) -> &Version {
+impl AsRef<Version<Analysis>> for VersionState {
+    fn as_ref(&self) -> &Version<Analysis> {
         use VersionState::*;
         match self {
             Mutable(version) => version,
@@ -38,7 +40,7 @@ enum TrieEdit {
     PopUnion {
         id: SSAId,
         new_canon_id: SSAId,
-        parent: Rc<Version>,
+        parent: Rc<Version<Analysis>>,
     },
 }
 
@@ -55,7 +57,7 @@ struct IDManager {
     delta: HashSet<SSAId>,
     // Store an empty root version. This is needed so we have a well-defined LCA between old and new
     // versions for the entry block.
-    root_version: Rc<Version>,
+    root_version: Rc<Version<Analysis>>,
     // Store the latest version for each SSA block.
     versions: HashMap<SSABlockId, VersionState>,
     // Store the "current" version. Moving between versions requires careful maintenance of the delta
@@ -115,7 +117,7 @@ impl IDManager {
 
     fn count(&self, id: SSAId) -> usize {
         self.current_version
-            .map(|current_version| self.versions[&current_version].as_ref().count(id))
+            .map(|current_version| self.versions[&current_version].as_ref().analysis(id))
             .unwrap_or(1)
     }
 
@@ -156,7 +158,7 @@ impl Saturator {
         self.ids.count(id)
     }
 
-    pub fn version(&self, id: SSABlockId) -> &Version {
+    pub fn version(&self, id: SSABlockId) -> &Version<Analysis> {
         self.ids.versions[&id].as_ref()
     }
 
@@ -180,7 +182,7 @@ impl Saturator {
                 else {
                     panic!()
                 };
-                version.examine(canon_id);
+                version.examine(canon_id, 1);
                 self.ids.delta.insert(canon_id);
             }
             (canon_id, after)
@@ -227,7 +229,7 @@ impl Saturator {
         self.ids.current_version = Some(block);
     }
 
-    pub fn traverse_to_version(&mut self, version: &Version) {
+    pub fn traverse_to_version(&mut self, version: &Version<Analysis>) {
         assert!(self.ids.delta.is_empty());
         self.apply_edits();
         let last_version = self

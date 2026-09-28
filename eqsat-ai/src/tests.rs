@@ -719,7 +719,12 @@ fn uf3() {
 
 #[test]
 fn luf1() {
-    let mut parent = Version::default();
+    let mut parent = Version::<usize>::default();
+    parent.examine(0, 1);
+    parent.examine(1, 1);
+    parent.examine(2, 1);
+    parent.examine(3, 1);
+    parent.examine(4, 1);
     parent.union(0, 1);
     parent.union(2, 3);
     assert_eq!(parent.find(0), parent.find(1));
@@ -733,8 +738,11 @@ fn luf1() {
         HashSet::from_iter([2, 3]),
         parent.set(2, None).collect::<HashSet<_>>()
     );
-    assert_eq!(parent.count(0), 2);
-    assert_eq!(parent.count(2), 2);
+    assert_eq!(parent.analysis(0), 2);
+    assert_eq!(parent.analysis(1), 2);
+    assert_eq!(parent.analysis(2), 2);
+    assert_eq!(parent.analysis(3), 2);
+    assert_eq!(parent.analysis(4), 1);
 
     let parent = Rc::new(parent);
     let mut child = Version::child(Rc::clone(&parent));
@@ -778,9 +786,16 @@ fn luf1() {
             parent.set(i, Some(&*parent)).collect::<HashSet<_>>()
         );
     }
-    assert_eq!(parent.count(0), 2);
-    assert_eq!(parent.count(2), 2);
-    assert_eq!(child.count(0), 4);
+    assert_eq!(parent.analysis(0), 2);
+    assert_eq!(parent.analysis(1), 2);
+    assert_eq!(parent.analysis(2), 2);
+    assert_eq!(parent.analysis(3), 2);
+    assert_eq!(parent.analysis(4), 1);
+    assert_eq!(child.analysis(0), 4);
+    assert_eq!(child.analysis(1), 4);
+    assert_eq!(child.analysis(2), 4);
+    assert_eq!(child.analysis(3), 4);
+    assert_eq!(child.analysis(4), 1);
     assert!(eq(
         &*Version::lca(&child, &parent, |_| {}, |_| {}).unwrap(),
         &*parent
@@ -789,11 +804,17 @@ fn luf1() {
 
 #[test]
 fn luf2() {
-    let mut parent = Version::default();
+    let mut parent = Version::<usize>::default();
+    parent.examine(0, 1);
+    parent.examine(1, 1);
+    parent.examine(2, 1);
+    parent.examine(3, 1);
     parent.union(0, 1);
     parent.union(2, 3);
-    assert_eq!(parent.count(0), 2);
-    assert_eq!(parent.count(2), 2);
+    assert_eq!(parent.analysis(0), 2);
+    assert_eq!(parent.analysis(1), 2);
+    assert_eq!(parent.analysis(2), 2);
+    assert_eq!(parent.analysis(3), 2);
 
     let parent = Rc::new(parent);
     let mut child = Version::child(Rc::clone(&parent));
@@ -804,9 +825,14 @@ fn luf2() {
         assert_eq!(new_canon_id, 0);
     });
     assert_eq!(set, HashSet::from([2, 3]));
-    assert_eq!(parent.count(0), 2);
-    assert_eq!(parent.count(2), 2);
-    assert_eq!(child.count(0), 4);
+    assert_eq!(parent.analysis(0), 2);
+    assert_eq!(parent.analysis(1), 2);
+    assert_eq!(parent.analysis(2), 2);
+    assert_eq!(parent.analysis(3), 2);
+    assert_eq!(child.analysis(0), 4);
+    assert_eq!(child.analysis(1), 4);
+    assert_eq!(child.analysis(2), 4);
+    assert_eq!(child.analysis(3), 4);
     assert!(eq(
         &*Version::lca(&child, &parent, |_| {}, |_| {}).unwrap(),
         &*parent
