@@ -42,7 +42,7 @@ pub fn tuple_field(id: SSAId, ssa: SSA, column: usize) -> TupleValue {
                 rhs as TupleValue
             }
         }
-        Knot(id, _) => {
+        Knot(id, _, _) => {
             assert_eq!(column, 1);
             id as TupleValue
         }

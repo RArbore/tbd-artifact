@@ -359,7 +359,8 @@ fn simplified(y: i64) {
     let (value, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Param(0, Type::I64));
     assert_eq!(correct, value);
-    let correct = saturator.intern(SSA::Knot(0, Type::I64));
+    // NOTE: This may fail if we implement a backwards transfer for LT in KnownBits.
+    let correct = saturator.intern(SSA::Knot(0, Type::I64, KnownBits::top()));
     assert_eq!(correct, value);
 }
 
@@ -903,7 +904,15 @@ fn known_bits2() {
         assert_eq!(kb1.join(&kb2), kb2.join(&kb1));
         assert_eq!(kb1.meet(&kb2), kb2.meet(&kb1));
         assert_eq!(kb1.and(&kb2), kb2.and(&kb1));
+        assert_eq!(kb1.or(&kb2), kb2.or(&kb1));
+        assert_eq!(kb1.xor(&kb2), kb2.xor(&kb1));
         assert!(kb1.and(&kb2).is_constant(cons1 & cons2));
+        assert!(kb1.or(&kb2).is_constant(cons1 | cons2));
+        assert!(kb1.xor(&kb2).is_constant(cons1 ^ cons2));
+        assert!(kb1.leq(&KnownBits::top()));
+        assert!(kb2.leq(&KnownBits::top()));
+        assert!(KnownBits::bot().leq(&kb1));
+        assert!(KnownBits::bot().leq(&kb2));
     }
 }
 

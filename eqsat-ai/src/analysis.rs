@@ -3,7 +3,7 @@
 // - low_high: 0, concrete: 1 -> 0
 // - low_high: 1, concrete: 1 -> 1
 // - low_high: 1, concrete: 0 -> top
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KnownBits {
     pub low_high: i64,
     pub concrete: i64,
@@ -19,7 +19,7 @@ impl KnownBits {
 
     pub fn top() -> Self {
         Self {
-            low_high: 1,
+            low_high: !0,
             concrete: 0,
         }
     }
@@ -131,6 +131,12 @@ impl KnownBits {
 
     pub fn xor(&self, other: &Self) -> Self {
         self.and(&other.not()).or(&self.not().and(&other))
+    }
+}
+
+impl Default for KnownBits {
+    fn default() -> Self {
+        Self::top()
     }
 }
 

@@ -773,7 +773,7 @@ pub fn compile_rw(contents: &str) -> String {
                     SSA::Binary(op, _, _) => {
                         #trie_binary_insert
                     }
-                    SSA::Knot(_, _) => {}
+                    SSA::Knot(_, _, _) => {}
                 }
             }
 
@@ -791,7 +791,7 @@ pub fn compile_rw(contents: &str) -> String {
                     SSA::Binary(op, _, _) => {
                         #trie_binary_remove
                     }
-                    SSA::Knot(_, _) => {}
+                    SSA::Knot(_, _, _) => {}
                 }
             }
 

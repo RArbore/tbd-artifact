@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use symbol_table::GlobalSymbol as Symbol;
 
+use crate::analysis::KnownBits;
 use crate::nonssa::{BinaryOp, Constant, Type, UnaryOp};
 
 pub type SSAId = usize;
@@ -15,7 +16,7 @@ pub enum SSA {
     Binary(BinaryOp, SSAId, SSAId),
     // Knots serve the function of phi functions in our SSA form. They can be thought of as block
     // arguments (see SSABlock::Merge below).
-    Knot(KnotId, Type),
+    Knot(KnotId, Type, KnownBits),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,7 +49,7 @@ impl SSA {
         match *self {
             SSA::Constant(Constant::I64(_)) => Type::I64,
             SSA::Constant(Constant::Bool(_)) => Type::Bool,
-            SSA::Param(_, ty) | SSA::Knot(_, ty) => ty,
+            SSA::Param(_, ty) | SSA::Knot(_, ty, _) => ty,
             SSA::Unary(UnaryOp::Neg, input) => {
                 assert_eq!(types[input], Type::I64);
                 Type::I64
@@ -81,7 +82,7 @@ impl SSA {
 
     pub fn is_param_or_knot(&self) -> bool {
         match self {
-            SSA::Param(_, _) | SSA::Knot(_, _) => true,
+            SSA::Param(_, _) | SSA::Knot(_, _, _) => true,
             _ => false,
         }
     }

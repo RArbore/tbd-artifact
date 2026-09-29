@@ -2,11 +2,12 @@ use core::mem::take;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
+use crate::analysis::{CommutativeMonoid, KnownBits};
 use crate::rw::{Tries, apply_rws};
 use crate::ssa::{SSA, SSABlock, SSABlockId, SSAId, SSAProgram};
 use crate::version::Version;
 
-type Analysis = usize;
+pub type Analysis = (usize, KnownBits);
 
 #[derive(Debug)]
 enum VersionState {
@@ -115,10 +116,16 @@ impl IDManager {
         })
     }
 
-    fn count(&self, id: SSAId) -> usize {
-        self.current_version
-            .map(|current_version| self.versions[&current_version].as_ref().analysis(id))
-            .unwrap_or(1)
+    fn analysis(&self, id: SSAId) -> Analysis {
+        if let Some(version) = self.current_version {
+            self.analysis_in_version(id, version)
+        } else {
+            Analysis::identity()
+        }
+    }
+
+    fn analysis_in_version(&self, id: SSAId, version: SSABlockId) -> Analysis {
+        self.versions[&version].as_ref().analysis(id)
     }
 
     fn is_canonical(&self, ssa: SSA) -> bool {
@@ -154,12 +161,16 @@ impl Saturator {
         })
     }
 
-    pub fn count(&self, id: SSAId) -> usize {
-        self.ids.count(id)
-    }
-
     pub fn version(&self, id: SSABlockId) -> &Version<Analysis> {
         self.ids.versions[&id].as_ref()
+    }
+
+    pub fn analysis(&mut self, id: SSAId) -> Analysis {
+        self.ids.analysis(id)
+    }
+
+    pub fn analysis_in_version(&mut self, id: SSAId, version: SSABlockId) -> Analysis {
+        self.ids.analysis_in_version(id, version)
     }
 
     pub fn intern(&mut self, mut ssa: SSA) -> SSAId {
@@ -182,7 +193,7 @@ impl Saturator {
                 else {
                     panic!()
                 };
-                version.examine(canon_id, 1);
+                version.examine(canon_id, (1, KnownBits::top()));
                 self.ids.delta.insert(canon_id);
             }
             (canon_id, after)
