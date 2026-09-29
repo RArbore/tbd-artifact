@@ -1,6 +1,6 @@
 pub mod ai;
+pub mod analysis;
 pub mod imp;
-pub mod lattice;
 pub mod nonssa;
 pub mod saturator;
 pub mod ssa;

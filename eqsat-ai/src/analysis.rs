@@ -133,3 +133,48 @@ impl KnownBits {
         self.and(&other.not()).or(&self.not().and(&other))
     }
 }
+
+pub trait CommutativeMonoid: Clone {
+    fn identity() -> Self;
+    fn plus(&self, other: &Self) -> Self;
+}
+
+impl CommutativeMonoid for () {
+    fn identity() -> Self {
+        ()
+    }
+
+    fn plus(&self, _: &Self) -> Self {
+        ()
+    }
+}
+
+impl CommutativeMonoid for usize {
+    fn identity() -> Self {
+        0
+    }
+
+    fn plus(&self, other: &Self) -> Self {
+        *self + *other
+    }
+}
+
+impl CommutativeMonoid for KnownBits {
+    fn identity() -> Self {
+        Self::top()
+    }
+
+    fn plus(&self, other: &Self) -> Self {
+        self.meet(other)
+    }
+}
+
+impl<A: CommutativeMonoid, B: CommutativeMonoid> CommutativeMonoid for (A, B) {
+    fn identity() -> Self {
+        (A::identity(), B::identity())
+    }
+
+    fn plus(&self, other: &Self) -> Self {
+        (self.0.plus(&other.0), self.1.plus(&other.1))
+    }
+}

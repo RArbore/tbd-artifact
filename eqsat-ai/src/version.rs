@@ -3,6 +3,7 @@ use core::ptr::eq;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
+use crate::analysis::CommutativeMonoid;
 use crate::ssa::{SSA, SSAId};
 
 // We use a sparse representation for union finds, because in the majority of versions there are
@@ -12,31 +13,6 @@ use crate::ssa::{SSA, SSAId};
 pub struct SparseUnionFind {
     parents: RefCell<HashMap<SSAId, SSAId>>,
     siblings: HashMap<SSAId, SSAId>,
-}
-
-pub trait CommutativeMonoid: Clone {
-    fn identity() -> Self;
-    fn plus(&self, other: &Self) -> Self;
-}
-
-impl CommutativeMonoid for () {
-    fn identity() -> Self {
-        ()
-    }
-
-    fn plus(&self, _: &Self) -> Self {
-        ()
-    }
-}
-
-impl CommutativeMonoid for usize {
-    fn identity() -> Self {
-        0
-    }
-
-    fn plus(&self, other: &Self) -> Self {
-        *self + *other
-    }
 }
 
 // A version is a layer of a layered union find. Each layer of the layered union find is "just" a

@@ -6,9 +6,9 @@ use rand::random;
 use symbol_table::GlobalSymbol as Symbol;
 
 use crate::ai::*;
+use crate::analysis::*;
 use crate::imp::ast::*;
 use crate::imp::grammar::*;
-use crate::lattice::*;
 use crate::nonssa::*;
 use crate::saturator::*;
 use crate::ssa::*;
