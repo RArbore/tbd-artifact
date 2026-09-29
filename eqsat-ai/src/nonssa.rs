@@ -88,6 +88,15 @@ pub struct NonSSAFunc {
     pub cfg: Vec<Block>,
 }
 
+impl Constant {
+    pub fn ty(&self) -> Type {
+        match self {
+            Constant::Bool(_) => Type::Bool,
+            Constant::I64(_) => Type::I64,
+        }
+    }
+}
+
 impl Block {
     pub fn is_return(&self) -> bool {
         if let Block::Return { .. } = self {

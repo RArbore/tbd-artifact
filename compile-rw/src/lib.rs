@@ -41,6 +41,11 @@ enum Pattern {
         input: Box<Pattern>,
         label: Option<Symbol>,
     },
+    Param {
+        ty: Type,
+        idx: Box<Pattern>,
+        label: Option<Symbol>,
+    },
     Unary {
         op: Symbol,
         input: Box<Pattern>,
@@ -50,6 +55,12 @@ enum Pattern {
         op: Symbol,
         lhs: Box<Pattern>,
         rhs: Box<Pattern>,
+        label: Option<Symbol>,
+    },
+    Knot {
+        ty: Type,
+        kb: Box<Pattern>,
+        knot_id: Box<Pattern>,
         label: Option<Symbol>,
     },
 }
@@ -66,8 +77,10 @@ struct Query {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Relation {
     Constant(Type),
+    Param(Type),
     Unary(Symbol),
     Binary(Symbol),
+    Knot(Type),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,6 +193,13 @@ impl Display for Pattern {
                 ty.rust_type(),
                 input
             ),
+            Param { ty, idx, label } => write!(
+                f,
+                "{}(Param[{}] {})",
+                label_colon(label),
+                ty.rust_type(),
+                idx
+            ),
             Unary { op, input, label } => write!(f, "{}({} {})", label_colon(label), op, input),
             Binary {
                 op,
@@ -187,6 +207,19 @@ impl Display for Pattern {
                 rhs,
                 label,
             } => write!(f, "{}({} {} {})", label_colon(label), op, lhs, rhs),
+            Knot {
+                ty,
+                kb,
+                knot_id,
+                label,
+            } => write!(
+                f,
+                "{}(Knot[{}] {} {})",
+                label_colon(label),
+                ty.rust_type(),
+                kb,
+                knot_id
+            ),
         }
     }
 }
@@ -196,7 +229,9 @@ impl Display for Relation {
         use Relation::*;
         match self {
             Constant(ty) => write!(f, "Constant_{}", ty.compiler_type()),
+            Param(ty) => write!(f, "Param_{}", ty.compiler_type()),
             Unary(op) | Binary(op) => write!(f, "{}", op),
+            Knot(ty) => write!(f, "Knot_{}", ty.compiler_type()),
         }
     }
 }
@@ -277,6 +312,19 @@ fn patterns_to_query(patterns: &[Pattern]) -> Query {
                 record_type(input, ty.rust_type(), types);
                 root
             }
+            Pattern::Param { ty, idx, label } => {
+                let idx = pattern_to_query_helper(idx, atoms, types);
+                let var = label.unwrap_or_else(|| format!("_root_{}", atoms.len()).into());
+                let root = Term::Variable(var);
+                let atom = Atom {
+                    relation: Relation::Param(*ty),
+                    terms: vec![root, idx],
+                };
+                atoms.push(atom);
+                record_type(root, "SSAId".into(), types);
+                record_type(idx, "usize".into(), types);
+                root
+            }
             Pattern::Unary { op, input, label } => {
                 let input = pattern_to_query_helper(input, atoms, types);
                 let var = label.unwrap_or_else(|| format!("_root_{}", atoms.len()).into());
@@ -308,6 +356,26 @@ fn patterns_to_query(patterns: &[Pattern]) -> Query {
                 record_type(root, "SSAId".into(), types);
                 record_type(lhs, "SSAId".into(), types);
                 record_type(rhs, "SSAId".into(), types);
+                root
+            }
+            Pattern::Knot {
+                ty,
+                kb,
+                knot_id,
+                label,
+            } => {
+                let kb = pattern_to_query_helper(kb, atoms, types);
+                let knot_id = pattern_to_query_helper(knot_id, atoms, types);
+                let var = label.unwrap_or_else(|| format!("_root_{}", atoms.len()).into());
+                let root = Term::Variable(var);
+                let atom = Atom {
+                    relation: Relation::Knot(*ty),
+                    terms: vec![root, kb, knot_id],
+                };
+                atoms.push(atom);
+                record_type(root, "SSAId".into(), types);
+                record_type(kb, "KnownBits".into(), types);
+                record_type(knot_id, "KnotId".into(), types);
                 root
             }
         }
@@ -407,6 +475,16 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
                 }
             }
         }
+        Pattern::Param { ty, idx, label: _ } => {
+            let idx = build_pattern(idx);
+            let ty_variant = format_ident!("{}", ty.compiler_type().as_str());
+            quote! {
+                {
+                    let idx = #idx;
+                    saturator.intern(SSA::Param(idx, Type::#ty_variant))
+                }
+            }
+        }
         Pattern::Unary {
             op,
             input,
@@ -435,6 +513,23 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
                     let lhs = #lhs;
                     let rhs = #rhs;
                     saturator.intern(SSA::Binary(BinaryOp::#op_iden, lhs, rhs))
+                }
+            }
+        }
+        Pattern::Knot {
+            ty,
+            kb,
+            knot_id,
+            label: _,
+        } => {
+            let kb = build_pattern(kb);
+            let knot_id = build_pattern(knot_id);
+            let ty_variant = format_ident!("{}", ty.compiler_type().as_str());
+            quote! {
+                {
+                    let kb = #kb;
+                    let knot_id = #knot_id;
+                    saturator.intern(SSA::Knot(knot_id, Type::#ty_variant, kb))
                 }
             }
         }
@@ -509,6 +604,8 @@ fn emit_wcoj(
             // Rust moment...
             let cast = if query.types[&var] == "bool".into() {
                 quote! { let #var_iden = *#var_iden != 0; }
+            } else if query.types[&var] == "KnownBits".into() {
+                todo!()
             } else {
                 quote! { let #var_iden = *#var_iden as #rust_ty; }
             };
@@ -703,6 +800,20 @@ pub fn compile_rw(contents: &str) -> String {
             })
             .collect::<TokenStream>()
     };
+    let trie_param_insert_remove = |is_insert| {
+        needed_tries
+            .iter()
+            .map(|trie| {
+                if let Relation::Param(ty) = trie.relation {
+                    let variant = format_ident!("{}", ty.compiler_type().as_str());
+                    let insert = emit_insert_remove_into_trie(trie, is_insert);
+                    quote! { if let Type::#variant = ty { #insert } }
+                } else {
+                    quote! {}
+                }
+            })
+            .collect::<TokenStream>()
+    };
     let trie_unary_insert_remove = |is_insert| {
         needed_tries
             .iter()
@@ -731,6 +842,20 @@ pub fn compile_rw(contents: &str) -> String {
             })
             .collect::<TokenStream>()
     };
+    let trie_knot_insert_remove = |is_insert| {
+        needed_tries
+            .iter()
+            .map(|trie| {
+                if let Relation::Knot(ty) = trie.relation {
+                    let variant = format_ident!("{}", ty.compiler_type().as_str());
+                    let insert = emit_insert_remove_into_trie(trie, is_insert);
+                    quote! { if let Type::#variant = ty { #insert } }
+                } else {
+                    quote! {}
+                }
+            })
+            .collect::<TokenStream>()
+    };
     let trie_clear_delta: TokenStream = needed_tries
         .iter()
         .filter(|trie| trie.is_delta)
@@ -741,11 +866,15 @@ pub fn compile_rw(contents: &str) -> String {
         .map(|trie| quote! { self.#trie.clear(); })
         .collect();
     let trie_constant_insert = trie_constant_insert_remove(true);
+    let trie_param_insert = trie_param_insert_remove(true);
     let trie_unary_insert = trie_unary_insert_remove(true);
     let trie_binary_insert = trie_binary_insert_remove(true);
+    let trie_knot_insert = trie_knot_insert_remove(true);
     let trie_constant_remove = trie_constant_insert_remove(false);
+    let trie_param_remove = trie_param_insert_remove(false);
     let trie_unary_remove = trie_unary_insert_remove(false);
     let trie_binary_remove = trie_binary_insert_remove(false);
+    let trie_knot_remove = trie_knot_insert_remove(false);
     let trie_struct = quote! {
         #[derive(Default, PartialEq, Eq)]
         pub struct Tries {
@@ -766,14 +895,18 @@ pub fn compile_rw(contents: &str) -> String {
                     SSA::Constant(cons) => {
                         #trie_constant_insert
                     }
-                    SSA::Param(_, _) => {}
+                    SSA::Param(_, ty) => {
+                        #trie_param_insert
+                    }
                     SSA::Unary(op, _) => {
                         #trie_unary_insert
                     }
                     SSA::Binary(op, _, _) => {
                         #trie_binary_insert
                     }
-                    SSA::Knot(_, _, _) => {}
+                    SSA::Knot(_, ty, _) => {
+                        #trie_knot_insert
+                    }
                 }
             }
 
@@ -784,14 +917,18 @@ pub fn compile_rw(contents: &str) -> String {
                     SSA::Constant(cons) => {
                         #trie_constant_remove
                     }
-                    SSA::Param(_, _) => {}
+                    SSA::Param(_, ty) => {
+                        #trie_param_remove
+                    }
                     SSA::Unary(op, _) => {
                         #trie_unary_remove
                     }
                     SSA::Binary(op, _, _) => {
                         #trie_binary_remove
                     }
-                    SSA::Knot(_, _, _) => {}
+                    SSA::Knot(_, ty, _) => {
+                        #trie_knot_remove
+                    }
                 }
             }
 
@@ -835,9 +972,10 @@ pub fn compile_rw(contents: &str) -> String {
         use core::fmt::{Debug, Formatter, Result};
         use std::collections::{BTreeMap, HashMap};
 
-        use crate::nonssa::{BinaryOp, Constant, UnaryOp};
+        use crate::analysis::KnownBits;
+        use crate::nonssa::{BinaryOp, Constant, Type, UnaryOp};
         use crate::saturator::Saturator;
-        use crate::ssa::{SSA, SSAId};
+        use crate::ssa::{KnotId, SSA, SSAId};
         use crate::trie::{Trie, TupleValue, tuple_field};
 
         #trie_struct

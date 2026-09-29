@@ -64,3 +64,6 @@
 (rule (a:(Constant[bool] false) a:(Or b c)) ((union a (union b c))))
 (rule (a:(Constant[bool] true) a:(EE b c)) ((union b c)))
 (rule (a:(Constant[bool] false) a:(NE b c)) ((union b c)))
+
+(rule ((Param[i64] idx)) ())
+(rule ((Knot[i64] kb id)) ())
