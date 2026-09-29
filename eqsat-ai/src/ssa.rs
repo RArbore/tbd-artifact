@@ -79,13 +79,6 @@ impl SSA {
             },
         }
     }
-
-    pub fn is_param_or_knot(&self) -> bool {
-        match self {
-            SSA::Param(_, _) | SSA::Knot(_, _, _) => true,
-            _ => false,
-        }
-    }
 }
 
 impl SSAHashCons {

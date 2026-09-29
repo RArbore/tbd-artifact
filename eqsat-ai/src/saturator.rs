@@ -108,9 +108,6 @@ impl IDManager {
         version.union_with(x, y, |id, old_canon_id, new_canon_id| {
             // Record any SSAId whose canonical SSAId changed as a delta ID. Notably, the SSAId
             // inserted here is itself *not* canonical.
-            // NOTE: This should really ignore Param and Knot nodes, just as in `Saturator::intern`,
-            // but we don't have a good way to map from SSAId to SSA in this context. It's fine for
-            // these nodes to be added to the delta set, they will just be ignored by `apply_rws`.
             self.delta.insert(id);
             f(id, old_canon_id, new_canon_id);
         })
@@ -177,27 +174,20 @@ impl Saturator {
         let before = self.ssa.num_nodes();
         ssa = self.ids.canonicalize(ssa);
         let id = self.ssa.intern(ssa);
-        let (canon_id, after) = if ssa.is_param_or_knot() {
-            // Param and Knot nodes never get added to the delta set because they are never matched
-            // on by any rules.
-            (self.ids.find(id), self.ssa.num_nodes())
-        } else {
-            let canon_id = self.ids.find(id);
-            let after = self.ssa.num_nodes();
-            if before != after || self.ids.previously_examined.remove(&canon_id) {
-                let VersionState::Mutable(version) = self
-                    .ids
-                    .versions
-                    .get_mut(&self.ids.current_version.unwrap())
-                    .unwrap()
-                else {
-                    panic!()
-                };
-                version.examine(canon_id, (1, KnownBits::top()));
-                self.ids.delta.insert(canon_id);
-            }
-            (canon_id, after)
-        };
+        let canon_id = self.ids.find(id);
+        let after = self.ssa.num_nodes();
+        if before != after || self.ids.previously_examined.remove(&canon_id) {
+            let VersionState::Mutable(version) = self
+                .ids
+                .versions
+                .get_mut(&self.ids.current_version.unwrap())
+                .unwrap()
+            else {
+                panic!()
+            };
+            version.examine(canon_id, (1, KnownBits::top()));
+            self.ids.delta.insert(canon_id);
+        }
         if before != after {
             self.trie_edits.push(TrieEdit::Intern { id, canon_id });
         }

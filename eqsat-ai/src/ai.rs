@@ -176,6 +176,7 @@ impl<'a> AIContext<'a> {
     }
 
     fn visit_entry(&mut self, nonssa: &NonSSAFunc, block: BlockId) -> bool {
+        let (block_changed, _) = self.update_new_block(block, SSABlock::Entry);
         let vars = nonssa
             .params
             .iter()
@@ -192,7 +193,8 @@ impl<'a> AIContext<'a> {
                 )
             })
             .collect();
-        let (block_changed, _) = self.update_new_block(block, SSABlock::Entry);
+        // This shouldn't find anything, but we need to clear the delta set.
+        self.saturator.saturate();
         block_changed | self.update_vars(block, vars)
     }
 
