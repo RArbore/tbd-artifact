@@ -828,8 +828,9 @@ fn luf2() {
             assert_eq!(old_canon_id, 2);
             assert_eq!(new_canon_id, 0);
         },
-        |canon_id, old_analysis, combined| {
+        |canon_id, non_canon_id, old_analysis, combined| {
             assert_eq!(canon_id, 0);
+            assert_eq!(non_canon_id, 2);
             assert_eq!(old_analysis, 2);
             assert_eq!(combined, 4);
         },

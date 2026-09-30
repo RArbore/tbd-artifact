@@ -907,11 +907,7 @@ pub fn compile_rw(contents: &str) -> String {
             .iter()
             .map(|trie| {
                 if let Relation::KnownBits = trie.relation {
-                    emit_insert_remove_into_trie(
-                        trie,
-                        is_insert,
-                        quote! { known_bits_tuple_field },
-                    )
+                    emit_insert_remove_into_trie(trie, is_insert, quote! { known_bits_tuple_field })
                 } else {
                     quote! {}
                 }
@@ -943,12 +939,17 @@ pub fn compile_rw(contents: &str) -> String {
         #[derive(Default, PartialEq, Eq)]
         pub struct Tries {
             inserted_as: HashMap<SSAId, SSAId>,
+            inserted_kb: HashMap<SSAId, KnownBits>,
             #trie_fields
         }
 
         impl Tries {
             pub fn inserted_as(&self, non_canon_id: SSAId) -> Option<SSAId> {
                 self.inserted_as.get(&non_canon_id).cloned()
+            }
+
+            pub fn inserted_kb(&self, canon_id: SSAId) -> Option<KnownBits> {
+                self.inserted_kb.get(&canon_id).cloned()
             }
 
             pub fn insert_tuple(&mut self, canon_id: SSAId, value: SSA, non_canon_id: SSAId, is_delta: bool) {
@@ -997,12 +998,16 @@ pub fn compile_rw(contents: &str) -> String {
             }
 
             pub fn insert_kb(&mut self, canon_id: SSAId, value: KnownBits, is_delta: bool) {
+                if !is_delta {
+                    assert!(self.inserted_kb.insert(canon_id, value).is_none());
+                }
                 let non_canon_id = canon_id;
                 #kb_insert
             }
 
             pub fn remove_kb(&mut self, canon_id: SSAId, value: KnownBits) {
                 let is_delta = false;
+                assert_eq!(self.inserted_kb.remove(&canon_id), Some(value));
                 let non_canon_id = canon_id;
                 #kb_remove
             }
@@ -1018,7 +1023,7 @@ pub fn compile_rw(contents: &str) -> String {
 
         impl Debug for Tries {
             fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-                f.debug_struct("Tries").field("inserted_as", &self.inserted_as.iter().collect::<BTreeMap<_, _>>()).finish()
+                f.debug_struct("Tries").field("inserted_as", &self.inserted_as.iter().collect::<BTreeMap<_, _>>()).field("inserted_kb", &self.inserted_kb.iter().collect::<BTreeMap<_, _>>()).finish()
             }
         }
     };

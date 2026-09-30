@@ -1,3 +1,4 @@
+use core::cell::RefCell;
 use core::mem::take;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
@@ -27,7 +28,6 @@ impl AsRef<Version<Analysis>> for VersionState {
     }
 }
 
-// Record edits to the node tries.
 #[derive(Debug)]
 enum TrieEdit {
     Intern {
@@ -43,6 +43,13 @@ enum TrieEdit {
         id: SSAId,
         new_canon_id: SSAId,
         parent: Rc<Version<Analysis>>,
+    },
+    AddKnownBits {
+        id: SSAId,
+        kb: KnownBits,
+    },
+    RemoveKnownBits {
+        id: SSAId,
     },
 }
 
@@ -85,7 +92,7 @@ pub struct Saturator {
     pub ssa: SSAProgram,
     ids: IDManager,
     tries: Tries,
-    trie_edits: Vec<TrieEdit>,
+    trie_edits: RefCell<Vec<TrieEdit>>,
 }
 
 impl IDManager {
@@ -100,9 +107,16 @@ impl IDManager {
         self.versions[&version].as_ref().find(id)
     }
 
-    fn union_with<F>(&mut self, x: SSAId, y: SSAId, mut f: F) -> SSAId
+    fn union_with<F1, F2>(
+        &mut self,
+        x: SSAId,
+        y: SSAId,
+        mut fn_for_changed_set: F1,
+        fn_for_changed_analysis: F2,
+    ) -> SSAId
     where
-        F: FnMut(SSAId, SSAId, SSAId),
+        F1: FnMut(SSAId, SSAId, SSAId),
+        F2: FnOnce(SSAId, SSAId, Analysis, Analysis),
     {
         let VersionState::Mutable(version) = self
             .versions
@@ -118,12 +132,13 @@ impl IDManager {
                 // Record any SSAId whose canonical SSAId changed as a delta ID. Notably, the SSAId
                 // inserted here is itself *not* canonical.
                 self.delta.insert(id);
-                f(id, old_canon_id, new_canon_id);
+                fn_for_changed_set(id, old_canon_id, new_canon_id);
             },
-            |canon_id, old_analysis, combined| {
+            |canon_id, non_canon_id, old_analysis, combined| {
                 if old_analysis.1 != combined.1 {
                     self.delta_kb.insert(canon_id);
                 }
+                fn_for_changed_analysis(canon_id, non_canon_id, old_analysis, combined);
             },
         )
     }
@@ -164,13 +179,26 @@ impl Saturator {
 
     pub fn union(&mut self, x: SSAId, y: SSAId) -> SSAId {
         assert_eq!(self.ssa.ty(x), self.ssa.ty(y));
-        self.ids.union_with(x, y, |id, old_canon_id, new_canon_id| {
-            self.trie_edits.push(TrieEdit::PushUnion {
-                id,
-                old_canon_id,
-                new_canon_id,
-            })
-        })
+        self.ids.union_with(
+            x,
+            y,
+            |id, old_canon_id, new_canon_id| {
+                self.trie_edits.borrow_mut().push(TrieEdit::PushUnion {
+                    id,
+                    old_canon_id,
+                    new_canon_id,
+                });
+            },
+            |canon_id, non_canon_id, _, combined| {
+                self.trie_edits
+                    .borrow_mut()
+                    .push(TrieEdit::RemoveKnownBits { id: non_canon_id });
+                self.trie_edits.borrow_mut().push(TrieEdit::AddKnownBits {
+                    id: canon_id,
+                    kb: combined.1,
+                });
+            },
+        )
     }
 
     pub fn version(&self, id: SSABlockId) -> &Version<Analysis> {
@@ -204,13 +232,20 @@ impl Saturator {
             self.ids.delta.insert(canon_id);
         }
         if before != after {
-            self.trie_edits.push(TrieEdit::Intern { id, canon_id });
+            self.trie_edits
+                .borrow_mut()
+                .push(TrieEdit::Intern { id, canon_id });
+            self.trie_edits.borrow_mut().push(TrieEdit::AddKnownBits {
+                id,
+                kb: KnownBits::top(),
+            });
         }
         canon_id
     }
 
-    pub fn analyze_kb(&mut self, id: SSAId, kb: KnownBits) {
-        assert_eq!(id, self.find(id));
+    pub fn analyze_kb(&mut self, mut id: SSAId, kb: KnownBits) {
+        // Other rules that may have executed since we edited the trie may have caused unions.
+        id = self.find(id);
         let VersionState::Mutable(version) = self
             .ids
             .versions
@@ -219,11 +254,18 @@ impl Saturator {
         else {
             panic!()
         };
-        let mut analysis = version.analysis(id);
-        if analysis.1 != kb {
-            analysis.1 = kb;
-            version.set_analysis(id, analysis);
+        let old_analysis = version.analysis(id);
+        let new_analysis = (old_analysis.0, old_analysis.1.meet(&kb));
+        if old_analysis != new_analysis {
+            self.trie_edits
+                .borrow_mut()
+                .push(TrieEdit::RemoveKnownBits { id });
+            version.set_analysis(id, new_analysis);
             self.ids.delta_kb.insert(id);
+            self.trie_edits.borrow_mut().push(TrieEdit::AddKnownBits {
+                id,
+                kb: new_analysis.1,
+            });
         }
     }
 
@@ -261,6 +303,7 @@ impl Saturator {
             .versions
             .insert(block, VersionState::Mutable(version));
         self.ids.current_version = Some(block);
+        self.check_trie_consistency();
     }
 
     pub fn traverse_to_version(&mut self, version: &Version<Analysis>) {
@@ -307,6 +350,25 @@ impl Saturator {
                         &mut self.tries,
                     );
                 }
+
+                let kb = parent.analysis(id).1;
+                Self::apply_edit(
+                    TrieEdit::AddKnownBits { id, kb },
+                    &self.ssa,
+                    &mut self.tries,
+                );
+            }
+
+            // And any nodes with version-specific analysis values induce trie edits.
+            for id in version.analyzed_ids_at_level() {
+                assert_eq!(id, version.find(id));
+                Self::apply_edit(TrieEdit::RemoveKnownBits { id }, &self.ssa, &mut self.tries);
+                let kb = parent.analysis(id).1;
+                Self::apply_edit(
+                    TrieEdit::AddKnownBits { id, kb },
+                    &self.ssa,
+                    &mut self.tries,
+                );
             }
         }
 
@@ -333,6 +395,20 @@ impl Saturator {
                         &mut self.tries,
                     );
                 }
+
+                Self::apply_edit(TrieEdit::RemoveKnownBits { id }, &self.ssa, &mut self.tries);
+            }
+
+            // And any nodes with version-specific analysis values induce trie edits.
+            for id in version.analyzed_ids_at_level() {
+                assert_eq!(id, version.find(id));
+                Self::apply_edit(TrieEdit::RemoveKnownBits { id }, &self.ssa, &mut self.tries);
+                let kb = version.analysis(id).1;
+                Self::apply_edit(
+                    TrieEdit::AddKnownBits { id, kb },
+                    &self.ssa,
+                    &mut self.tries,
+                );
             }
         }
     }
@@ -345,6 +421,7 @@ impl Saturator {
         self.traverse_to_version(version.as_ref());
         self.ids.versions.insert(block, version);
         self.ids.current_version = Some(block);
+        self.check_trie_consistency();
     }
 
     fn apply_edit(edit: TrieEdit, ssa: &SSAProgram, tries: &mut Tries) {
@@ -395,13 +472,25 @@ impl Saturator {
                     }
                 }
             }
+            AddKnownBits { id, kb } => {
+                if let Some(kb) = tries.inserted_kb(id) {
+                    tries.remove_kb(id, kb);
+                }
+                tries.insert_kb(id, kb, false);
+            }
+            RemoveKnownBits { id } => {
+                if let Some(kb) = tries.inserted_kb(id) {
+                    tries.remove_kb(id, kb);
+                }
+            }
         }
     }
 
     fn apply_edits(&mut self) {
-        for edit in take(&mut self.trie_edits) {
+        for edit in self.trie_edits.take() {
             Self::apply_edit(edit, &self.ssa, &mut self.tries);
         }
+        self.check_trie_consistency();
     }
 
     pub fn saturate(&mut self) {
@@ -432,9 +521,11 @@ impl Saturator {
                 // We should only ever insert a node into the worklist if it's non-canonical.
                 assert_ne!(old_ssa, new_ssa);
                 let new_id = self.intern(new_ssa);
-                self.ids
-                    .union_with(id, new_id, |id, old_canon_id, new_canon_id| {
-                        self.trie_edits.push(TrieEdit::PushUnion {
+                self.ids.union_with(
+                    id,
+                    new_id,
+                    |id, old_canon_id, new_canon_id| {
+                        self.trie_edits.borrow_mut().push(TrieEdit::PushUnion {
                             id,
                             old_canon_id,
                             new_canon_id,
@@ -442,7 +533,17 @@ impl Saturator {
                         for user in self.ssa.users(id) {
                             worklist.push_back(*user);
                         }
-                    });
+                    },
+                    |canon_id, non_canon_id, _, combined| {
+                        self.trie_edits
+                            .borrow_mut()
+                            .push(TrieEdit::RemoveKnownBits { id: non_canon_id });
+                        self.trie_edits.borrow_mut().push(TrieEdit::AddKnownBits {
+                            id: canon_id,
+                            kb: combined.1,
+                        });
+                    },
+                );
             }
 
             self.apply_edits();
@@ -470,7 +571,7 @@ impl Saturator {
     }
 
     pub fn check_trie_consistency(&self) {
-        assert!(self.trie_edits.is_empty());
+        assert!(self.trie_edits.borrow().is_empty());
         let mut correct = Tries::default();
         for id in 0..self.ssa.num_nodes() {
             let node = self.ssa.get(id);

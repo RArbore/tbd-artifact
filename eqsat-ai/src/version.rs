@@ -276,19 +276,20 @@ impl<A: CommutativeMonoid> Version<A> {
 
     fn update_analysis<F>(&mut self, x: SSAId, y: SSAId, canon: SSAId, fn_for_changed_analysis: F)
     where
-        F: FnOnce(SSAId, A, A),
+        F: FnOnce(SSAId, SSAId, A, A),
     {
         let x_analysis = self.analysis(x);
         let y_analysis = self.analysis(y);
         let combined = x_analysis.plus(&y_analysis);
-        let old_analysis = if canon == x {
-            x_analysis
+        let (non_canon, old_analysis) = if canon == x {
+            (y, x_analysis)
         } else {
             assert_eq!(canon, y);
-            y_analysis
+            (x, y_analysis)
         };
-        fn_for_changed_analysis(canon, old_analysis, combined.clone());
+        fn_for_changed_analysis(canon, non_canon, old_analysis, combined.clone());
         self.analysis.insert(canon, combined);
+        self.analysis.remove(&non_canon);
     }
 
     pub fn union(&mut self, mut x: SSAId, mut y: SSAId) -> SSAId {
@@ -298,7 +299,7 @@ impl<A: CommutativeMonoid> Version<A> {
             x
         } else {
             let canon = self.uf.union(x, y);
-            self.update_analysis(x, y, canon, |_, _, _| {});
+            self.update_analysis(x, y, canon, |_, _, _, _| {});
             canon
         }
     }
@@ -315,7 +316,7 @@ impl<A: CommutativeMonoid> Version<A> {
     ) -> SSAId
     where
         F1: FnMut(SSAId, SSAId, SSAId),
-        F2: FnOnce(SSAId, A, A),
+        F2: FnOnce(SSAId, SSAId, A, A),
     {
         x = self.find(x);
         y = self.find(y);
@@ -380,12 +381,21 @@ impl<A: CommutativeMonoid> Version<A> {
         self.uf.non_canon_ids()
     }
 
-    pub fn set_analysis(&mut self, id: SSAId, analysis: A) {
-        self.analysis.insert(id, analysis);
+    pub fn analyzed_ids_at_level(&self) -> impl Iterator<Item = SSAId> + '_ {
+        self.analysis.keys().cloned()
     }
-    
+
+    pub fn set_analysis(&mut self, id: SSAId, analysis: A) {
+        if self.analysis(id) != analysis {
+            self.analysis.insert(id, analysis);
+        }
+    }
+
     pub fn examine(&mut self, id: SSAId, analysis: A) {
-        self.set_analysis(id, analysis);
+        // TODO: This is hacky! Stop using e-class size for termination because it's bad anyway.
+        if self.analysis(id) == A::identity() {
+            self.set_analysis(id, analysis);
+        }
         self.examined_ids.insert(id);
     }
 
