@@ -98,12 +98,32 @@ impl KnownBits {
         first
     }
 
+    pub fn neg(&self) -> Self {
+        // TODO: make non-trivial.
+        Self::top()
+    }
+
     pub fn not(&self) -> Self {
         // Flip the concrete bits.
         Self {
             low_high: self.low_high ^ self.concrete,
             concrete: self.concrete,
         }
+    }
+
+    pub fn add(&self, _other: &Self) -> Self {
+        // TODO: make non-trivial.
+        Self::top()
+    }
+
+    pub fn sub(&self, _other: &Self) -> Self {
+        // TODO: make non-trivial.
+        Self::top()
+    }
+
+    pub fn mul(&self, _other: &Self) -> Self {
+        // TODO: make non-trivial.
+        Self::top()
     }
 
     pub fn and(&self, other: &Self) -> Self {
