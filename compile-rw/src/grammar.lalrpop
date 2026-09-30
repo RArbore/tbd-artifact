@@ -39,6 +39,7 @@ Pattern: Pattern = {
     "(" <op:Iden> <inp:Pattern> ")" => Pattern::Unary { op, input: Box::new(inp), label: None },
     "(" <op:Iden> <lhs:Pattern> <rhs:Pattern> ")" => Pattern::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs), label: None },
     "(" "Knot" "[" <ty:Type> "]" <kb:Pattern> <knot_id:Pattern> ")" => Pattern::Knot { ty, kb: Box::new(kb), knot_id: Box::new(knot_id), label: None },
+    "(" "KnownBits" <id:Pattern> <kb:Pattern> ")" => Pattern::KnownBits { id: Box::new(id), kb: Box::new(kb) },
     <label:Iden> ":" "(" "Constant" "[" <ty:Type> "]" <cons:Pattern> ")" => Pattern::Constant { ty, input: Box::new(cons), label: Some(label) },
     <label:Iden> ":" "(" "Param" "[" <ty:Type> "]" <idx:Pattern> ")" => Pattern::Param { ty, idx: Box::new(idx), label: Some(label) },
     <label:Iden> ":" "(" <op:Iden> <inp:Pattern> ")" => Pattern::Unary { op, input: Box::new(inp), label: Some(label) },

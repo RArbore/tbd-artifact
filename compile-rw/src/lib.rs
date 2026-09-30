@@ -63,6 +63,10 @@ enum Pattern {
         knot_id: Box<Pattern>,
         label: Option<Symbol>,
     },
+    KnownBits {
+        id: Box<Pattern>,
+        kb: Box<Pattern>,
+    },
 }
 
 // The LHS patterns of rewrites are converted into relational queries.
@@ -74,13 +78,19 @@ struct Query {
     atoms: Vec<Atom>,
 }
 
+// Because relational queries only implement the LHS of rewrites, some pattern types are not possible
+// relations, because those pattern types can only appear on the RHS of rewrites.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Relation {
+    // Represent nodes.
     Constant(Type),
     Param(Type),
     Unary(Symbol),
     Binary(Symbol),
     Knot(Type),
+
+    // Represent analyses.
+    KnownBits,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,8 +175,10 @@ impl Pattern {
     fn label_mut(&mut self) -> &mut Option<Symbol> {
         match self {
             Pattern::Constant { label, .. }
+            | Pattern::Param { label, .. }
             | Pattern::Unary { label, .. }
-            | Pattern::Binary { label, .. } => label,
+            | Pattern::Binary { label, .. }
+            | Pattern::Knot { label, .. } => label,
             _ => panic!(),
         }
     }
@@ -220,6 +232,7 @@ impl Display for Pattern {
                 kb,
                 knot_id
             ),
+            KnownBits { id, kb } => write!(f, "(KnownBits {} {})", id, kb),
         }
     }
 }
@@ -232,6 +245,7 @@ impl Display for Relation {
             Param(ty) => write!(f, "Param_{}", ty.compiler_type()),
             Unary(op) | Binary(op) => write!(f, "{}", op),
             Knot(ty) => write!(f, "Knot_{}", ty.compiler_type()),
+            KnownBits => write!(f, "KnownBits"),
         }
     }
 }
@@ -289,17 +303,18 @@ fn patterns_to_query(patterns: &[Pattern]) -> Query {
         atoms: &mut Vec<Atom>,
         types: &mut HashMap<Symbol, Symbol>,
     ) -> Term {
+        use Pattern::*;
         match pattern {
-            Pattern::Variable(var) => Term::Variable(*var),
-            Pattern::Literal(cons) => Term::Literal(*cons),
-            Pattern::RustExpr(_) => {
+            Variable(var) => Term::Variable(*var),
+            Literal(cons) => Term::Literal(*cons),
+            RustExpr(_) => {
                 panic!("can't evaluate Rust expression on left-hand side of rule")
             }
-            Pattern::Union(_, _) => {
+            Union(_, _) => {
                 panic!("can't evaluate union on left-hand side of rule")
             }
-            Pattern::Wildcard => Term::Wildcard,
-            Pattern::Constant { ty, input, label } => {
+            Wildcard => Term::Wildcard,
+            Constant { ty, input, label } => {
                 let input = pattern_to_query_helper(input, atoms, types);
                 let var = label.unwrap_or_else(|| format!("_root_{}", atoms.len()).into());
                 let root = Term::Variable(var);
@@ -312,7 +327,7 @@ fn patterns_to_query(patterns: &[Pattern]) -> Query {
                 record_type(input, ty.rust_type(), types);
                 root
             }
-            Pattern::Param { ty, idx, label } => {
+            Param { ty, idx, label } => {
                 let idx = pattern_to_query_helper(idx, atoms, types);
                 let var = label.unwrap_or_else(|| format!("_root_{}", atoms.len()).into());
                 let root = Term::Variable(var);
@@ -325,7 +340,7 @@ fn patterns_to_query(patterns: &[Pattern]) -> Query {
                 record_type(idx, "usize".into(), types);
                 root
             }
-            Pattern::Unary { op, input, label } => {
+            Unary { op, input, label } => {
                 let input = pattern_to_query_helper(input, atoms, types);
                 let var = label.unwrap_or_else(|| format!("_root_{}", atoms.len()).into());
                 let root = Term::Variable(var);
@@ -338,7 +353,7 @@ fn patterns_to_query(patterns: &[Pattern]) -> Query {
                 record_type(input, "SSAId".into(), types);
                 root
             }
-            Pattern::Binary {
+            Binary {
                 op,
                 lhs,
                 rhs,
@@ -358,7 +373,7 @@ fn patterns_to_query(patterns: &[Pattern]) -> Query {
                 record_type(rhs, "SSAId".into(), types);
                 root
             }
-            Pattern::Knot {
+            Knot {
                 ty,
                 kb,
                 knot_id,
@@ -377,6 +392,17 @@ fn patterns_to_query(patterns: &[Pattern]) -> Query {
                 record_type(kb, "KnownBits".into(), types);
                 record_type(knot_id, "KnotId".into(), types);
                 root
+            }
+            KnownBits { id, kb } => {
+                let id = pattern_to_query_helper(id, atoms, types);
+                let kb = pattern_to_query_helper(kb, atoms, types);
+                let atom = Atom {
+                    relation: Relation::KnownBits,
+                    terms: vec![id, kb],
+                };
+                atoms.push(atom);
+                record_type(kb, "KnownBits".into(), types);
+                Term::Wildcard
             }
         }
     }
@@ -530,6 +556,17 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
                     let kb = #kb;
                     let knot_id = #knot_id;
                     saturator.intern(SSA::Knot(knot_id, Type::#ty_variant, kb))
+                }
+            }
+        }
+        Pattern::KnownBits { id, kb } => {
+            let id = build_pattern(id);
+            let kb = build_pattern(kb);
+            quote! {
+                {
+                    let id = #id;
+                    let kb = #kb;
+                    saturator.analyze_kb(id, kb)
                 }
             }
         }
@@ -972,7 +1009,7 @@ pub fn compile_rw(contents: &str) -> String {
         use core::fmt::{Debug, Formatter, Result};
         use std::collections::{BTreeMap, HashMap};
 
-        use crate::analysis::get_kb;
+        use crate::analysis::{KnownBits, get_kb};
         use crate::nonssa::{BinaryOp, Constant, Type, UnaryOp};
         use crate::saturator::Saturator;
         use crate::ssa::{KnotId, SSA, SSAId};

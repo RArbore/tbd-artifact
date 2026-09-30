@@ -65,5 +65,5 @@
 (rule (a:(Constant[bool] true) a:(EE b c)) ((union b c)))
 (rule (a:(Constant[bool] false) a:(NE b c)) ((union b c)))
 
-(rule ((Param[i64] idx)) ())
-(rule ((Knot[i64] kb id)) ())
+(rule (p:(Param[i64] _)) ((KnownBits p `KnownBits::top()`)))
+(rule (k:(Knot[i64] kb _)) ((KnownBits k kb)))

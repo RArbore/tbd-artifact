@@ -194,6 +194,10 @@ impl Saturator {
         canon_id
     }
 
+    pub fn analyze_kb(&mut self, id: SSAId, _kb: KnownBits) {
+        assert_eq!(id, self.find(id));
+    }
+
     pub fn create_version(&mut self, block: SSABlockId) {
         use SSABlock::*;
         use VersionState::*;
