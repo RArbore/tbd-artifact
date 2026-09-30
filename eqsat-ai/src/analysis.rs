@@ -1,3 +1,9 @@
+use core::fmt::{Display, Formatter, Result};
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+
+use crate::trie::TupleValue;
+
 // Per bit, the mapping is:
 // - low_high: 0, concrete: 0 -> bot
 // - low_high: 0, concrete: 1 -> 0
@@ -140,6 +146,20 @@ impl Default for KnownBits {
     }
 }
 
+impl Display for KnownBits {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        for i in (0..64).rev() {
+            match ((self.low_high >> i) & 1, (self.concrete >> i) & 1) {
+                (0, 0) => write!(f, "⊥")?,
+                (_, 0) => write!(f, "⊤")?,
+                (0, _) => write!(f, "0")?,
+                (_, _) => write!(f, "1")?,
+            }
+        }
+        Ok(())
+    }
+}
+
 pub trait CommutativeMonoid: Clone {
     fn identity() -> Self;
     fn plus(&self, other: &Self) -> Self;
@@ -183,4 +203,24 @@ impl<A: CommutativeMonoid, B: CommutativeMonoid> CommutativeMonoid for (A, B) {
     fn plus(&self, other: &Self) -> Self {
         (self.0.plus(&other.0), self.1.plus(&other.1))
     }
+}
+
+// Global intern tables for analysis values.
+type Interner<T> = (HashMap<T, TupleValue>, Vec<T>);
+static KB_INTERN: LazyLock<Mutex<Interner<KnownBits>>> =
+    LazyLock::new(|| Mutex::new(Default::default()));
+
+pub fn intern_kb(kb: KnownBits) -> TupleValue {
+    let mut interner = KB_INTERN.lock().unwrap();
+    let interner: &mut Interner<KnownBits> = &mut interner;
+    let entry = interner.0.entry(kb);
+    *entry.or_insert_with(|| {
+        let id = interner.1.len();
+        interner.1.push(kb);
+        id as TupleValue
+    })
+}
+
+pub fn get_kb(id: TupleValue) -> KnownBits {
+    KB_INTERN.lock().unwrap().1[id as usize]
 }

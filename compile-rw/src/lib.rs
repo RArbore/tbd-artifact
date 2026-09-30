@@ -605,7 +605,7 @@ fn emit_wcoj(
             let cast = if query.types[&var] == "bool".into() {
                 quote! { let #var_iden = *#var_iden != 0; }
             } else if query.types[&var] == "KnownBits".into() {
-                todo!()
+                quote! { let #var_iden = get_kb(*#var_iden); }
             } else {
                 quote! { let #var_iden = *#var_iden as #rust_ty; }
             };
@@ -972,7 +972,7 @@ pub fn compile_rw(contents: &str) -> String {
         use core::fmt::{Debug, Formatter, Result};
         use std::collections::{BTreeMap, HashMap};
 
-        use crate::analysis::KnownBits;
+        use crate::analysis::get_kb;
         use crate::nonssa::{BinaryOp, Constant, Type, UnaryOp};
         use crate::saturator::Saturator;
         use crate::ssa::{KnotId, SSA, SSAId};

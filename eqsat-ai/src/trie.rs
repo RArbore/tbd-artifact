@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::analysis::{intern_kb};
 use crate::nonssa::Constant;
 use crate::ssa::{SSA, SSAId};
 
@@ -42,9 +43,9 @@ pub fn tuple_field(id: SSAId, ssa: SSA, column: usize) -> TupleValue {
                 rhs as TupleValue
             }
         }
-        Knot(id, _, _kb) => {
+        Knot(id, _, kb) => {
             if column == 1 {
-                todo!()
+                intern_kb(kb)
             } else {
                 assert_eq!(column, 2);
                 id as TupleValue
