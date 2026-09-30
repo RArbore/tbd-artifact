@@ -713,18 +713,23 @@ fn emit_wcoj(
 
 // Emit the code that tries to insert / remove a node into / from a trie. This emits both the
 // consistency checks needed and the code that actually inserts the node into the trie.
-fn emit_insert_remove_into_trie(trie: &NeededTrie, is_insert: bool) -> TokenStream {
+fn emit_insert_remove_into_trie(
+    trie: &NeededTrie,
+    is_insert: bool,
+    field: TokenStream,
+) -> TokenStream {
     let check_constants = trie.constants.iter().map(|(idx, cons)| {
-        quote! { tuple_field(canon_id, node, #idx) == #cons as TupleValue }
+        quote! { #field(canon_id, value, #idx) == #cons as TupleValue }
     });
     let check_column_identities = trie
         .column_order
         .iter()
         .map(|columns| {
             let first = columns.first().unwrap();
+            let field = field.clone();
             columns[1..].into_iter().map(move |other| {
                 quote! {
-                    tuple_field(canon_id, node, #first) == tuple_field(canon_id, node, #other)
+                    #field(canon_id, value, #first) == #field(canon_id, value, #other)
                 }
             })
         })
@@ -734,7 +739,6 @@ fn emit_insert_remove_into_trie(trie: &NeededTrie, is_insert: bool) -> TokenStre
         quote! { && },
     )
     .collect();
-
     let column_indices: TokenStream = Itertools::intersperse(
         trie.column_order.iter().map(|columns| {
             let column = columns[0];
@@ -749,7 +753,7 @@ fn emit_insert_remove_into_trie(trie: &NeededTrie, is_insert: bool) -> TokenStre
         quote! { remove_tuple }
     };
     let call = quote! {
-        self.#trie.#func([#column_indices].into_iter().map(|idx| tuple_field(canon_id, node, idx)), non_canon_id);
+        self.#trie.#func([#column_indices].into_iter().map(|idx| #field(canon_id, value, idx)), non_canon_id);
     };
     if trie.is_delta && condition.is_empty() {
         quote! { if is_delta { #call } }
@@ -829,7 +833,8 @@ pub fn compile_rw(contents: &str) -> String {
             .map(|trie| {
                 if let Relation::Constant(ty) = trie.relation {
                     let variant = format_ident!("{}", ty.compiler_type().as_str());
-                    let insert = emit_insert_remove_into_trie(trie, is_insert);
+                    let insert =
+                        emit_insert_remove_into_trie(trie, is_insert, quote! { node_tuple_field });
                     quote! { if let Constant::#variant(_) = cons { #insert } }
                 } else {
                     quote! {}
@@ -843,7 +848,8 @@ pub fn compile_rw(contents: &str) -> String {
             .map(|trie| {
                 if let Relation::Param(ty) = trie.relation {
                     let variant = format_ident!("{}", ty.compiler_type().as_str());
-                    let insert = emit_insert_remove_into_trie(trie, is_insert);
+                    let insert =
+                        emit_insert_remove_into_trie(trie, is_insert, quote! { node_tuple_field });
                     quote! { if let Type::#variant = ty { #insert } }
                 } else {
                     quote! {}
@@ -857,7 +863,8 @@ pub fn compile_rw(contents: &str) -> String {
             .map(|trie| {
                 if let Relation::Unary(op) = trie.relation {
                     let op_iden = format_ident!("{}", op.as_str());
-                    let insert = emit_insert_remove_into_trie(trie, is_insert);
+                    let insert =
+                        emit_insert_remove_into_trie(trie, is_insert, quote! { node_tuple_field });
                     quote! { if op == UnaryOp::#op_iden { #insert } }
                 } else {
                     quote! {}
@@ -871,7 +878,8 @@ pub fn compile_rw(contents: &str) -> String {
             .map(|trie| {
                 if let Relation::Binary(op) = trie.relation {
                     let op_iden = format_ident!("{}", op.as_str());
-                    let insert = emit_insert_remove_into_trie(trie, is_insert);
+                    let insert =
+                        emit_insert_remove_into_trie(trie, is_insert, quote! { node_tuple_field });
                     quote! { if op == BinaryOp::#op_iden { #insert } }
                 } else {
                     quote! {}
@@ -885,8 +893,25 @@ pub fn compile_rw(contents: &str) -> String {
             .map(|trie| {
                 if let Relation::Knot(ty) = trie.relation {
                     let variant = format_ident!("{}", ty.compiler_type().as_str());
-                    let insert = emit_insert_remove_into_trie(trie, is_insert);
+                    let insert =
+                        emit_insert_remove_into_trie(trie, is_insert, quote! { node_tuple_field });
                     quote! { if let Type::#variant = ty { #insert } }
+                } else {
+                    quote! {}
+                }
+            })
+            .collect::<TokenStream>()
+    };
+    let kb_insert_remove = |is_insert| {
+        needed_tries
+            .iter()
+            .map(|trie| {
+                if let Relation::KnownBits = trie.relation {
+                    emit_insert_remove_into_trie(
+                        trie,
+                        is_insert,
+                        quote! { known_bits_tuple_field },
+                    )
                 } else {
                     quote! {}
                 }
@@ -907,11 +932,13 @@ pub fn compile_rw(contents: &str) -> String {
     let trie_unary_insert = trie_unary_insert_remove(true);
     let trie_binary_insert = trie_binary_insert_remove(true);
     let trie_knot_insert = trie_knot_insert_remove(true);
+    let kb_insert = kb_insert_remove(true);
     let trie_constant_remove = trie_constant_insert_remove(false);
     let trie_param_remove = trie_param_insert_remove(false);
     let trie_unary_remove = trie_unary_insert_remove(false);
     let trie_binary_remove = trie_binary_insert_remove(false);
     let trie_knot_remove = trie_knot_insert_remove(false);
+    let kb_remove = kb_insert_remove(false);
     let trie_struct = quote! {
         #[derive(Default, PartialEq, Eq)]
         pub struct Tries {
@@ -924,11 +951,11 @@ pub fn compile_rw(contents: &str) -> String {
                 self.inserted_as.get(&non_canon_id).cloned()
             }
 
-            pub fn insert_tuple(&mut self, canon_id: SSAId, node: SSA, non_canon_id: SSAId, is_delta: bool) {
+            pub fn insert_tuple(&mut self, canon_id: SSAId, value: SSA, non_canon_id: SSAId, is_delta: bool) {
                 if !is_delta {
                     assert!(self.inserted_as.insert(non_canon_id, canon_id).is_none());
                 }
-                match node {
+                match value {
                     SSA::Constant(cons) => {
                         #trie_constant_insert
                     }
@@ -947,10 +974,10 @@ pub fn compile_rw(contents: &str) -> String {
                 }
             }
 
-            pub fn remove_tuple(&mut self, canon_id: SSAId, node: SSA, non_canon_id: SSAId) {
+            pub fn remove_tuple(&mut self, canon_id: SSAId, value: SSA, non_canon_id: SSAId) {
                 let is_delta = false;
                 assert_eq!(self.inserted_as.remove(&non_canon_id), Some(canon_id));
-                match node {
+                match value {
                     SSA::Constant(cons) => {
                         #trie_constant_remove
                     }
@@ -967,6 +994,17 @@ pub fn compile_rw(contents: &str) -> String {
                         #trie_knot_remove
                     }
                 }
+            }
+
+            pub fn insert_kb(&mut self, canon_id: SSAId, value: KnownBits, is_delta: bool) {
+                let non_canon_id = canon_id;
+                #kb_insert
+            }
+
+            pub fn remove_kb(&mut self, canon_id: SSAId, value: KnownBits) {
+                let is_delta = false;
+                let non_canon_id = canon_id;
+                #kb_remove
             }
 
             pub fn clear_delta(&mut self) {
@@ -1013,7 +1051,7 @@ pub fn compile_rw(contents: &str) -> String {
         use crate::nonssa::{BinaryOp, Constant, Type, UnaryOp};
         use crate::saturator::Saturator;
         use crate::ssa::{KnotId, SSA, SSAId};
-        use crate::trie::{Trie, TupleValue, tuple_field};
+        use crate::trie::{Trie, TupleValue, known_bits_tuple_field, node_tuple_field};
 
         #trie_struct
 

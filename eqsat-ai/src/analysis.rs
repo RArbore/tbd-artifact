@@ -180,7 +180,7 @@ impl Display for KnownBits {
     }
 }
 
-pub trait CommutativeMonoid: Clone {
+pub trait CommutativeMonoid: Clone + PartialEq + Eq {
     fn identity() -> Self;
     fn plus(&self, other: &Self) -> Self;
 }

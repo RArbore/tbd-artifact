@@ -820,11 +820,20 @@ fn luf2() {
     let parent = Rc::new(parent);
     let mut child = Version::child(Rc::clone(&parent));
     let mut set = HashSet::new();
-    child.union_with(0, 3, |id, old_canon_id, new_canon_id| {
-        set.insert(id);
-        assert_eq!(old_canon_id, 2);
-        assert_eq!(new_canon_id, 0);
-    });
+    child.union_with(
+        0,
+        3,
+        |id, old_canon_id, new_canon_id| {
+            set.insert(id);
+            assert_eq!(old_canon_id, 2);
+            assert_eq!(new_canon_id, 0);
+        },
+        |canon_id, old_analysis, combined| {
+            assert_eq!(canon_id, 0);
+            assert_eq!(old_analysis, 2);
+            assert_eq!(combined, 4);
+        },
+    );
     assert_eq!(set, HashSet::from([2, 3]));
     assert_eq!(parent.analysis(0), 2);
     assert_eq!(parent.analysis(1), 2);

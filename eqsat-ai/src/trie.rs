@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::analysis::{intern_kb};
+use crate::analysis::{KnownBits, intern_kb};
 use crate::nonssa::Constant;
 use crate::ssa::{SSA, SSAId};
 
@@ -17,7 +17,7 @@ impl Into<TupleValue> for Constant {
     }
 }
 
-pub fn tuple_field(id: SSAId, ssa: SSA, column: usize) -> TupleValue {
+pub fn node_tuple_field(id: SSAId, ssa: SSA, column: usize) -> TupleValue {
     if column == 0 {
         return id as TupleValue;
     }
@@ -51,6 +51,15 @@ pub fn tuple_field(id: SSAId, ssa: SSA, column: usize) -> TupleValue {
                 id as TupleValue
             }
         }
+    }
+}
+
+pub fn known_bits_tuple_field(id: SSAId, kb: KnownBits, column: usize) -> TupleValue {
+    if column == 0 {
+        id as TupleValue
+    } else {
+        assert_eq!(column, 1);
+        intern_kb(kb)
     }
 }
 

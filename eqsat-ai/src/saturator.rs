@@ -27,6 +27,7 @@ impl AsRef<Version<Analysis>> for VersionState {
     }
 }
 
+// Record edits to the node tries.
 #[derive(Debug)]
 enum TrieEdit {
     Intern {
@@ -56,6 +57,11 @@ struct IDManager {
     // 2. Have had their canonical SSAId changed (due to a union)...
     // ...since the last iteration of rewriting.
     delta: HashSet<SSAId>,
+    // What nodes have either been:
+    // 1. `Saturator::analyze_kb` called on their ID...
+    // 2. Unioned with another node...
+    // ...and their analysis value changed since the last iteration of rewriting.
+    delta_kb: HashSet<SSAId>,
     // Store an empty root version. This is needed so we have a well-defined LCA between old and new
     // versions for the entry block.
     root_version: Rc<Version<Analysis>>,
@@ -105,12 +111,21 @@ impl IDManager {
         else {
             panic!()
         };
-        version.union_with(x, y, |id, old_canon_id, new_canon_id| {
-            // Record any SSAId whose canonical SSAId changed as a delta ID. Notably, the SSAId
-            // inserted here is itself *not* canonical.
-            self.delta.insert(id);
-            f(id, old_canon_id, new_canon_id);
-        })
+        version.union_with(
+            x,
+            y,
+            |id, old_canon_id, new_canon_id| {
+                // Record any SSAId whose canonical SSAId changed as a delta ID. Notably, the SSAId
+                // inserted here is itself *not* canonical.
+                self.delta.insert(id);
+                f(id, old_canon_id, new_canon_id);
+            },
+            |canon_id, old_analysis, combined| {
+                if old_analysis.1 != combined.1 {
+                    self.delta_kb.insert(canon_id);
+                }
+            },
+        )
     }
 
     fn analysis(&self, id: SSAId) -> Analysis {
@@ -194,8 +209,22 @@ impl Saturator {
         canon_id
     }
 
-    pub fn analyze_kb(&mut self, id: SSAId, _kb: KnownBits) {
+    pub fn analyze_kb(&mut self, id: SSAId, kb: KnownBits) {
         assert_eq!(id, self.find(id));
+        let VersionState::Mutable(version) = self
+            .ids
+            .versions
+            .get_mut(&self.ids.current_version.unwrap())
+            .unwrap()
+        else {
+            panic!()
+        };
+        let mut analysis = version.analysis(id);
+        if analysis.1 != kb {
+            analysis.1 = kb;
+            version.set_analysis(id, analysis);
+            self.ids.delta_kb.insert(id);
+        }
     }
 
     pub fn create_version(&mut self, block: SSABlockId) {
@@ -236,6 +265,7 @@ impl Saturator {
 
     pub fn traverse_to_version(&mut self, version: &Version<Analysis>) {
         assert!(self.ids.delta.is_empty());
+        assert!(self.ids.delta_kb.is_empty());
         self.apply_edits();
         let last_version = self
             .ids
@@ -377,9 +407,10 @@ impl Saturator {
     pub fn saturate(&mut self) {
         if let VersionState::Immutable(_) = self.ids.versions[&self.ids.current_version.unwrap()] {
             assert!(self.ids.delta.is_empty());
+            assert!(self.ids.delta_kb.is_empty());
             return;
         };
-        while !self.ids.delta.is_empty() {
+        while !self.ids.delta.is_empty() || !self.ids.delta_kb.is_empty() {
             self.apply_edits();
 
             // Prepare worklist for rebuilding. The worklist should always contain only nodes that
@@ -423,7 +454,13 @@ impl Saturator {
                     tries.insert_tuple(self.ids.find(*id), node, *id, true);
                 }
             }
+            for id in &self.ids.delta_kb {
+                if *id == self.ids.find(*id) {
+                    tries.insert_kb(*id, self.ids.analysis(*id).1, true);
+                }
+            }
             self.ids.delta.clear();
+            self.ids.delta_kb.clear();
 
             apply_rws::<false>(&tries, self);
             tries.clear_delta();
@@ -440,6 +477,9 @@ impl Saturator {
             let canon_id = self.ids.find(id);
             if self.ids.is_canonical(node) {
                 correct.insert_tuple(canon_id, node, id, false);
+            }
+            if id == canon_id {
+                correct.insert_kb(id, self.ids.analysis(id).1, false);
             }
         }
         assert_eq!(correct, self.tries);
