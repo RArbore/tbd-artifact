@@ -43,6 +43,12 @@
 (rw (Mul a (Constant[i64] 1)) a)
 (rw (Mul a (Constant[i64] 2)) (Add a a))
 
+(rw (And (Constant[bool] true) a) a)
+(rw (And (Constant[bool] false) _) (Constant[bool] false))
+(rw (Or (Constant[bool] false) a) a)
+(rw (Or (Constant[bool] true) _) (Constant[bool] true))
+(rw (Xor (Constant[bool] true) a) (Not a))
+(rw (Xor (Constant[bool] false) a) a)
 (rw (EE a a) (Constant[bool] true))
 (rw (NE a a) (Constant[bool] false))
 (rw (LT a a) (Constant[bool] false))
