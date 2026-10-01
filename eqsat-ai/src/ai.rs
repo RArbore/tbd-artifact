@@ -4,7 +4,7 @@ use symbol_table::GlobalSymbol as Symbol;
 
 use crate::analysis::KnownBits;
 use crate::nonssa::{Block, BlockId, Constant, Expr, NonSSAFunc, Type};
-use crate::saturator::{Analysis, Saturator};
+use crate::saturator::Saturator;
 use crate::ssa::{KnotId, SSA, SSABlock, SSABlockId, SSAId};
 
 pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonSSAFunc) {
@@ -29,10 +29,9 @@ pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonS
     }
 }
 
-// We map each program variable to a SSAId and its analysis value, which includes the size of the
-// e-class. The analysis value is needed to ensure the analysis continues long enough to reach a
-// fixpoint. This is the data type to change to Okasaki maps to follow Lemerre's advice.
-type VarMap = HashMap<Symbol, (SSAId, Analysis)>;
+// We map each program variable to a SSAId. This is the data type to change to Okasaki maps to follow
+// Lemerre's advice.
+type VarMap = HashMap<Symbol, SSAId>;
 
 // Intern tuples of BlockId, variable sets, and analyses to KnotId.
 #[derive(Debug, Default)]
@@ -145,7 +144,7 @@ impl<'a> AIContext<'a> {
         use Expr::*;
         match expr {
             Constant { val } => self.saturator.intern(SSA::Constant(*val)),
-            Variable { var } => self.saturator.find(self.vars[&vars][var].0),
+            Variable { var } => self.saturator.find(self.vars[&vars][var]),
             Unary { op, input } => {
                 let input = self.visit_expr(input, vars);
                 self.saturator.intern(SSA::Unary(*op, input))
@@ -191,10 +190,7 @@ impl<'a> AIContext<'a> {
                     *param,
                     // There is no version for before the entry. That's fine, because we won't have
                     // equated function parameters with anything yet.
-                    (
-                        self.saturator.intern(SSA::Param(idx, *ty)),
-                        (1, KnownBits::top()),
-                    ),
+                    self.saturator.intern(SSA::Param(idx, *ty)),
                 )
             })
             .collect();
@@ -254,7 +250,7 @@ impl<'a> AIContext<'a> {
         self.saturator.saturate();
         let mut vars = self.vars[&pred].clone();
         let canon_id = self.saturator.find(value);
-        vars.insert(var, (canon_id, self.saturator.analysis(canon_id)));
+        vars.insert(var, canon_id);
         self.update_block(block, ssa_pred) | self.update_vars(block, vars)
     }
 
@@ -284,12 +280,12 @@ impl<'a> AIContext<'a> {
 
                 let mut pair_to_vars: HashMap<(SSAId, SSAId, KnownBits), HashSet<Symbol>> =
                     HashMap::new();
-                for (var, (value1, _)) in &self.vars[&pred1] {
-                    if let Some((value2, _)) = self.vars[&pred2].get(var) {
+                for (var, value1) in &self.vars[&pred1] {
+                    if let Some(value2) = self.vars[&pred2].get(var) {
                         let value1 = self.saturator.find_in_version(*value1, ssa_pred1);
                         let value2 = self.saturator.find_in_version(*value2, ssa_pred2);
-                        let kb1 = self.saturator.analysis_in_version(value1, ssa_pred1).1;
-                        let kb2 = self.saturator.analysis_in_version(value2, ssa_pred2).1;
+                        let kb1 = self.saturator.analysis_in_version(value1, ssa_pred1);
+                        let kb2 = self.saturator.analysis_in_version(value2, ssa_pred2);
                         // Group variables by pair of joined SSAIds.
                         pair_to_vars
                             .entry((value1, value2, kb1.meet(&kb2)))
@@ -336,10 +332,8 @@ impl<'a> AIContext<'a> {
                     for id in set1.intersection(&set2) {
                         knot = self.saturator.union(knot, *id);
                     }
-
-                    let count = self.saturator.analysis(knot);
                     for var in vars {
-                        new_vars.insert(var, (knot, count));
+                        new_vars.insert(var, knot);
                     }
                 }
 

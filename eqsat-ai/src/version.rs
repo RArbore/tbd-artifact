@@ -391,11 +391,7 @@ impl<A: CommutativeMonoid> Version<A> {
         }
     }
 
-    pub fn examine(&mut self, id: SSAId, analysis: A) {
-        // TODO: This is hacky! Stop using e-class size for termination because it's bad anyway.
-        if self.analysis(id) == A::identity() {
-            self.set_analysis(id, analysis);
-        }
+    pub fn examine(&mut self, id: SSAId) {
         self.examined_ids.insert(id);
     }
 

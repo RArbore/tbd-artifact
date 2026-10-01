@@ -721,11 +721,11 @@ fn uf3() {
 #[test]
 fn luf1() {
     let mut parent = Version::<usize>::default();
-    parent.examine(0, 1);
-    parent.examine(1, 1);
-    parent.examine(2, 1);
-    parent.examine(3, 1);
-    parent.examine(4, 1);
+    parent.set_analysis(0, 1);
+    parent.set_analysis(1, 1);
+    parent.set_analysis(2, 1);
+    parent.set_analysis(3, 1);
+    parent.set_analysis(4, 1);
     parent.union(0, 1);
     parent.union(2, 3);
     assert_eq!(parent.find(0), parent.find(1));
@@ -806,10 +806,10 @@ fn luf1() {
 #[test]
 fn luf2() {
     let mut parent = Version::<usize>::default();
-    parent.examine(0, 1);
-    parent.examine(1, 1);
-    parent.examine(2, 1);
-    parent.examine(3, 1);
+    parent.set_analysis(0, 1);
+    parent.set_analysis(1, 1);
+    parent.set_analysis(2, 1);
+    parent.set_analysis(3, 1);
     parent.union(0, 1);
     parent.union(2, 3);
     assert_eq!(parent.analysis(0), 2);

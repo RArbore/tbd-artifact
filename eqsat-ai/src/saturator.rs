@@ -8,7 +8,7 @@ use crate::rw::{Tries, apply_rws};
 use crate::ssa::{SSA, SSABlock, SSABlockId, SSAId, SSAProgram};
 use crate::version::Version;
 
-pub type Analysis = (usize, KnownBits);
+pub type Analysis = KnownBits;
 
 #[derive(Debug)]
 enum VersionState {
@@ -135,7 +135,7 @@ impl IDManager {
                 fn_for_changed_set(id, old_canon_id, new_canon_id);
             },
             |canon_id, non_canon_id, old_analysis, combined| {
-                if old_analysis.1 != combined.1 {
+                if old_analysis != combined {
                     self.delta_kb.insert(canon_id);
                 }
                 fn_for_changed_analysis(canon_id, non_canon_id, old_analysis, combined);
@@ -195,7 +195,7 @@ impl Saturator {
                     .push(TrieEdit::RemoveKnownBits { id: non_canon_id });
                 self.trie_edits.borrow_mut().push(TrieEdit::AddKnownBits {
                     id: canon_id,
-                    kb: combined.1,
+                    kb: combined,
                 });
             },
         )
@@ -228,7 +228,7 @@ impl Saturator {
             else {
                 panic!()
             };
-            version.examine(canon_id, (1, KnownBits::top()));
+            version.examine(canon_id);
             self.ids.delta.insert(canon_id);
         }
         if before != after {
@@ -255,7 +255,7 @@ impl Saturator {
             panic!()
         };
         let old_analysis = version.analysis(id);
-        let new_analysis = (old_analysis.0, old_analysis.1.meet(&kb));
+        let new_analysis = old_analysis.meet(&kb);
         if old_analysis != new_analysis {
             self.trie_edits
                 .borrow_mut()
@@ -264,7 +264,7 @@ impl Saturator {
             self.ids.delta_kb.insert(id);
             self.trie_edits.borrow_mut().push(TrieEdit::AddKnownBits {
                 id,
-                kb: new_analysis.1,
+                kb: new_analysis,
             });
         }
     }
@@ -351,7 +351,7 @@ impl Saturator {
                     );
                 }
 
-                let kb = parent.analysis(id).1;
+                let kb = parent.analysis(id);
                 Self::apply_edit(
                     TrieEdit::AddKnownBits { id, kb },
                     &self.ssa,
@@ -363,7 +363,7 @@ impl Saturator {
             for id in version.analyzed_ids_at_level() {
                 assert_eq!(id, version.find(id));
                 Self::apply_edit(TrieEdit::RemoveKnownBits { id }, &self.ssa, &mut self.tries);
-                let kb = parent.analysis(id).1;
+                let kb = parent.analysis(id);
                 Self::apply_edit(
                     TrieEdit::AddKnownBits { id, kb },
                     &self.ssa,
@@ -403,7 +403,7 @@ impl Saturator {
             for id in version.analyzed_ids_at_level() {
                 assert_eq!(id, version.find(id));
                 Self::apply_edit(TrieEdit::RemoveKnownBits { id }, &self.ssa, &mut self.tries);
-                let kb = version.analysis(id).1;
+                let kb = version.analysis(id);
                 Self::apply_edit(
                     TrieEdit::AddKnownBits { id, kb },
                     &self.ssa,
@@ -540,7 +540,7 @@ impl Saturator {
                             .push(TrieEdit::RemoveKnownBits { id: non_canon_id });
                         self.trie_edits.borrow_mut().push(TrieEdit::AddKnownBits {
                             id: canon_id,
-                            kb: combined.1,
+                            kb: combined,
                         });
                     },
                 );
@@ -557,7 +557,7 @@ impl Saturator {
             }
             for id in &self.ids.delta_kb {
                 if *id == self.ids.find(*id) {
-                    tries.insert_kb(*id, self.ids.analysis(*id).1, true);
+                    tries.insert_kb(*id, self.ids.analysis(*id), true);
                 }
             }
             self.ids.delta.clear();
@@ -580,7 +580,7 @@ impl Saturator {
                 correct.insert_tuple(canon_id, node, id, false);
             }
             if id == canon_id {
-                correct.insert_kb(id, self.ids.analysis(id).1, false);
+                correct.insert_kb(id, self.ids.analysis(id), false);
             }
         }
         assert_eq!(correct, self.tries);
