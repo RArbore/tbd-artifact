@@ -365,6 +365,20 @@ fn simplified(y: i64) {
 }
 
 #[test]
+fn ai18() {
+    let text = r#"
+fn kb(x: i64) {
+    x = x & 4294967295;
+    x = x & -4294967296;
+    return x;
+}
+"#;
+    let (value, mut saturator) = get_return(text);
+    let correct = saturator.intern(SSA::Param(0, Type::I64));
+    assert_eq!(correct, value);
+}
+
+#[test]
 #[should_panic]
 fn bad_types1() {
     let text = r#"

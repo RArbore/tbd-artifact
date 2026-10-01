@@ -63,8 +63,8 @@
 
 (rule (a:(Constant[bool] b) a:(Not c)) ((union c (Constant[bool] `!b`))))
 (rule (a:(Constant[i64] b) a:(Neg c)) ((union c (Constant[i64] `-b`))))
-(rule (a:(Constant[bool] true) a:(And b c)) ((union a (union b c))))
-(rule (a:(Constant[bool] false) a:(Or b c)) ((union a (union b c))))
+(rule (a:(Constant[bool] true) a:(And b c)) ((union a b) (union b c)))
+(rule (a:(Constant[bool] false) a:(Or b c)) ((union a b) (union b c)))
 (rule (a:(Constant[bool] true) a:(EE b c)) ((union b c)))
 (rule (a:(Constant[bool] false) a:(NE b c)) ((union b c)))
 
@@ -79,3 +79,5 @@
 (rule (a:(Or b c) (KnownBits b b_kb) (KnownBits c c_kb)) ((KnownBits a `b_kb.or(&c_kb)`)))
 (rule (a:(Xor b c) (KnownBits b b_kb) (KnownBits c c_kb)) ((KnownBits a `b_kb.xor(&c_kb)`)))
 (rule (a:(Knot[i64] kb _)) ((KnownBits a kb)))
+
+(rule ((KnownBits a kb)) `let Some(cons) = kb.try_constant()` ((union a (Constant[i64] `cons`))))

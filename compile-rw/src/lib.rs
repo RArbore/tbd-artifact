@@ -26,6 +26,7 @@ enum Literal {
 #[derive(Debug, Clone)]
 struct Rule {
     lhs: Vec<Pattern>,
+    cond: Option<Symbol>,
     rhs: Vec<Pattern>,
 }
 
@@ -401,6 +402,7 @@ fn patterns_to_query(patterns: &[Pattern]) -> Query {
                     terms: vec![id, kb],
                 };
                 atoms.push(atom);
+                record_type(id, "SSAId".into(), types);
                 record_type(kb, "KnownBits".into(), types);
                 Term::Wildcard
             }
@@ -482,7 +484,7 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
                 {
                     let lhs = #lhs;
                     let rhs = #rhs;
-                    saturator.union(lhs, rhs)
+                    saturator.union(lhs, rhs);
                 }
             }
         }
@@ -677,11 +679,17 @@ fn emit_wcoj(
                 .collect();
 
             // Make the nodes in the e-graph for the RHS.
-            let execute_rhs: TokenStream = rewrite
+            let mut execute_rhs: TokenStream = rewrite
                 .rhs
                 .iter()
                 .map(|pattern| build_pattern(pattern))
                 .collect();
+
+            // If there is a condition, check it.
+            if let Some(cond) = rewrite.cond {
+                let cond = syn::parse_str::<syn::Expr>(cond.as_str()).unwrap();
+                execute_rhs = quote! { if #cond { #execute_rhs } };
+            }
 
             // Union the built RHS with the root of the LHS.
             quote! {

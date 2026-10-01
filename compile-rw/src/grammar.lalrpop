@@ -22,9 +22,10 @@ Rule: Rule = {
             }
         };
         let rhs = Pattern::Union(Box::new(Pattern::Variable(label)), Box::new(rhs));
-        Rule { lhs: vec![lhs], rhs: vec![rhs] }
+        Rule { lhs: vec![lhs], cond: None, rhs: vec![rhs] }
     },
-    "(" "rule" "(" <lhs:Pattern*> ")" "(" <rhs:Pattern*> ")" ")" => Rule { lhs, rhs },
+    "(" "rule" "(" <lhs:Pattern*> ")" "(" <rhs:Pattern*> ")" ")" => Rule { lhs, cond: None, rhs },
+    "(" "rule" "(" <lhs:Pattern*> ")" <cond:RustExpr> "(" <rhs:Pattern*> ")" ")" => Rule { lhs, cond: Some(cond), rhs },
 }
 
 Pattern: Pattern = {
