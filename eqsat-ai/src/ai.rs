@@ -17,14 +17,15 @@ pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonS
         saturator,
     };
 
+    let mut last_knot_count = None;
     loop {
-        let mut changed = false;
         for block in &rpo {
-            changed = changed | context.visit_block(&nonssa, *block);
+            context.visit_block(&nonssa, *block);
         }
-        if !changed {
+        if last_knot_count == Some(context.knot_map.num_knots()) {
             break;
         }
+        last_knot_count = Some(context.knot_map.num_knots());
     }
 }
 
@@ -42,6 +43,10 @@ impl KnotMap {
         let new_id = self.0.len();
         let entry = self.0.entry((block, var, kb));
         *entry.or_insert(new_id)
+    }
+
+    fn num_knots(&self) -> usize {
+        self.0.len()
     }
 }
 
