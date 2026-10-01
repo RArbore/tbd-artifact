@@ -121,9 +121,13 @@ impl<'a> AIContext<'a> {
 
     fn is_bottom(&self, block_id: BlockId) -> bool {
         let has_vars = self.vars.contains_key(&block_id);
-        let has_block = self.blocks.contains_key(&block_id);
-        assert_eq!(has_vars, has_block);
-        !has_vars
+        if let Some(ssa_block_id) = self.blocks.get(&block_id) {
+            assert!(has_vars);
+            self.saturator.is_contradiction_in_version(ssa_block_id.0)
+        } else {
+            assert!(!has_vars);
+            true
+        }
     }
 
     fn to_ssa_block(&self, block_id: BlockId) -> SSABlockId {

@@ -154,6 +154,21 @@ impl IDManager {
         self.versions[&version].as_ref().analysis(id)
     }
 
+    pub fn mark_contradiction(&mut self) {
+        let VersionState::Mutable(version) = self
+            .versions
+            .get_mut(&self.current_version.unwrap())
+            .unwrap()
+        else {
+            panic!()
+        };
+        version.mark_contradiction();
+    }
+
+    pub fn is_contradiction_in_version(&self, version: SSABlockId) -> bool {
+        self.versions[&version].as_ref().is_contradiction()
+    }
+
     fn is_canonical(&self, ssa: SSA) -> bool {
         self.current_version
             .map(|current_version| self.versions[&current_version].as_ref().is_canonical(ssa))
@@ -210,6 +225,14 @@ impl Saturator {
 
     pub fn analysis_in_version(&mut self, id: SSAId, version: SSABlockId) -> Analysis {
         self.ids.analysis_in_version(id, version)
+    }
+
+    pub fn mark_contradiction(&mut self) {
+        self.ids.mark_contradiction();
+    }
+
+    pub fn is_contradiction_in_version(&self, version: SSABlockId) -> bool {
+        self.ids.is_contradiction_in_version(version)
     }
 
     pub fn intern(&mut self, mut ssa: SSA) -> SSAId {

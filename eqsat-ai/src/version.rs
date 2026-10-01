@@ -25,6 +25,8 @@ pub struct Version<A: CommutativeMonoid> {
     // Track an "analysis" value per e-class. If the map at this version doesn't contain an entry,
     // then the analysis value for the e-class is given by the parent version (recursively).
     analysis: HashMap<SSAId, A>,
+    // Track whether we have found a contradiction in this version.
+    contradiction: bool,
     // Store a pointer to the parent version. This is ref-counted to simplify the code in the
     // saturator w.r.t. ownership of versions.
     parent: Option<Rc<Version<A>>>,
@@ -205,6 +207,7 @@ impl<A: CommutativeMonoid> Version<A> {
         Self {
             uf: SparseUnionFind::default(),
             analysis: HashMap::new(),
+            contradiction: parent.contradiction,
             parent: Some(parent),
             level,
             examined_ids: HashSet::new(),
@@ -272,6 +275,14 @@ impl<A: CommutativeMonoid> Version<A> {
                 .map(|parent| parent.analysis(id))
                 .unwrap_or_else(|| A::identity())
         })
+    }
+
+    pub fn mark_contradiction(&mut self) {
+        self.contradiction = true;
+    }
+
+    pub fn is_contradiction(&self) -> bool {
+        self.contradiction
     }
 
     fn update_analysis<F>(&mut self, x: SSAId, y: SSAId, canon: SSAId, fn_for_changed_analysis: F)

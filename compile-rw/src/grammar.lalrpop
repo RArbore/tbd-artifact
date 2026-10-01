@@ -29,6 +29,7 @@ Rule: Rule = {
 }
 
 Pattern: Pattern = {
+    "contradiction" => Pattern::Contradiction,
     Iden => Pattern::Variable(<>),
     Num => Pattern::Literal(Literal::I64(<>)),
     Bool => Pattern::Literal(Literal::Bool(<>)),

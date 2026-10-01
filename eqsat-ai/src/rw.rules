@@ -99,3 +99,6 @@
 (rule (a:(Knot[i64] kb _)) ((KnownBits a kb)))
 
 (rule ((KnownBits a kb)) `let Some(cons) = kb.try_constant()` ((union a (Constant[i64] `cons`))))
+
+(rule (a:(Constant[i64] b) a:(Constant[i64] c)) `b != c` (contradiction))
+(rule (a:(Constant[bool] true) a:(Constant[bool] false)) (contradiction))

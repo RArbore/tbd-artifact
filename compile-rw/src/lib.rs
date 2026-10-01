@@ -36,6 +36,7 @@ enum Pattern {
     Literal(Literal),
     RustExpr(Symbol),
     Union(Box<Pattern>, Box<Pattern>),
+    Contradiction,
     Wildcard,
     Constant {
         ty: Type,
@@ -202,6 +203,7 @@ impl Display for Pattern {
             Literal(lit) => write!(f, "{}", lit),
             RustExpr(expr) => write!(f, "`{}`", expr),
             Union(lhs, rhs) => write!(f, "(union {} {})", lhs, rhs),
+            Contradiction => write!(f, "contradiction"),
             Wildcard => write!(f, "_"),
             Constant { ty, input, label } => write!(
                 f,
@@ -317,6 +319,9 @@ fn patterns_to_query(patterns: &[Pattern]) -> Query {
             }
             Union(_, _) => {
                 panic!("can't evaluate union on left-hand side of rule")
+            }
+            Contradiction => {
+                panic!("can't evaluate contradiction on left-hand side of rule")
             }
             Wildcard => Term::Wildcard,
             Constant { ty, input, label } => {
@@ -489,6 +494,13 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
                     let lhs = #lhs;
                     let rhs = #rhs;
                     saturator.union(lhs, rhs);
+                }
+            }
+        }
+        Pattern::Contradiction => {
+            quote! {
+                {
+                    saturator.mark_contradiction();
                 }
             }
         }

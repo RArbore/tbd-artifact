@@ -379,6 +379,24 @@ fn kb(x: i64) {
 }
 
 #[test]
+fn ai19() {
+    let text = r#"
+fn contradiction(x: i64) {
+    if x == 3 && x == 5 {
+    } else {
+        x = 4;
+    }
+    return x;
+}
+"#;
+    let (value, mut saturator) = get_return(text);
+    let correct = saturator.intern(SSA::Constant(Constant::I64(4)));
+    let incorrect = saturator.intern(SSA::Constant(Constant::I64(5)));
+    assert_eq!(correct, value);
+    assert_ne!(incorrect, value);
+}
+
+#[test]
 #[should_panic]
 fn bad_types1() {
     let text = r#"
