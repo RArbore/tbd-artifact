@@ -1,4 +1,3 @@
-use core::cell::RefCell;
 use core::mem::take;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
@@ -29,7 +28,7 @@ impl AsRef<Version<Analysis>> for VersionState {
 }
 
 #[derive(Debug)]
-enum TrieEdit {
+enum NodeTrieEdit {
     Intern {
         id: SSAId,
         canon_id: SSAId,
@@ -44,13 +43,12 @@ enum TrieEdit {
         new_canon_id: SSAId,
         parent: Rc<Version<Analysis>>,
     },
-    AddKnownBits {
-        id: SSAId,
-        kb: KnownBits,
-    },
-    RemoveKnownBits {
-        id: SSAId,
-    },
+}
+
+#[derive(Debug)]
+enum AnalysisTrieEdit {
+    AddKnownBits { id: SSAId, kb: KnownBits },
+    RemoveKnownBits { id: SSAId },
 }
 
 // Because Rust does not have field borrows, we have to do silly things sometimes to convey to the
@@ -92,7 +90,8 @@ pub struct Saturator {
     pub ssa: SSAProgram,
     ids: IDManager,
     tries: Tries,
-    trie_edits: RefCell<Vec<TrieEdit>>,
+    node_trie_edits: Vec<NodeTrieEdit>,
+    analysis_trie_edits: Vec<AnalysisTrieEdit>,
 }
 
 impl IDManager {
@@ -183,20 +182,20 @@ impl Saturator {
             x,
             y,
             |id, old_canon_id, new_canon_id| {
-                self.trie_edits.borrow_mut().push(TrieEdit::PushUnion {
+                self.node_trie_edits.push(NodeTrieEdit::PushUnion {
                     id,
                     old_canon_id,
                     new_canon_id,
                 });
             },
             |canon_id, non_canon_id, _, combined| {
-                self.trie_edits
-                    .borrow_mut()
-                    .push(TrieEdit::RemoveKnownBits { id: non_canon_id });
-                self.trie_edits.borrow_mut().push(TrieEdit::AddKnownBits {
-                    id: canon_id,
-                    kb: combined,
-                });
+                self.analysis_trie_edits
+                    .push(AnalysisTrieEdit::RemoveKnownBits { id: non_canon_id });
+                self.analysis_trie_edits
+                    .push(AnalysisTrieEdit::AddKnownBits {
+                        id: canon_id,
+                        kb: combined,
+                    });
             },
         )
     }
@@ -232,13 +231,13 @@ impl Saturator {
             self.ids.delta.insert(canon_id);
         }
         if before != after {
-            self.trie_edits
-                .borrow_mut()
-                .push(TrieEdit::Intern { id, canon_id });
-            self.trie_edits.borrow_mut().push(TrieEdit::AddKnownBits {
-                id,
-                kb: KnownBits::top(),
-            });
+            self.node_trie_edits
+                .push(NodeTrieEdit::Intern { id, canon_id });
+            self.analysis_trie_edits
+                .push(AnalysisTrieEdit::AddKnownBits {
+                    id,
+                    kb: KnownBits::top(),
+                });
         }
         canon_id
     }
@@ -257,15 +256,13 @@ impl Saturator {
         let old_analysis = version.analysis(id);
         let new_analysis = old_analysis.meet(&kb);
         if old_analysis != new_analysis {
-            self.trie_edits
-                .borrow_mut()
-                .push(TrieEdit::RemoveKnownBits { id });
             version.set_analysis(id, new_analysis);
             self.ids.delta_kb.insert(id);
-            self.trie_edits.borrow_mut().push(TrieEdit::AddKnownBits {
-                id,
-                kb: new_analysis,
-            });
+            self.analysis_trie_edits
+                .push(AnalysisTrieEdit::AddKnownBits {
+                    id,
+                    kb: new_analysis,
+                });
         }
     }
 
@@ -303,7 +300,6 @@ impl Saturator {
             .versions
             .insert(block, VersionState::Mutable(version));
         self.ids.current_version = Some(block);
-        self.check_trie_consistency();
     }
 
     pub fn traverse_to_version(&mut self, version: &Version<Analysis>) {
@@ -340,8 +336,8 @@ impl Saturator {
                 let old_canon_id = version.find(id);
                 assert_ne!(old_canon_id, id);
                 for set_id in parent.set(id, None) {
-                    Self::apply_edit(
-                        TrieEdit::PopUnion {
+                    Self::apply_node_edit(
+                        NodeTrieEdit::PopUnion {
                             id: set_id,
                             new_canon_id: id,
                             parent: Rc::clone(parent),
@@ -352,9 +348,8 @@ impl Saturator {
                 }
 
                 let kb = parent.analysis(id);
-                Self::apply_edit(
-                    TrieEdit::AddKnownBits { id, kb },
-                    &self.ssa,
+                Self::apply_analysis_edit(
+                    AnalysisTrieEdit::AddKnownBits { id, kb },
                     &mut self.tries,
                 );
             }
@@ -362,11 +357,9 @@ impl Saturator {
             // And any nodes with version-specific analysis values induce trie edits.
             for id in version.analyzed_ids_at_level() {
                 assert_eq!(id, version.find(id));
-                Self::apply_edit(TrieEdit::RemoveKnownBits { id }, &self.ssa, &mut self.tries);
                 let kb = parent.analysis(id);
-                Self::apply_edit(
-                    TrieEdit::AddKnownBits { id, kb },
-                    &self.ssa,
+                Self::apply_analysis_edit(
+                    AnalysisTrieEdit::AddKnownBits { id, kb },
                     &mut self.tries,
                 );
             }
@@ -385,8 +378,8 @@ impl Saturator {
                 let new_canon_id = version.find(id);
                 assert_ne!(new_canon_id, id);
                 for set_id in parent.set(id, None) {
-                    Self::apply_edit(
-                        TrieEdit::PushUnion {
+                    Self::apply_node_edit(
+                        NodeTrieEdit::PushUnion {
                             id: set_id,
                             old_canon_id: id,
                             new_canon_id,
@@ -396,17 +389,18 @@ impl Saturator {
                     );
                 }
 
-                Self::apply_edit(TrieEdit::RemoveKnownBits { id }, &self.ssa, &mut self.tries);
+                Self::apply_analysis_edit(
+                    AnalysisTrieEdit::RemoveKnownBits { id },
+                    &mut self.tries,
+                );
             }
 
             // And any nodes with version-specific analysis values induce trie edits.
             for id in version.analyzed_ids_at_level() {
                 assert_eq!(id, version.find(id));
-                Self::apply_edit(TrieEdit::RemoveKnownBits { id }, &self.ssa, &mut self.tries);
                 let kb = version.analysis(id);
-                Self::apply_edit(
-                    TrieEdit::AddKnownBits { id, kb },
-                    &self.ssa,
+                Self::apply_analysis_edit(
+                    AnalysisTrieEdit::AddKnownBits { id, kb },
                     &mut self.tries,
                 );
             }
@@ -421,11 +415,10 @@ impl Saturator {
         self.traverse_to_version(version.as_ref());
         self.ids.versions.insert(block, version);
         self.ids.current_version = Some(block);
-        self.check_trie_consistency();
     }
 
-    fn apply_edit(edit: TrieEdit, ssa: &SSAProgram, tries: &mut Tries) {
-        use TrieEdit::*;
+    fn apply_node_edit(edit: NodeTrieEdit, ssa: &SSAProgram, tries: &mut Tries) {
+        use NodeTrieEdit::*;
         match edit {
             Intern { id, canon_id } => {
                 tries.insert_tuple(canon_id, ssa.get(id), id, false);
@@ -472,6 +465,12 @@ impl Saturator {
                     }
                 }
             }
+        }
+    }
+
+    fn apply_analysis_edit(edit: AnalysisTrieEdit, tries: &mut Tries) {
+        use AnalysisTrieEdit::*;
+        match edit {
             AddKnownBits { id, kb } => {
                 if let Some(kb) = tries.inserted_kb(id) {
                     tries.remove_kb(id, kb);
@@ -487,10 +486,12 @@ impl Saturator {
     }
 
     fn apply_edits(&mut self) {
-        for edit in self.trie_edits.take() {
-            Self::apply_edit(edit, &self.ssa, &mut self.tries);
+        for edit in take(&mut self.node_trie_edits) {
+            Self::apply_node_edit(edit, &self.ssa, &mut self.tries);
         }
-        self.check_trie_consistency();
+        for edit in take(&mut self.analysis_trie_edits) {
+            Self::apply_analysis_edit(edit, &mut self.tries);
+        }
     }
 
     pub fn saturate(&mut self) {
@@ -525,7 +526,7 @@ impl Saturator {
                     id,
                     new_id,
                     |id, old_canon_id, new_canon_id| {
-                        self.trie_edits.borrow_mut().push(TrieEdit::PushUnion {
+                        self.node_trie_edits.push(NodeTrieEdit::PushUnion {
                             id,
                             old_canon_id,
                             new_canon_id,
@@ -535,13 +536,13 @@ impl Saturator {
                         }
                     },
                     |canon_id, non_canon_id, _, combined| {
-                        self.trie_edits
-                            .borrow_mut()
-                            .push(TrieEdit::RemoveKnownBits { id: non_canon_id });
-                        self.trie_edits.borrow_mut().push(TrieEdit::AddKnownBits {
-                            id: canon_id,
-                            kb: combined,
-                        });
+                        self.analysis_trie_edits
+                            .push(AnalysisTrieEdit::RemoveKnownBits { id: non_canon_id });
+                        self.analysis_trie_edits
+                            .push(AnalysisTrieEdit::AddKnownBits {
+                                id: canon_id,
+                                kb: combined,
+                            });
                     },
                 );
             }
@@ -571,7 +572,8 @@ impl Saturator {
     }
 
     pub fn check_trie_consistency(&self) {
-        assert!(self.trie_edits.borrow().is_empty());
+        assert!(self.node_trie_edits.is_empty());
+        assert!(self.analysis_trie_edits.is_empty());
         let mut correct = Tries::default();
         for id in 0..self.ssa.num_nodes() {
             let node = self.ssa.get(id);
