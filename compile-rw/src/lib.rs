@@ -168,7 +168,11 @@ impl Display for Rule {
                 rhs = format!("{} {}", rhs, pattern);
             }
         }
-        write!(f, "(rule {}) {}))", lhs, rhs)
+        if let Some(cond) = self.cond {
+            write!(f, "(rule {}) `{}` {}))", lhs, cond, rhs)
+        } else {
+            write!(f, "(rule {}) {}))", lhs, rhs)
+        }
     }
 }
 
@@ -577,7 +581,7 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
 
 fn emit_wcoj(
     query: &Query,
-    rewrite: &Rule,
+    rule: &Rule,
     delta_idx: usize,
     atoms_containing: &AtomsContaining,
     var_order: &Vec<Symbol>,
@@ -586,7 +590,7 @@ fn emit_wcoj(
     // Emits one nested loop of the WCOJ.
     fn emit_wcoj_helper(
         query: &Query,
-        rewrite: &Rule,
+        rule: &Rule,
         delta_idx: usize,
         atoms_containing: &AtomsContaining,
         var_order: &[Symbol],
@@ -652,7 +656,7 @@ fn emit_wcoj(
             // Emit the rest of the WCOJ.
             let nested = emit_wcoj_helper(
                 query,
-                rewrite,
+                rule,
                 delta_idx,
                 atoms_containing,
                 var_order,
@@ -668,7 +672,7 @@ fn emit_wcoj(
             } }
         } else {
             // Log the rule application.
-            let rule_str = format!("{}", rewrite);
+            let rule_str = format!("{}", rule);
             let dump_vars: TokenStream = var_order
                 .into_iter()
                 .map(|var| {
@@ -679,14 +683,14 @@ fn emit_wcoj(
                 .collect();
 
             // Make the nodes in the e-graph for the RHS.
-            let mut execute_rhs: TokenStream = rewrite
+            let mut execute_rhs: TokenStream = rule
                 .rhs
                 .iter()
                 .map(|pattern| build_pattern(pattern))
                 .collect();
 
             // If there is a condition, check it.
-            if let Some(cond) = rewrite.cond {
+            if let Some(cond) = rule.cond {
                 let cond = syn::parse_str::<syn::Expr>(cond.as_str()).unwrap();
                 execute_rhs = quote! { if #cond { #execute_rhs } };
             }
@@ -710,7 +714,7 @@ fn emit_wcoj(
             quote! { let #trievar = &tries.#needed_trie; }
         })
         .collect();
-    let block = emit_wcoj_helper(query, rewrite, delta_idx, atoms_containing, var_order, 0);
+    let block = emit_wcoj_helper(query, rule, delta_idx, atoms_containing, var_order, 0);
     quote! {
         {
             #init

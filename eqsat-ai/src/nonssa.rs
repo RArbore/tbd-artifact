@@ -18,6 +18,7 @@ pub enum Constant {
 #[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub enum UnaryOp {
     Neg,
+    BitwiseNot,
     Not,
 }
 
@@ -26,6 +27,9 @@ pub enum BinaryOp {
     Add,
     Sub,
     Mul,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
     And,
     Or,
     Xor,
@@ -182,6 +186,7 @@ impl Display for UnaryOp {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
             UnaryOp::Neg => "-".fmt(f),
+            UnaryOp::BitwiseNot => "~".fmt(f),
             UnaryOp::Not => "!".fmt(f),
         }
     }
@@ -193,9 +198,12 @@ impl Display for BinaryOp {
             BinaryOp::Add => "+".fmt(f),
             BinaryOp::Sub => "-".fmt(f),
             BinaryOp::Mul => "*".fmt(f),
-            BinaryOp::And => "&".fmt(f),
-            BinaryOp::Or => "|".fmt(f),
-            BinaryOp::Xor => "^".fmt(f),
+            BinaryOp::BitwiseAnd => "&".fmt(f),
+            BinaryOp::BitwiseOr => "|".fmt(f),
+            BinaryOp::BitwiseXor => "^".fmt(f),
+            BinaryOp::And => "&&".fmt(f),
+            BinaryOp::Or => "||".fmt(f),
+            BinaryOp::Xor => "^^".fmt(f),
             BinaryOp::EE => "==".fmt(f),
             BinaryOp::NE => "!=".fmt(f),
             BinaryOp::LT => "<".fmt(f),

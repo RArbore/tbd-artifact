@@ -35,6 +35,9 @@ BinaryExpr: Expr = {
     UnaryExpr,
     #[precedence(level="1")] #[assoc(side="left")]
     <lhs:BinaryExpr> "*" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::Mul, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+    <lhs:BinaryExpr> "&" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::BitwiseAnd, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+    <lhs:BinaryExpr> "|" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::BitwiseOr, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+    <lhs:BinaryExpr> "^" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::BitwiseXor, lhs: Box::new(lhs), rhs: Box::new(rhs) },
     #[precedence(level="2")] #[assoc(side="left")]
     <lhs:BinaryExpr> "+" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::Add, lhs: Box::new(lhs), rhs: Box::new(rhs) },
     <lhs:BinaryExpr> "-" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::Sub, lhs: Box::new(lhs), rhs: Box::new(rhs) },
@@ -46,15 +49,16 @@ BinaryExpr: Expr = {
     <lhs:BinaryExpr> ">" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::GT, lhs: Box::new(lhs), rhs: Box::new(rhs) },
     <lhs:BinaryExpr> ">=" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::GE, lhs: Box::new(lhs), rhs: Box::new(rhs) },
     #[precedence(level="4")] #[assoc(side="left")]
-    <lhs:BinaryExpr> "&" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::And, lhs: Box::new(lhs), rhs: Box::new(rhs) },
-    <lhs:BinaryExpr> "|" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::Or, lhs: Box::new(lhs), rhs: Box::new(rhs) },
-    <lhs:BinaryExpr> "^" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::Xor, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+    <lhs:BinaryExpr> "&&" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::And, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+    <lhs:BinaryExpr> "||" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::Or, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+    <lhs:BinaryExpr> "^^" <rhs:BinaryExpr> => Expr::Binary { op: BinaryOp::Xor, lhs: Box::new(lhs), rhs: Box::new(rhs) },
 }
 
 UnaryExpr: Expr = {
     Atomic,
-    "!" <UnaryExpr> => Expr::Unary { op: UnaryOp::Not, input: Box::new(<>) },
     "-" <UnaryExpr> => Expr::Unary { op: UnaryOp::Neg, input: Box::new(<>) },
+    "~" <UnaryExpr> => Expr::Unary { op: UnaryOp::BitwiseNot, input: Box::new(<>) },
+    "!" <UnaryExpr> => Expr::Unary { op: UnaryOp::Not, input: Box::new(<>) },
 }
 
 Atomic: Expr = {

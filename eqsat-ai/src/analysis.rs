@@ -103,7 +103,7 @@ impl KnownBits {
         Self::top()
     }
 
-    pub fn not(&self) -> Self {
+    pub fn bitwise_not(&self) -> Self {
         // Flip the concrete bits.
         Self {
             low_high: self.low_high ^ self.concrete,
@@ -126,7 +126,7 @@ impl KnownBits {
         Self::top()
     }
 
-    pub fn and(&self, other: &Self) -> Self {
+    pub fn bitwise_and(&self, other: &Self) -> Self {
         // This implements the following table:
         // |  s.lh |  s.ic |  o.lh |  o.ic |  r.lh |  r.ic |
         // -------------------------------------------------
@@ -151,12 +151,15 @@ impl KnownBits {
         }
     }
 
-    pub fn or(&self, other: &Self) -> Self {
-        self.not().and(&other.not()).not()
+    pub fn bitwise_or(&self, other: &Self) -> Self {
+        self.bitwise_not()
+            .bitwise_and(&other.bitwise_not())
+            .bitwise_not()
     }
 
-    pub fn xor(&self, other: &Self) -> Self {
-        self.and(&other.not()).or(&self.not().and(&other))
+    pub fn bitwise_xor(&self, other: &Self) -> Self {
+        self.bitwise_and(&other.bitwise_not())
+            .bitwise_or(&self.bitwise_not().bitwise_and(&other))
     }
 }
 

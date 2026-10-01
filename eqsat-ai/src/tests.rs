@@ -374,7 +374,7 @@ fn kb(x: i64) {
 }
 "#;
     let (value, mut saturator) = get_return(text);
-    let correct = saturator.intern(SSA::Param(0, Type::I64));
+    let correct = saturator.intern(SSA::Constant(Constant::I64(0)));
     assert_eq!(correct, value);
 }
 
@@ -917,7 +917,7 @@ fn known_bits2() {
     for _ in 0..100 {
         let cons = random::<i64>();
         let kb = KnownBits::from_constant(cons);
-        let not_kb = kb.not();
+        let not_kb = kb.bitwise_not();
         assert!(not_kb.is_constant(!cons));
     }
     for _ in 0..100 {
@@ -927,12 +927,12 @@ fn known_bits2() {
         let kb2 = KnownBits::from_constant(cons2);
         assert_eq!(kb1.join(&kb2), kb2.join(&kb1));
         assert_eq!(kb1.meet(&kb2), kb2.meet(&kb1));
-        assert_eq!(kb1.and(&kb2), kb2.and(&kb1));
-        assert_eq!(kb1.or(&kb2), kb2.or(&kb1));
-        assert_eq!(kb1.xor(&kb2), kb2.xor(&kb1));
-        assert!(kb1.and(&kb2).is_constant(cons1 & cons2));
-        assert!(kb1.or(&kb2).is_constant(cons1 | cons2));
-        assert!(kb1.xor(&kb2).is_constant(cons1 ^ cons2));
+        assert_eq!(kb1.bitwise_and(&kb2), kb2.bitwise_and(&kb1));
+        assert_eq!(kb1.bitwise_or(&kb2), kb2.bitwise_or(&kb1));
+        assert_eq!(kb1.bitwise_xor(&kb2), kb2.bitwise_xor(&kb1));
+        assert!(kb1.bitwise_and(&kb2).is_constant(cons1 & cons2));
+        assert!(kb1.bitwise_or(&kb2).is_constant(cons1 | cons2));
+        assert!(kb1.bitwise_xor(&kb2).is_constant(cons1 ^ cons2));
         assert!(kb1.leq(&KnownBits::top()));
         assert!(kb2.leq(&KnownBits::top()));
         assert!(KnownBits::bot().leq(&kb1));
@@ -987,12 +987,12 @@ fn known_bits4() {
             assert!(meet1.leq(&join1));
             assert!(meet2.leq(&join2));
         }
-        let join_and = join1.and(&join2);
-        let meet_and = meet1.and(&meet2);
-        let join_or = join1.or(&join2);
-        let meet_or = meet1.or(&meet2);
-        let join_xor = join1.xor(&join2);
-        let meet_xor = meet1.xor(&meet2);
+        let join_and = join1.bitwise_and(&join2);
+        let meet_and = meet1.bitwise_and(&meet2);
+        let join_or = join1.bitwise_or(&join2);
+        let meet_or = meet1.bitwise_or(&meet2);
+        let join_xor = join1.bitwise_xor(&join2);
+        let meet_xor = meet1.bitwise_xor(&meet2);
         for i in 0..num {
             let and = cons1[i as usize] & cons2[i as usize];
             let or = cons1[i as usize] | cons2[i as usize];

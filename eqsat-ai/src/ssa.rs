@@ -54,9 +54,21 @@ impl SSA {
                 assert_eq!(types[input], Type::I64);
                 Type::I64
             }
-            SSA::Unary(UnaryOp::Not, input) => types[input],
+            SSA::Unary(UnaryOp::BitwiseNot, input) => {
+                assert_eq!(types[input], Type::I64);
+                Type::I64
+            }
+            SSA::Unary(UnaryOp::Not, input) => {
+                assert_eq!(types[input], Type::Bool);
+                Type::Bool
+            }
             SSA::Binary(op, lhs, rhs) => match op {
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul => {
+                    assert_eq!(types[lhs], Type::I64);
+                    assert_eq!(types[rhs], Type::I64);
+                    Type::I64
+                }
+                BinaryOp::BitwiseAnd | BinaryOp::BitwiseOr | BinaryOp::BitwiseXor => {
                     assert_eq!(types[lhs], Type::I64);
                     assert_eq!(types[rhs], Type::I64);
                     Type::I64
