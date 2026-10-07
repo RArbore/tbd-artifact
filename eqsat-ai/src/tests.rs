@@ -1024,3 +1024,145 @@ fn known_bits4() {
         }
     }
 }
+
+#[test]
+fn intervals1() {
+    assert!(Interval::from_constant(42).is_constant(42));
+    assert_eq!(Interval::from_constant(42).try_constant(), Some(42));
+    assert!(Interval::Bot.is_constant(777));
+    assert!(!Interval::Top.is_constant(777));
+    assert_eq!(Interval::Top.try_constant(), None);
+    assert_eq!(
+        Interval::from_constant(3).join(&Interval::from_constant(1)),
+        Interval::from_low_high(1, 3)
+    );
+    assert_eq!(
+        Interval::from_constant(3).meet(&Interval::from_constant(1)),
+        Interval::Bot
+    );
+}
+
+#[test]
+fn intervals2() {
+    for i in 0..100 {
+        let cons = if i == 0 {
+            i64::MIN
+        } else if i == 1 {
+            i64::MAX
+        } else {
+            random::<i64>()
+        };
+        let int = Interval::from_constant(cons);
+        let neg_int = int.neg();
+        if let Some(neg_cons) = cons.checked_neg() {
+            assert!(neg_int.is_constant(neg_cons));
+        } else {
+            assert_eq!(neg_int, Interval::Top);
+        }
+    }
+    for _ in 0..100 {
+        let cons1 = random::<i64>();
+        let cons2 = random::<i64>();
+        let int1 = Interval::from_constant(cons1);
+        let int2 = Interval::from_constant(cons2);
+        assert_eq!(int1.join(&int2), int2.join(&int1));
+        assert_eq!(int1.meet(&int2), int2.meet(&int1));
+        assert_eq!(int1.add(&int2), int2.add(&int1));
+        assert_eq!(int1.mul(&int2), int2.mul(&int1));
+        if let Some(add) = cons1.checked_add(cons2) {
+            assert!(int1.add(&int2).is_constant(add));
+        }
+        if let Some(sub) = cons1.checked_sub(cons2) {
+            assert!(int1.sub(&int2).is_constant(sub));
+        }
+        if let Some(mul) = cons1.checked_mul(cons2) {
+            assert!(int1.mul(&int2).is_constant(mul));
+        }
+        assert!(int1.leq(&Interval::Top));
+        assert!(int2.leq(&Interval::Top));
+        assert!(Interval::Bot.leq(&int1));
+        assert!(Interval::Bot.leq(&int2));
+    }
+}
+
+#[test]
+fn intervals3() {
+    for _ in 0..100 {
+        let num = random::<u8>() % 10;
+        let mut cons = vec![];
+        let mut join = Interval::Bot;
+        let mut meet = Interval::Top;
+        for _ in 0..num {
+            let int = Interval::from_constant(random::<i64>());
+            join = join.join(&int);
+            meet = meet.meet(&int);
+            cons.push(int);
+        }
+        for i in 0..num {
+            let int = cons[i as usize];
+            assert!(
+                int.leq(&join),
+                "{:?}, {:?} is join of {} ints",
+                int,
+                join,
+                num
+            );
+            assert!(
+                meet.leq(&int),
+                "{:?}, {:?} is meet of {} ints",
+                int,
+                meet,
+                num
+            );
+        }
+    }
+}
+
+#[test]
+fn intervals4() {
+    for _ in 0..100 {
+        let num = random::<u8>() % 10;
+        let mut cons1 = vec![];
+        let mut cons2 = vec![];
+        let mut join1 = Interval::Bot;
+        let mut join2 = Interval::Bot;
+        let mut meet1 = Interval::Top;
+        let mut meet2 = Interval::Top;
+        for _ in 0..num {
+            let c1 = random::<i64>();
+            let int1 = Interval::from_constant(c1);
+            join1 = join1.join(&int1);
+            meet1 = meet1.meet(&int1);
+            cons1.push(c1);
+            let c2 = random::<i64>();
+            let int2 = Interval::from_constant(c2);
+            join2 = join2.join(&int2);
+            meet2 = meet2.meet(&int2);
+            cons2.push(c2);
+        }
+        if num > 0 {
+            assert!(meet1.leq(&join1));
+            assert!(meet2.leq(&join2));
+        }
+        let join_add = join1.add(&join2);
+        let meet_add = meet1.add(&meet2);
+        let join_sub = join1.sub(&join2);
+        let meet_sub = meet1.sub(&meet2);
+        let join_mul = join1.mul(&join2);
+        let meet_mul = meet1.mul(&meet2);
+        for i in 0..num {
+            if let Some(add) = cons1[i as usize].checked_add(cons2[i as usize]) {
+                assert!(join_add.contains_constant(add));
+                assert!(meet_add.is_constant(add));
+            }
+            if let Some(sub) = cons1[i as usize].checked_sub(cons2[i as usize]) {
+                assert!(join_sub.contains_constant(sub));
+                assert!(meet_sub.is_constant(sub));
+            }
+            if let Some(mul) = cons1[i as usize].checked_mul(cons2[i as usize]) {
+                assert!(join_mul.contains_constant(mul));
+                assert!(meet_mul.is_constant(mul));
+            }
+        }
+    }
+}

@@ -260,6 +260,67 @@ impl Interval {
             *self
         }
     }
+
+    pub fn bitwise_not(&self) -> Self {
+        // TODO: make non-trivial.
+        Self::Top
+    }
+
+    pub fn add(&self, other: &Self) -> Self {
+        match (*self, *other) {
+            (Interval::Bot, _) | (_, Interval::Bot) => Self::Bot,
+            (Interval::Top, a) | (a, Interval::Top) => a,
+            (Interval::Interval(low1, high1), Interval::Interval(low2, high2)) => {
+                if let Some(low) = low1.checked_add(low2)
+                    && let Some(high) = high1.checked_add(high2)
+                {
+                    Self::from_low_high(low, high)
+                } else {
+                    Self::Top
+                }
+            }
+        }
+    }
+
+    pub fn sub(&self, other: &Self) -> Self {
+        self.add(&other.neg())
+    }
+
+    pub fn mul(&self, other: &Self) -> Self {
+        match (*self, *other) {
+            (Interval::Bot, _) | (_, Interval::Bot) => Self::Bot,
+            (Interval::Top, a) | (a, Interval::Top) => a,
+            (Interval::Interval(low1, high1), Interval::Interval(low2, high2)) => {
+                if let Some(low_low) = low1.checked_mul(low2)
+                    && let Some(low_high) = low1.checked_mul(high2)
+                    && let Some(high_low) = high1.checked_mul(low2)
+                    && let Some(high_high) = high1.checked_mul(high2)
+                {
+                    Self::from_low_high(
+                        min(min(low_low, low_high), min(high_low, high_high)),
+                        max(max(low_low, low_high), max(high_low, high_high)),
+                    )
+                } else {
+                    Self::Top
+                }
+            }
+        }
+    }
+
+    pub fn bitwise_and(&self, _other: &Self) -> Self {
+        // TODO: make non-trivial.
+        Self::Top
+    }
+
+    pub fn bitwise_or(&self, _other: &Self) -> Self {
+        // TODO: make non-trivial.
+        Self::Top
+    }
+
+    pub fn bitwise_xor(&self, _other: &Self) -> Self {
+        // TODO: make non-trivial.
+        Self::Top
+    }
 }
 
 pub trait CommutativeMonoid: Clone + PartialEq + Eq {
@@ -311,6 +372,8 @@ impl<A: CommutativeMonoid, B: CommutativeMonoid> CommutativeMonoid for (A, B) {
 type Interner<T> = (HashMap<T, TupleValue>, Vec<T>);
 static KB_INTERN: LazyLock<Mutex<Interner<KnownBits>>> =
     LazyLock::new(|| Mutex::new(Default::default()));
+static INT_INTERN: LazyLock<Mutex<Interner<Interval>>> =
+    LazyLock::new(|| Mutex::new(Default::default()));
 
 pub fn intern_kb(kb: KnownBits) -> TupleValue {
     let mut interner = KB_INTERN.lock().unwrap();
@@ -325,4 +388,19 @@ pub fn intern_kb(kb: KnownBits) -> TupleValue {
 
 pub fn get_kb(id: TupleValue) -> KnownBits {
     KB_INTERN.lock().unwrap().1[id as usize]
+}
+
+pub fn intern_int(int: Interval) -> TupleValue {
+    let mut interner = INT_INTERN.lock().unwrap();
+    let interner: &mut Interner<Interval> = &mut interner;
+    let entry = interner.0.entry(int);
+    *entry.or_insert_with(|| {
+        let id = interner.1.len();
+        interner.1.push(int);
+        id as TupleValue
+    })
+}
+
+pub fn get_int(id: TupleValue) -> Interval {
+    INT_INTERN.lock().unwrap().1[id as usize]
 }
