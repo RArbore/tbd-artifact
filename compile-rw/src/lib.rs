@@ -62,12 +62,17 @@ enum Pattern {
     Knot {
         ty: Type,
         kb: Box<Pattern>,
+        int: Box<Pattern>,
         knot_id: Box<Pattern>,
         label: Option<Symbol>,
     },
     KnownBits {
         id: Box<Pattern>,
         kb: Box<Pattern>,
+    },
+    Interval {
+        id: Box<Pattern>,
+        int: Box<Pattern>,
     },
 }
 
@@ -93,6 +98,7 @@ enum Relation {
 
     // Represent analyses.
     KnownBits,
+    Interval,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -229,17 +235,20 @@ impl Display for Pattern {
             Knot {
                 ty,
                 kb,
+                int,
                 knot_id,
                 label,
             } => write!(
                 f,
-                "{}(Knot[{}] {} {})",
+                "{}(Knot[{}] {} {} {})",
                 label_colon(label),
                 ty.rust_type(),
                 kb,
+                int,
                 knot_id
             ),
             KnownBits { id, kb } => write!(f, "(KnownBits {} {})", id, kb),
+            Interval { id, int } => write!(f, "(Interval {} {})", id, int),
         }
     }
 }
@@ -253,6 +262,7 @@ impl Display for Relation {
             Unary(op) | Binary(op) => write!(f, "{}", op),
             Knot(ty) => write!(f, "Knot_{}", ty.compiler_type()),
             KnownBits => write!(f, "KnownBits"),
+            Interval => write!(f, "Interval"),
         }
     }
 }
@@ -386,20 +396,23 @@ fn patterns_to_query(patterns: &[Pattern]) -> Query {
             Knot {
                 ty,
                 kb,
+                int,
                 knot_id,
                 label,
             } => {
                 let kb = pattern_to_query_helper(kb, atoms, types);
+                let int = pattern_to_query_helper(int, atoms, types);
                 let knot_id = pattern_to_query_helper(knot_id, atoms, types);
                 let var = label.unwrap_or_else(|| format!("_root_{}", atoms.len()).into());
                 let root = Term::Variable(var);
                 let atom = Atom {
                     relation: Relation::Knot(*ty),
-                    terms: vec![root, kb, knot_id],
+                    terms: vec![root, kb, int, knot_id],
                 };
                 atoms.push(atom);
                 record_type(root, "SSAId".into(), types);
                 record_type(kb, "KnownBits".into(), types);
+                record_type(int, "Interval".into(), types);
                 record_type(knot_id, "KnotId".into(), types);
                 root
             }
@@ -413,6 +426,18 @@ fn patterns_to_query(patterns: &[Pattern]) -> Query {
                 atoms.push(atom);
                 record_type(id, "SSAId".into(), types);
                 record_type(kb, "KnownBits".into(), types);
+                Term::Wildcard
+            }
+            Interval { id, int } => {
+                let id = pattern_to_query_helper(id, atoms, types);
+                let int = pattern_to_query_helper(int, atoms, types);
+                let atom = Atom {
+                    relation: Relation::Interval,
+                    terms: vec![id, int],
+                };
+                atoms.push(atom);
+                record_type(id, "SSAId".into(), types);
+                record_type(int, "Interval".into(), types);
                 Term::Wildcard
             }
         }
@@ -563,17 +588,20 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
         Pattern::Knot {
             ty,
             kb,
+            int,
             knot_id,
             label: _,
         } => {
             let kb = build_pattern(kb);
+            let int = build_pattern(int);
             let knot_id = build_pattern(knot_id);
             let ty_variant = format_ident!("{}", ty.compiler_type().as_str());
             quote! {
                 {
                     let kb = #kb;
+                    let int = #int;
                     let knot_id = #knot_id;
-                    saturator.intern(SSA::Knot(knot_id, Type::#ty_variant, kb))
+                    saturator.intern(SSA::Knot(knot_id, Type::#ty_variant, kb, int))
                 }
             }
         }
@@ -585,6 +613,17 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
                     let id = #id;
                     let kb = #kb;
                     saturator.analyze_kb(id, kb)
+                }
+            }
+        }
+        Pattern::Interval { id, int } => {
+            let id = build_pattern(id);
+            let int = build_pattern(int);
+            quote! {
+                {
+                    let id = #id;
+                    let int = #int;
+                    saturator.analyze_int(id, int)
                 }
             }
         }
@@ -661,6 +700,8 @@ fn emit_wcoj(
                 quote! { let #var_iden = *#var_iden != 0; }
             } else if query.types[&var] == "KnownBits".into() {
                 quote! { let #var_iden = get_kb(*#var_iden); }
+            } else if query.types[&var] == "Interval".into() {
+                quote! { let #var_iden = get_int(*#var_iden); }
             } else {
                 quote! { let #var_iden = *#var_iden as #rust_ty; }
             };
@@ -938,6 +979,18 @@ pub fn compile_rw(contents: &str) -> String {
             })
             .collect::<TokenStream>()
     };
+    let int_insert_remove = |is_insert| {
+        needed_tries
+            .iter()
+            .map(|trie| {
+                if let Relation::Interval = trie.relation {
+                    emit_insert_remove_into_trie(trie, is_insert, quote! { interval_tuple_field })
+                } else {
+                    quote! {}
+                }
+            })
+            .collect::<TokenStream>()
+    };
     let trie_clear_delta: TokenStream = needed_tries
         .iter()
         .filter(|trie| trie.is_delta)
@@ -953,17 +1006,20 @@ pub fn compile_rw(contents: &str) -> String {
     let trie_binary_insert = trie_binary_insert_remove(true);
     let trie_knot_insert = trie_knot_insert_remove(true);
     let kb_insert = kb_insert_remove(true);
+    let int_insert = int_insert_remove(true);
     let trie_constant_remove = trie_constant_insert_remove(false);
     let trie_param_remove = trie_param_insert_remove(false);
     let trie_unary_remove = trie_unary_insert_remove(false);
     let trie_binary_remove = trie_binary_insert_remove(false);
     let trie_knot_remove = trie_knot_insert_remove(false);
     let kb_remove = kb_insert_remove(false);
+    let int_remove = int_insert_remove(false);
     let trie_struct = quote! {
         #[derive(Default, PartialEq, Eq)]
         pub struct Tries {
             inserted_as: HashMap<SSAId, SSAId>,
             inserted_kb: HashMap<SSAId, KnownBits>,
+            inserted_int: HashMap<SSAId, Interval>,
             #trie_fields
         }
 
@@ -974,6 +1030,10 @@ pub fn compile_rw(contents: &str) -> String {
 
             pub fn inserted_kb(&self, canon_id: SSAId) -> Option<KnownBits> {
                 self.inserted_kb.get(&canon_id).cloned()
+            }
+
+            pub fn inserted_int(&self, canon_id: SSAId) -> Option<Interval> {
+                self.inserted_int.get(&canon_id).cloned()
             }
 
             pub fn insert_tuple(&mut self, canon_id: SSAId, value: SSA, non_canon_id: SSAId, is_delta: bool) {
@@ -1036,6 +1096,21 @@ pub fn compile_rw(contents: &str) -> String {
                 #kb_remove
             }
 
+            pub fn insert_int(&mut self, canon_id: SSAId, value: Interval, is_delta: bool) {
+                if !is_delta {
+                    assert!(self.inserted_int.insert(canon_id, value).is_none());
+                }
+                let non_canon_id = canon_id;
+                #int_insert
+            }
+
+            pub fn remove_int(&mut self, canon_id: SSAId, value: Interval) {
+                let is_delta = false;
+                assert_eq!(self.inserted_int.remove(&canon_id), Some(value));
+                let non_canon_id = canon_id;
+                #int_remove
+            }
+
             pub fn clear_delta(&mut self) {
                 #trie_clear_delta
             }
@@ -1047,7 +1122,7 @@ pub fn compile_rw(contents: &str) -> String {
 
         impl Debug for Tries {
             fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-                f.debug_struct("Tries").field("inserted_as", &self.inserted_as.iter().collect::<BTreeMap<_, _>>()).field("inserted_kb", &self.inserted_kb.iter().collect::<BTreeMap<_, _>>()).finish()
+                f.debug_struct("Tries").field("inserted_as", &self.inserted_as.iter().collect::<BTreeMap<_, _>>()).field("inserted_kb", &self.inserted_kb.iter().collect::<BTreeMap<_, _>>()).field("inserted_int", &self.inserted_int.iter().collect::<BTreeMap<_, _>>()).finish()
             }
         }
     };
@@ -1076,11 +1151,11 @@ pub fn compile_rw(contents: &str) -> String {
         use core::fmt::{Debug, Formatter, Result};
         use std::collections::{BTreeMap, HashMap};
 
-        use crate::analysis::{KnownBits, get_kb};
+        use crate::analysis::{KnownBits, Interval, get_kb, get_int};
         use crate::nonssa::{BinaryOp, Constant, Type, UnaryOp};
         use crate::saturator::Saturator;
         use crate::ssa::{KnotId, SSA, SSAId};
-        use crate::trie::{Trie, TupleValue, known_bits_tuple_field, node_tuple_field};
+        use crate::trie::{Trie, TupleValue, known_bits_tuple_field, interval_tuple_field, node_tuple_field};
 
         #trie_struct
 

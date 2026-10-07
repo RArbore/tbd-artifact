@@ -96,7 +96,7 @@
 (rule (a:(BitwiseAnd b c) (KnownBits b b_kb) (KnownBits c c_kb)) ((KnownBits a `b_kb.bitwise_and(&c_kb)`)))
 (rule (a:(BitwiseOr b c) (KnownBits b b_kb) (KnownBits c c_kb)) ((KnownBits a `b_kb.bitwise_or(&c_kb)`)))
 (rule (a:(BitwiseXor b c) (KnownBits b b_kb) (KnownBits c c_kb)) ((KnownBits a `b_kb.bitwise_xor(&c_kb)`)))
-(rule (a:(Knot[i64] kb _)) ((KnownBits a kb)))
+(rule (a:(Knot[i64] kb int _)) ((KnownBits a kb) (Interval a int)))
 
 (rule ((KnownBits a kb)) `let Some(cons) = kb.try_constant()` ((union a (Constant[i64] `cons`))))
 

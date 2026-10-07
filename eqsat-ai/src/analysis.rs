@@ -323,6 +323,22 @@ impl Interval {
     }
 }
 
+impl Default for KnownBits {
+    fn default() -> Self {
+        Self::Top
+    }
+}
+
+impl Display for Interval {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        match self {
+            Interval::Top => write!(f, "⊤")?,
+            Interval::Interval(low, high) => write!(f, "[{}, {}]", low, high)?,
+            Interval::Bot => write!(f, "⊥")?,
+        }
+    }
+}
+
 pub trait CommutativeMonoid: Clone + PartialEq + Eq {
     fn identity() -> Self;
     fn plus(&self, other: &Self) -> Self;

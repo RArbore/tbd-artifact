@@ -43,11 +43,13 @@ pub fn node_tuple_field(id: SSAId, ssa: SSA, column: usize) -> TupleValue {
                 rhs as TupleValue
             }
         }
-        Knot(id, _, kb) => {
+        Knot(id, _, kb, int) => {
             if column == 1 {
                 intern_kb(kb)
+            } else if column == 2 {
+                intern_int(int)
             } else {
-                assert_eq!(column, 2);
+                assert_eq!(column, 3);
                 id as TupleValue
             }
         }
@@ -60,6 +62,15 @@ pub fn known_bits_tuple_field(id: SSAId, kb: KnownBits, column: usize) -> TupleV
     } else {
         assert_eq!(column, 1);
         intern_kb(kb)
+    }
+}
+
+pub fn interval_tuple_field(id: SSAId, int: Interval, column: usize) -> TupleValue {
+    if column == 0 {
+        id as TupleValue
+    } else {
+        assert_eq!(column, 1);
+        intern_int(int)
     }
 }
 
