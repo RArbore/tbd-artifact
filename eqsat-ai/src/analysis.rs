@@ -1,3 +1,4 @@
+use core::cmp::{max, min};
 use core::fmt::{Display, Formatter, Result};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -180,6 +181,84 @@ impl Display for KnownBits {
             }
         }
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Interval {
+    Bot,
+    Interval(i64, i64),
+    Top,
+}
+
+impl Interval {
+    pub fn from_low_high(low: i64, high: i64) -> Self {
+        if low > high {
+            Self::Bot
+        } else {
+            Self::Interval(low, high)
+        }
+    }
+
+    pub fn from_constant(cons: i64) -> Self {
+        Self::Interval(cons, cons)
+    }
+
+    pub fn try_constant(&self) -> Option<i64> {
+        match self {
+            Interval::Bot => Some(0),
+            Interval::Interval(low, high) if low >= high => Some(*low),
+            _ => None,
+        }
+    }
+
+    pub fn is_constant(&self, cons: i64) -> bool {
+        self.leq(&Interval::from_constant(cons))
+    }
+
+    pub fn contains_constant(&self, cons: i64) -> bool {
+        Interval::from_constant(cons).leq(self)
+    }
+
+    pub fn meet(&self, other: &Self) -> Self {
+        match (*self, *other) {
+            (Interval::Bot, _) | (_, Interval::Bot) => Self::Bot,
+            (Interval::Top, a) | (a, Interval::Top) => a,
+            (Interval::Interval(low1, high1), Interval::Interval(low2, high2)) => {
+                Self::from_low_high(max(low1, low2), min(high1, high2))
+            }
+        }
+    }
+
+    pub fn join(&self, other: &Self) -> Self {
+        match (*self, *other) {
+            (Interval::Top, _) | (_, Interval::Top) => Self::Top,
+            (Interval::Bot, a) | (a, Interval::Bot) => a,
+            (Interval::Interval(low1, high1), Interval::Interval(low2, high2)) => {
+                Interval::Interval(min(low1, low2), max(high1, high2))
+            }
+        }
+    }
+
+    pub fn leq(&self, other: &Self) -> bool {
+        let first = *other == self.join(other);
+        let second = *self == self.meet(other);
+        assert_eq!(first, second);
+        first
+    }
+
+    pub fn neg(&self) -> Self {
+        if let Interval::Interval(low, high) = self {
+            if let Some(neg_low) = low.checked_neg()
+                && let Some(neg_high) = high.checked_neg()
+            {
+                Self::from_low_high(neg_high, neg_low)
+            } else {
+                Self::Top
+            }
+        } else {
+            *self
+        }
     }
 }
 
