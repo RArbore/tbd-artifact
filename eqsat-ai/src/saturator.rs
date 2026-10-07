@@ -524,6 +524,11 @@ impl Saturator {
             return;
         };
         while !self.ids.delta.is_empty() || !self.ids.delta_kb.is_empty() {
+            if self.is_contradiction_in_version(self.ids.current_version.unwrap()) {
+                self.ids.delta.clear();
+                self.ids.delta_kb.clear();
+                break;
+            }
             self.apply_edits();
 
             // Prepare worklist for rebuilding. The worklist should always contain only nodes that
