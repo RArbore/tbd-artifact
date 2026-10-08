@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, hash_map::Entry};
 
 use symbol_table::GlobalSymbol as Symbol;
 
@@ -14,6 +14,7 @@ pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonS
         vars: HashMap::new(),
         blocks: HashMap::new(),
         knot_map: KnotMap::default(),
+        old_analyses: HashMap::new(),
         saturator,
     };
 
@@ -58,6 +59,8 @@ struct AIContext<'a> {
     // Intern sets of variables and locations to KnotIds (knots are our name for "symbolic variables"
     // from Lemerre's paper).
     knot_map: KnotMap,
+    // Old analyses along widening edges.
+    old_analyses: HashMap<(SSABlockId, SSABlockId), Analysis>,
     // All building of the SSA program goes through the Saturator. This includes applying rewrite
     // rules and managing versions.
     saturator: &'a mut Saturator,
@@ -253,14 +256,36 @@ impl<'a> AIContext<'a> {
                 self.saturator.move_to_version(ssa_pred2);
                 self.saturator.saturate();
 
+                // Helper to implement widening.
+                let mut widen = |analysis, ssa_pred| {
+                    let Some(ssa_block) = self.blocks.get(&block).cloned() else {
+                        return analysis;
+                    };
+                    if ssa_pred < ssa_block {
+                        return analysis;
+                    }
+
+                    match self.old_analyses.entry((ssa_pred, ssa_block)) {
+                        Entry::Occupied(mut entry) => {
+                            let widened = entry.get().widen(&analysis);
+                            entry.insert(widened);
+                            widened
+                        }
+                        Entry::Vacant(entry) => {
+                            entry.insert(analysis);
+                            analysis
+                        }
+                    }
+                };
+
                 let mut pair_to_vars: HashMap<(SSAId, SSAId, Analysis), HashSet<Symbol>> =
                     HashMap::new();
                 for (var, value1) in &self.vars[&pred1] {
                     if let Some(value2) = self.vars[&pred2].get(var) {
                         let value1 = self.saturator.find_in_version(*value1, ssa_pred1);
                         let value2 = self.saturator.find_in_version(*value2, ssa_pred2);
-                        let analysis1 = self.saturator.analysis_in_version(value1, ssa_pred1);
-                        let analysis2 = self.saturator.analysis_in_version(value2, ssa_pred2);
+                        let analysis1 = widen(self.saturator.analysis_in_version(value1, ssa_pred1), ssa_pred1);
+                        let analysis2 = widen(self.saturator.analysis_in_version(value2, ssa_pred2), ssa_pred2);
                         // Group variables by pair of joined SSAIds.
                         pair_to_vars
                             .entry((value1, value2, analysis1.join(&analysis2)))
