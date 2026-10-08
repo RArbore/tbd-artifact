@@ -113,5 +113,14 @@
 (rule ((KnownBits a kb)) `let Some(cons) = kb.try_constant()` ((union a (Constant[i64] `cons`))))
 (rule ((Interval a int)) `let Some(cons) = int.try_constant()` ((union a (Constant[i64] `cons`))))
 
+(rule (a:(Constant[bool] true) a:(LT b (Constant[i64] c))) `let Some(c_minus_one) = c.checked_sub(1)` ((Interval b `Interval::from_high(c_minus_one)`)))
+(rule (a:(Constant[bool] true) a:(LE b (Constant[i64] c))) ((Interval b `Interval::from_high(c)`)))
+(rule (a:(Constant[bool] true) a:(GT b (Constant[i64] c))) `let Some(c_plus_one) = c.checked_add(1)` ((Interval b `Interval::from_low(c_plus_one)`)))
+(rule (a:(Constant[bool] true) a:(GE b (Constant[i64] c))) ((Interval b `Interval::from_low(c)`)))
+(rule (a:(Constant[bool] false) a:(LT b (Constant[i64] c))) ((Interval b `Interval::from_low(c)`)))
+(rule (a:(Constant[bool] false) a:(LE b (Constant[i64] c))) `let Some(c_plus_one) = c.checked_add(1)` ((Interval b `Interval::from_low(c_plus_one)`)))
+(rule (a:(Constant[bool] false) a:(GT b (Constant[i64] c))) ((Interval b `Interval::from_high(c)`)))
+(rule (a:(Constant[bool] false) a:(GE b (Constant[i64] c))) `let Some(c_minus_one) = c.checked_sub(1)` ((Interval b `Interval::from_high(c_minus_one)`)))
+
 (rule (a:(Constant[i64] b) a:(Constant[i64] c)) `b != c` (contradiction))
 (rule (a:(Constant[bool] true) a:(Constant[bool] false)) (contradiction))

@@ -200,6 +200,14 @@ impl Interval {
         }
     }
 
+    pub fn from_low(low: i64) -> Self {
+        Self::Interval(low, i64::MAX)
+    }
+
+    pub fn from_high(high: i64) -> Self {
+        Self::Interval(i64::MIN, high)
+    }
+
     pub fn from_constant(cons: i64) -> Self {
         Self::Interval(cons, cons)
     }

@@ -384,11 +384,11 @@ fn widen() {
     while x < 100 {
         x = x + 1;
     }
-    return 7;
+    return x;
 }
 "#;
     let (value, mut saturator) = get_return(text);
-    let correct = saturator.intern(SSA::Constant(Constant::I64(7)));
+    let correct = saturator.intern(SSA::Constant(Constant::I64(100)));
     assert_eq!(correct, value);
 }
 
