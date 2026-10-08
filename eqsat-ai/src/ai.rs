@@ -187,10 +187,11 @@ impl<'a> AIContext<'a> {
         assert!(!always_false || !always_true);
 
         if !(always_false && direction || always_true && !direction) {
-            if always_false && !direction || always_true && direction {
-                self.update_block(block, SSABlock::Identity(ssa_pred));
+            let ssa_block = if always_false && !direction || always_true && direction {
+                self.update_block(block, SSABlock::Identity(ssa_pred))
             } else {
-                self.update_block(block, SSABlock::Guard(ssa_pred, value, direction));
+                let ssa_block =
+                    self.update_block(block, SSABlock::Guard(ssa_pred, value, direction));
 
                 // When the guard is necessary, we want to assume the guard condition is either true
                 // or false (depending on `direction`) in the created version.
@@ -198,7 +199,9 @@ impl<'a> AIContext<'a> {
                 // We need to saturate after the union from the assumption, since jumping to a
                 // different version could cause the potential delta to be lost in this version.
                 self.saturator.saturate();
+                ssa_block
             };
+            assert!(ssa_pred < ssa_block);
             // Guards make no assignments.
             self.update_vars(block, self.vars[&pred].clone());
         }
@@ -217,7 +220,8 @@ impl<'a> AIContext<'a> {
         let mut vars = self.vars[&pred].clone();
         let canon_id = self.saturator.find(value);
         vars.insert(var, canon_id);
-        self.update_block(block, SSABlock::Identity(ssa_pred));
+        let ssa_block = self.update_block(block, SSABlock::Identity(ssa_pred));
+        assert!(ssa_pred < ssa_block);
         self.update_vars(block, vars);
     }
 
@@ -227,11 +231,15 @@ impl<'a> AIContext<'a> {
         match (self.is_bottom(pred1), self.is_bottom(pred2)) {
             (true, true) => {}
             (false, true) => {
-                self.update_block(block, SSABlock::Identity(self.blocks[&pred1]));
+                let ssa_pred = self.blocks[&pred1];
+                let ssa_block = self.update_block(block, SSABlock::Identity(ssa_pred));
+                assert!(ssa_pred < ssa_block);
                 self.update_vars(block, self.vars[&pred1].clone());
             }
             (true, false) => {
-                self.update_block(block, SSABlock::Identity(self.blocks[&pred2]));
+                let ssa_pred = self.blocks[&pred2];
+                let ssa_block = self.update_block(block, SSABlock::Identity(ssa_pred));
+                assert!(ssa_pred < ssa_block);
                 self.update_vars(block, self.vars[&pred2].clone());
             }
             (false, false) => {
@@ -331,7 +339,8 @@ impl<'a> AIContext<'a> {
             .into_iter()
             .map(|id| self.saturator.find(id))
             .collect();
-        let new_block = self.update_block(block, SSABlock::Return(ssa_pred, values));
-        self.saturator.ssa.add_exit(self.name, new_block);
+        let ssa_block = self.update_block(block, SSABlock::Return(ssa_pred, values));
+        assert!(ssa_pred < ssa_block);
+        self.saturator.ssa.add_exit(self.name, ssa_block);
     }
 }
