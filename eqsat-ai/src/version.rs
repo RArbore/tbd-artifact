@@ -3,7 +3,7 @@ use core::ptr::eq;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use crate::analysis::CommutativeMonoid;
+use crate::analysis::Lattice;
 use crate::ssa::{SSA, SSAId};
 
 // We use a sparse representation for union finds, because in the majority of versions there are
@@ -20,7 +20,7 @@ pub struct SparseUnionFind {
 // with using a layered union find, rather than the more complicated versioned union find, because we
 // only ever modify (at-the-moment) leaf versions.
 #[derive(Debug, Default)]
-pub struct Version<A: CommutativeMonoid> {
+pub struct Version<A: Lattice> {
     uf: SparseUnionFind,
     // Track an "analysis" value per e-class. If the map at this version doesn't contain an entry,
     // then the analysis value for the e-class is given by the parent version (recursively).
@@ -47,7 +47,7 @@ pub struct SparseUnionFindSet<'a> {
 }
 
 #[derive(Debug)]
-pub enum VersionSet<'a, A: CommutativeMonoid> {
+pub enum VersionSet<'a, A: Lattice> {
     Trivial(Option<SSAId>),
     NonTrivial {
         set_stack: Vec<SparseUnionFindSet<'a>>,
@@ -201,7 +201,7 @@ impl Iterator for SparseUnionFindSet<'_> {
     }
 }
 
-impl<A: CommutativeMonoid> Version<A> {
+impl<A: Lattice> Version<A> {
     pub fn child(parent: Rc<Version<A>>) -> Self {
         let level = parent.level + 1;
         Self {
@@ -273,7 +273,7 @@ impl<A: CommutativeMonoid> Version<A> {
             self.parent
                 .as_ref()
                 .map(|parent| parent.analysis(id))
-                .unwrap_or_else(|| A::identity())
+                .unwrap_or_else(|| A::top())
         })
     }
 
@@ -291,7 +291,7 @@ impl<A: CommutativeMonoid> Version<A> {
     {
         let x_analysis = self.analysis(x);
         let y_analysis = self.analysis(y);
-        let combined = x_analysis.plus(&y_analysis);
+        let combined = x_analysis.meet(&y_analysis);
         let (non_canon, old_analysis) = if canon == x {
             (y, x_analysis)
         } else {
@@ -411,7 +411,7 @@ impl<A: CommutativeMonoid> Version<A> {
     }
 }
 
-impl<A: CommutativeMonoid> Iterator for VersionSet<'_, A> {
+impl<A: Lattice> Iterator for VersionSet<'_, A> {
     type Item = SSAId;
 
     fn next(&mut self) -> Option<SSAId> {

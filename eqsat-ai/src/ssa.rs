@@ -24,6 +24,11 @@ pub enum SSA {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SSABlock {
     Entry,
+    // We map every reachable non-SSA block to a SSA block. For assign blocks, guards whose condition
+    // is always true, and merge blocks with one reachable predecessor, we want to simplify the CFG
+    // by removing them in the SSA CFG, but it turns out to be easier to still create a SSA CFG node
+    // for them that just does nothing interesting.
+    Identity(SSABlockId),
     Guard(SSABlockId, SSAId, bool),
     // The third field maps knots to SSA values corresponding to the two predecessors (think of these
     // like the inputs to a phi function).

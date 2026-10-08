@@ -339,62 +339,83 @@ impl Display for Interval {
     }
 }
 
-pub trait CommutativeMonoid: Clone + PartialEq + Eq {
-    fn identity() -> Self;
-    fn plus(&self, other: &Self) -> Self;
+pub trait Lattice: Clone + PartialEq + Eq {
+    fn top() -> Self;
+    fn meet(&self, other: &Self) -> Self;
+    fn join(&self, other: &Self) -> Self;
 }
 
-impl CommutativeMonoid for () {
-    fn identity() -> Self {
+impl Lattice for () {
+    fn top() -> Self {
         ()
     }
 
-    fn plus(&self, _: &Self) -> Self {
+    fn meet(&self, _: &Self) -> Self {
+        ()
+    }
+
+    fn join(&self, _: &Self) -> Self {
         ()
     }
 }
 
-impl CommutativeMonoid for usize {
-    fn identity() -> Self {
+impl Lattice for usize {
+    fn top() -> Self {
         0
     }
 
-    fn plus(&self, other: &Self) -> Self {
+    fn meet(&self, other: &Self) -> Self {
         *self + *other
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        min(*self, *other)
     }
 }
 
-impl CommutativeMonoid for KnownBits {
-    fn identity() -> Self {
+impl Lattice for KnownBits {
+    fn top() -> Self {
         Self::top()
     }
 
-    fn plus(&self, other: &Self) -> Self {
+    fn meet(&self, other: &Self) -> Self {
         self.meet(other)
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        self.join(other)
     }
 }
 
-impl CommutativeMonoid for Interval {
-    fn identity() -> Self {
+impl Lattice for Interval {
+    fn top() -> Self {
         Self::Top
     }
 
-    fn plus(&self, other: &Self) -> Self {
+    fn meet(&self, other: &Self) -> Self {
         self.meet(other)
     }
-}
 
-impl<A: CommutativeMonoid, B: CommutativeMonoid> CommutativeMonoid for (A, B) {
-    fn identity() -> Self {
-        (A::identity(), B::identity())
-    }
-
-    fn plus(&self, other: &Self) -> Self {
-        (self.0.plus(&other.0), self.1.plus(&other.1))
+    fn join(&self, other: &Self) -> Self {
+        self.join(other)
     }
 }
 
-// Global intern tables for analysis values.
+impl<A: Lattice, B: Lattice> Lattice for (A, B) {
+    fn top() -> Self {
+        (A::top(), B::top())
+    }
+
+    fn meet(&self, other: &Self) -> Self {
+        (self.0.meet(&other.0), self.1.meet(&other.1))
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        (self.0.join(&other.0), self.1.join(&other.1))
+    }
+}
+
+// Global intern tables for analysis values. This is hacky.
 type Interner<T> = (HashMap<T, TupleValue>, Vec<T>);
 static KB_INTERN: LazyLock<Mutex<Interner<KnownBits>>> =
     LazyLock::new(|| Mutex::new(Default::default()));

@@ -2,7 +2,7 @@ use core::mem::take;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
-use crate::analysis::{CommutativeMonoid, Interval, KnownBits};
+use crate::analysis::{Interval, KnownBits, Lattice};
 use crate::rw::{Tries, apply_rws};
 use crate::ssa::{Analysis, SSA, SSABlock, SSABlockId, SSAId, SSAProgram};
 use crate::version::Version;
@@ -144,7 +144,7 @@ impl IDManager {
         if let Some(version) = self.current_version {
             self.analysis_in_version(id, version)
         } else {
-            Analysis::identity()
+            Analysis::top()
         }
     }
 
@@ -257,7 +257,7 @@ impl Saturator {
             self.analysis_trie_edits
                 .push(AnalysisTrieEdit::AddAnalysis {
                     id,
-                    analysis: Analysis::identity(),
+                    analysis: Analysis::top(),
                 });
         }
         canon_id
@@ -283,7 +283,7 @@ impl Saturator {
             panic!()
         };
         let old_analysis = version.analysis(id);
-        let new_analysis = old_analysis.plus(&analysis);
+        let new_analysis = old_analysis.meet(&analysis);
         if old_analysis != new_analysis {
             version.set_analysis(id, new_analysis);
             self.ids.delta_analysis.insert(id);
@@ -300,7 +300,7 @@ impl Saturator {
         use VersionState::*;
         let pred_version_rc = match self.ssa.get_block(block) {
             Entry => None,
-            Guard(pred, _, _) | Return(pred, _) => {
+            Identity(pred) | Guard(pred, _, _) | Return(pred, _) => {
                 let state = self.ids.versions.get_mut(pred).unwrap();
                 let rc = match state {
                     Mutable(version) => {

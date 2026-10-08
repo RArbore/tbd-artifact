@@ -15,26 +15,6 @@ use crate::ssa::*;
 use crate::trie::*;
 use crate::version::*;
 
-fn get_return_no_control_flow(text: &str) -> (SSAId, Saturator) {
-    let parsed = ProgramParser::new().parse(text).unwrap();
-    assert_eq!(parsed.len(), 1);
-    let mut saturator = Saturator::default();
-    for (name, ast) in parsed {
-        let nonssa = convert_to_cfg(ast);
-        abstract_interpret(&mut saturator, name, &nonssa);
-        assert_eq!(saturator.ssa.get_block(0), &SSABlock::Entry);
-        let SSABlock::Return(0, values) = saturator.ssa.get_block(1) else {
-            panic!("{:?}", saturator.ssa)
-        };
-        assert_eq!(values.len(), 1);
-        let value = values[0];
-        saturator.move_to_version(1);
-        saturator.check_trie_consistency();
-        return (value, saturator);
-    }
-    panic!()
-}
-
 fn get_return(text: &str) -> (SSAId, Saturator) {
     let parsed = ProgramParser::new().parse(text).unwrap();
     assert_eq!(parsed.len(), 1);
@@ -66,7 +46,7 @@ fn basic() {
 	return y + z;
 }
 "#;
-    let (value, mut saturator) = get_return_no_control_flow(text);
+    let (value, mut saturator) = get_return(text);
     let five = saturator.intern(SSA::Constant(Constant::I64(5)));
     let seven = saturator.intern(SSA::Constant(Constant::I64(7)));
     let add = saturator.intern(SSA::Binary(BinaryOp::Add, five, seven));
@@ -85,7 +65,7 @@ fn branch() {
 	return x;
 }
 "#;
-    let (value, mut saturator) = get_return_no_control_flow(text);
+    let (value, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(9)));
     assert_eq!(correct, value);
 }
@@ -99,7 +79,7 @@ fn add() {
 	return x + y;
 }
 "#;
-    let (value, mut saturator) = get_return_no_control_flow(text);
+    let (value, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(14)));
     assert_eq!(correct, value);
 }
@@ -118,7 +98,7 @@ fn loop() {
     return 7;
 }
 "#;
-    let (value, mut saturator) = get_return_no_control_flow(text);
+    let (value, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(5)));
     assert_eq!(correct, value);
 }
@@ -143,7 +123,7 @@ fn gvn(x: i64) {
 #[test]
 fn ai06() {
     let text = r#"
-fn loop() {
+fn nested_flow() {
 	x = 5;
     if x > 3 {
         if x < 4 {
@@ -160,7 +140,7 @@ fn loop() {
     }
 }
 "#;
-    let (value, mut saturator) = get_return_no_control_flow(text);
+    let (value, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(2)));
     assert_eq!(correct, value);
 }
@@ -168,7 +148,7 @@ fn loop() {
 #[test]
 fn ai07() {
     let text = r#"
-fn flow(x: bool) {
+fn nested_flow(x: bool) {
     if x {
         if x {
             y = 42;
@@ -359,8 +339,8 @@ fn simplified(y: i64) {
     let (value, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Param(0, Type::I64));
     assert_eq!(correct, value);
-    // NOTE: This may fail if we implement a backwards transfer for LT in KnownBits.
-    let correct = saturator.intern(SSA::Knot(0, Type::I64, Analysis::identity()));
+    // NOTE: This may fail if we implement a backwards transfer for LT.
+    let correct = saturator.intern(SSA::Knot(0, Type::I64, Analysis::top()));
     assert_eq!(correct, value);
 }
 
@@ -394,6 +374,22 @@ fn contradiction(x: i64) {
     let incorrect = saturator.intern(SSA::Constant(Constant::I64(5)));
     assert_eq!(correct, value);
     assert_ne!(incorrect, value);
+}
+
+#[test]
+fn ai20() {
+    let text = r#"
+fn widen() {
+    x = 0;
+    while x < 100 {
+        x = x + 1;
+    }
+    return 7;
+}
+"#;
+    let (value, mut saturator) = get_return(text);
+    let correct = saturator.intern(SSA::Constant(Constant::I64(7)));
+    assert_eq!(correct, value);
 }
 
 #[test]

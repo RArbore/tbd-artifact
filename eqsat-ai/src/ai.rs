@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use symbol_table::GlobalSymbol as Symbol;
 
-use crate::analysis::CommutativeMonoid;
+use crate::analysis::Lattice;
 use crate::nonssa::{Block, BlockId, Constant, Expr, NonSSAFunc, Type};
 use crate::saturator::Saturator;
 use crate::ssa::{Analysis, KnotId, SSA, SSABlock, SSABlockId, SSAId};
@@ -53,12 +53,8 @@ struct AIContext<'a> {
     name: Symbol,
     // At each (visited) original block, map each variable to an SSA value.
     vars: HashMap<BlockId, VarMap>,
-    // Map each (visited) original block to a SSA block - also indicate whether this SSA block is
-    // specific to this non-SSA block or not. Intuitively, a non-SSA block may go from not having a
-    // SSA block made for it to having a SSA block made for it (but not the other way around) - when
-    // this happens, we need to allocate a fresh SSABlockId for the created SSA block, but we only
-    // want to do this once, so the analysis terminates.
-    blocks: HashMap<BlockId, (SSABlockId, bool)>,
+    // Map each (visited) original block to a SSA block.
+    blocks: HashMap<BlockId, SSABlockId>,
     // Intern sets of variables and locations to KnotIds (knots are our name for "symbolic variables"
     // from Lemerre's paper).
     knot_map: KnotMap,
@@ -84,54 +80,34 @@ impl<'a> AIContext<'a> {
         }
     }
 
-    fn update_new_block(&mut self, block_id: BlockId, new_ssa_block: SSABlock) -> SSABlockId {
-        let ssa_block_id = if let Some((old_ssa_block_id, true)) = self.blocks.get(&block_id) {
-            // If we already created a new SSA block for this non-SSA block, re-use the SSABlockId.
+    fn update_block(&mut self, block_id: BlockId, new_ssa_block: SSABlock) -> SSABlockId {
+        let ssa_block_id = if let Some(old_ssa_block_id) = self.blocks.get(&block_id) {
+            // If we already created a SSA block for this non-SSA block, re-use the SSABlockId.
             self.saturator
                 .ssa
                 .set_block(new_ssa_block, *old_ssa_block_id);
-            // Since we re-used the SSABlockId, we don't need to update successors.
             *old_ssa_block_id
         } else {
-            // If we haven't created a new SSA block for this non-SSA block (either because we
-            // haven't visited this non-SSA block yet or because we have and previously assigned it
-            // a non-fresh SSA block), then create a new SSABlockId and map the non-SSA block to it.
+            // If we haven't created a SSA block for this non-SSA block, create a new SSABlockId.
             let new_ssa_block_id = self.saturator.ssa.add_block(new_ssa_block);
-            self.blocks.insert(block_id, (new_ssa_block_id, true));
-            // Since we changed the SSABlockId, we need to update successors.
+            self.blocks.insert(block_id, new_ssa_block_id);
             new_ssa_block_id
         };
 
-        // Create a new version every time we visit a block.
+        // Create a new version every time we visit a block. This also moves to the new version.
         self.saturator.create_version(ssa_block_id);
         ssa_block_id
-    }
-
-    fn update_block(&mut self, block_id: BlockId, ssa_block_id: SSABlockId) {
-        assert!(
-            self.blocks
-                .get(&block_id)
-                .map(|(_, fresh)| !fresh)
-                .unwrap_or(true)
-        );
-        self.blocks
-            .insert(block_id, (ssa_block_id, false))
-            .map(|(_, old_is_specific)| assert!(!old_is_specific));
     }
 
     fn is_bottom(&self, block_id: BlockId) -> bool {
         let has_vars = self.vars.contains_key(&block_id);
         if let Some(ssa_block_id) = self.blocks.get(&block_id) {
             assert!(has_vars);
-            self.saturator.is_contradiction_in_version(ssa_block_id.0)
+            self.saturator.is_contradiction_in_version(*ssa_block_id)
         } else {
             assert!(!has_vars);
             true
         }
-    }
-
-    fn to_ssa_block(&self, block_id: BlockId) -> SSABlockId {
-        self.blocks[&block_id].0
     }
 
     fn visit_expr(&mut self, expr: &Expr, vars: BlockId) -> SSAId {
@@ -174,7 +150,7 @@ impl<'a> AIContext<'a> {
     }
 
     fn visit_entry(&mut self, nonssa: &NonSSAFunc, block: BlockId) {
-        self.update_new_block(block, SSABlock::Entry);
+        self.update_block(block, SSABlock::Entry);
         let vars = nonssa
             .params
             .iter()
@@ -197,7 +173,7 @@ impl<'a> AIContext<'a> {
         if self.is_bottom(pred) {
             return;
         }
-        let ssa_pred = self.to_ssa_block(pred);
+        let ssa_pred = self.blocks[&pred];
         self.saturator.move_to_version(ssa_pred);
         let value = self.visit_expr(cond, pred);
         assert_eq!(self.saturator.ssa.ty(value), Type::Bool);
@@ -212,9 +188,9 @@ impl<'a> AIContext<'a> {
 
         if !(always_false && direction || always_true && !direction) {
             if always_false && !direction || always_true && direction {
-                self.update_block(block, ssa_pred);
+                self.update_block(block, SSABlock::Identity(ssa_pred));
             } else {
-                self.update_new_block(block, SSABlock::Guard(ssa_pred, value, direction));
+                self.update_block(block, SSABlock::Guard(ssa_pred, value, direction));
 
                 // When the guard is necessary, we want to assume the guard condition is either true
                 // or false (depending on `direction`) in the created version.
@@ -232,7 +208,7 @@ impl<'a> AIContext<'a> {
         if self.is_bottom(pred) {
             return;
         }
-        let ssa_pred = self.to_ssa_block(pred);
+        let ssa_pred = self.blocks[&pred];
         self.saturator.move_to_version(ssa_pred);
         let value = self.visit_expr(expr, pred);
         // We need to saturate after every assignment because a jump to an arbitrary other version
@@ -241,7 +217,7 @@ impl<'a> AIContext<'a> {
         let mut vars = self.vars[&pred].clone();
         let canon_id = self.saturator.find(value);
         vars.insert(var, canon_id);
-        self.update_block(block, ssa_pred);
+        self.update_block(block, SSABlock::Identity(ssa_pred));
         self.update_vars(block, vars);
     }
 
@@ -251,16 +227,16 @@ impl<'a> AIContext<'a> {
         match (self.is_bottom(pred1), self.is_bottom(pred2)) {
             (true, true) => {}
             (false, true) => {
-                self.update_block(block, self.to_ssa_block(pred1));
+                self.update_block(block, SSABlock::Identity(self.blocks[&pred1]));
                 self.update_vars(block, self.vars[&pred1].clone());
             }
             (true, false) => {
-                self.update_block(block, self.to_ssa_block(pred2));
+                self.update_block(block, SSABlock::Identity(self.blocks[&pred2]));
                 self.update_vars(block, self.vars[&pred2].clone());
             }
             (false, false) => {
-                let ssa_pred1 = self.to_ssa_block(pred1);
-                let ssa_pred2 = self.to_ssa_block(pred2);
+                let ssa_pred1 = self.blocks[&pred1];
+                let ssa_pred2 = self.blocks[&pred2];
                 assert_ne!(ssa_pred1, ssa_pred2);
 
                 // Saturate because discovered equalities may help us avoid making knots.
@@ -279,7 +255,7 @@ impl<'a> AIContext<'a> {
                         let analysis2 = self.saturator.analysis_in_version(value2, ssa_pred2);
                         // Group variables by pair of joined SSAIds.
                         pair_to_vars
-                            .entry((value1, value2, analysis1.plus(&analysis2)))
+                            .entry((value1, value2, analysis1.join(&analysis2)))
                             .or_default()
                             .insert(*var);
                     }
@@ -295,8 +271,8 @@ impl<'a> AIContext<'a> {
                     knot_values.insert(knot_id, (value1, value2));
                     pair_to_knot.push((value1, value2, vars, knot_id, analysis));
                 }
-                let new_block = self
-                    .update_new_block(block, SSABlock::Merge(ssa_pred1, ssa_pred2, knot_values));
+                let new_block =
+                    self.update_block(block, SSABlock::Merge(ssa_pred1, ssa_pred2, knot_values));
                 assert_ne!(new_block, ssa_pred1);
                 assert_ne!(new_block, ssa_pred2);
 
@@ -340,7 +316,7 @@ impl<'a> AIContext<'a> {
         if self.is_bottom(pred) {
             return;
         }
-        let ssa_pred = self.to_ssa_block(pred);
+        let ssa_pred = self.blocks[&pred];
         self.saturator.move_to_version(ssa_pred);
         let values: Vec<_> = exprs
             .into_iter()
@@ -355,7 +331,7 @@ impl<'a> AIContext<'a> {
             .into_iter()
             .map(|id| self.saturator.find(id))
             .collect();
-        let new_block = self.update_new_block(block, SSABlock::Return(ssa_pred, values));
+        let new_block = self.update_block(block, SSABlock::Return(ssa_pred, values));
         self.saturator.ssa.add_exit(self.name, new_block);
     }
 }
