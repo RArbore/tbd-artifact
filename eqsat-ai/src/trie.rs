@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::analysis::{KnownBits, intern_kb};
+use crate::analysis::{Interval, KnownBits, intern_int, intern_kb};
 use crate::nonssa::Constant;
 use crate::ssa::{SSA, SSAId};
 
@@ -43,7 +43,7 @@ pub fn node_tuple_field(id: SSAId, ssa: SSA, column: usize) -> TupleValue {
                 rhs as TupleValue
             }
         }
-        Knot(id, _, kb, int) => {
+        Knot(id, _, (kb, int)) => {
             if column == 1 {
                 intern_kb(kb)
             } else if column == 2 {

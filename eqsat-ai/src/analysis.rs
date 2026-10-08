@@ -323,7 +323,7 @@ impl Interval {
     }
 }
 
-impl Default for KnownBits {
+impl Default for Interval {
     fn default() -> Self {
         Self::Top
     }
@@ -332,9 +332,9 @@ impl Default for KnownBits {
 impl Display for Interval {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
-            Interval::Top => write!(f, "⊤")?,
-            Interval::Interval(low, high) => write!(f, "[{}, {}]", low, high)?,
-            Interval::Bot => write!(f, "⊥")?,
+            Interval::Top => write!(f, "⊤"),
+            Interval::Interval(low, high) => write!(f, "[{}, {}]", low, high),
+            Interval::Bot => write!(f, "⊥"),
         }
     }
 }
@@ -367,6 +367,16 @@ impl CommutativeMonoid for usize {
 impl CommutativeMonoid for KnownBits {
     fn identity() -> Self {
         Self::top()
+    }
+
+    fn plus(&self, other: &Self) -> Self {
+        self.meet(other)
+    }
+}
+
+impl CommutativeMonoid for Interval {
+    fn identity() -> Self {
+        Self::Top
     }
 
     fn plus(&self, other: &Self) -> Self {

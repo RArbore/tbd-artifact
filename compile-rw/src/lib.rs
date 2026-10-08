@@ -585,26 +585,7 @@ fn build_pattern(rhs: &Pattern) -> TokenStream {
                 }
             }
         }
-        Pattern::Knot {
-            ty,
-            kb,
-            int,
-            knot_id,
-            label: _,
-        } => {
-            let kb = build_pattern(kb);
-            let int = build_pattern(int);
-            let knot_id = build_pattern(knot_id);
-            let ty_variant = format_ident!("{}", ty.compiler_type().as_str());
-            quote! {
-                {
-                    let kb = #kb;
-                    let int = #int;
-                    let knot_id = #knot_id;
-                    saturator.intern(SSA::Knot(knot_id, Type::#ty_variant, kb, int))
-                }
-            }
-        }
+        Pattern::Knot { .. } => panic!(),
         Pattern::KnownBits { id, kb } => {
             let id = build_pattern(id);
             let kb = build_pattern(kb);
@@ -1028,12 +1009,20 @@ pub fn compile_rw(contents: &str) -> String {
                 self.inserted_as.get(&non_canon_id).cloned()
             }
 
-            pub fn inserted_kb(&self, canon_id: SSAId) -> Option<KnownBits> {
+            fn inserted_kb(&self, canon_id: SSAId) -> Option<KnownBits> {
                 self.inserted_kb.get(&canon_id).cloned()
             }
 
-            pub fn inserted_int(&self, canon_id: SSAId) -> Option<Interval> {
+            fn inserted_int(&self, canon_id: SSAId) -> Option<Interval> {
                 self.inserted_int.get(&canon_id).cloned()
+            }
+
+            pub fn inserted_analysis(&self, canon_id: SSAId) -> Option<Analysis> {
+                match (self.inserted_kb(canon_id), self.inserted_int(canon_id)) {
+                    (Some(kb), Some(int)) => Some((kb, int)),
+                    (None, None) => None,
+                    _ => panic!(),
+                }
             }
 
             pub fn insert_tuple(&mut self, canon_id: SSAId, value: SSA, non_canon_id: SSAId, is_delta: bool) {
@@ -1081,7 +1070,7 @@ pub fn compile_rw(contents: &str) -> String {
                 }
             }
 
-            pub fn insert_kb(&mut self, canon_id: SSAId, value: KnownBits, is_delta: bool) {
+            fn insert_kb(&mut self, canon_id: SSAId, value: KnownBits, is_delta: bool) {
                 if !is_delta {
                     assert!(self.inserted_kb.insert(canon_id, value).is_none());
                 }
@@ -1089,14 +1078,14 @@ pub fn compile_rw(contents: &str) -> String {
                 #kb_insert
             }
 
-            pub fn remove_kb(&mut self, canon_id: SSAId, value: KnownBits) {
+            fn remove_kb(&mut self, canon_id: SSAId, value: KnownBits) {
                 let is_delta = false;
                 assert_eq!(self.inserted_kb.remove(&canon_id), Some(value));
                 let non_canon_id = canon_id;
                 #kb_remove
             }
 
-            pub fn insert_int(&mut self, canon_id: SSAId, value: Interval, is_delta: bool) {
+            fn insert_int(&mut self, canon_id: SSAId, value: Interval, is_delta: bool) {
                 if !is_delta {
                     assert!(self.inserted_int.insert(canon_id, value).is_none());
                 }
@@ -1104,11 +1093,21 @@ pub fn compile_rw(contents: &str) -> String {
                 #int_insert
             }
 
-            pub fn remove_int(&mut self, canon_id: SSAId, value: Interval) {
+            fn remove_int(&mut self, canon_id: SSAId, value: Interval) {
                 let is_delta = false;
                 assert_eq!(self.inserted_int.remove(&canon_id), Some(value));
                 let non_canon_id = canon_id;
                 #int_remove
+            }
+
+            pub fn insert_analysis(&mut self, canon_id: SSAId, analysis: Analysis, is_delta: bool) {
+                self.insert_kb(canon_id, analysis.0, is_delta);
+                self.insert_int(canon_id, analysis.1, is_delta);
+            }
+
+            pub fn remove_analysis(&mut self, canon_id: SSAId, analysis: Analysis) {
+                self.remove_kb(canon_id, analysis.0);
+                self.remove_int(canon_id, analysis.1);
             }
 
             pub fn clear_delta(&mut self) {
@@ -1151,11 +1150,11 @@ pub fn compile_rw(contents: &str) -> String {
         use core::fmt::{Debug, Formatter, Result};
         use std::collections::{BTreeMap, HashMap};
 
-        use crate::analysis::{KnownBits, Interval, get_kb, get_int};
+        use crate::analysis::{Interval, KnownBits, get_int, get_kb};
         use crate::nonssa::{BinaryOp, Constant, Type, UnaryOp};
         use crate::saturator::Saturator;
-        use crate::ssa::{KnotId, SSA, SSAId};
-        use crate::trie::{Trie, TupleValue, known_bits_tuple_field, interval_tuple_field, node_tuple_field};
+        use crate::ssa::{Analysis, KnotId, SSA, SSAId};
+        use crate::trie::{Trie, TupleValue, interval_tuple_field, known_bits_tuple_field, node_tuple_field};
 
         #trie_struct
 

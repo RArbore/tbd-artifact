@@ -2,12 +2,10 @@ use core::mem::take;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
-use crate::analysis::{CommutativeMonoid, KnownBits};
+use crate::analysis::{CommutativeMonoid, Interval, KnownBits};
 use crate::rw::{Tries, apply_rws};
-use crate::ssa::{SSA, SSABlock, SSABlockId, SSAId, SSAProgram};
+use crate::ssa::{Analysis, SSA, SSABlock, SSABlockId, SSAId, SSAProgram};
 use crate::version::Version;
-
-pub type Analysis = KnownBits;
 
 #[derive(Debug)]
 enum VersionState {
@@ -47,8 +45,8 @@ enum NodeTrieEdit {
 
 #[derive(Debug)]
 enum AnalysisTrieEdit {
-    AddKnownBits { id: SSAId, kb: KnownBits },
-    RemoveKnownBits { id: SSAId },
+    AddAnalysis { id: SSAId, analysis: Analysis },
+    RemoveAnalysis { id: SSAId },
 }
 
 // Because Rust does not have field borrows, we have to do silly things sometimes to convey to the
@@ -63,10 +61,10 @@ struct IDManager {
     // ...since the last iteration of rewriting.
     delta: HashSet<SSAId>,
     // What nodes have either been:
-    // 1. `Saturator::analyze_kb` called on their ID...
+    // 1. `Saturator::analyze_analysis` called on their ID...
     // 2. Unioned with another node...
     // ...and their analysis value changed since the last iteration of rewriting.
-    delta_kb: HashSet<SSAId>,
+    delta_analysis: HashSet<SSAId>,
     // Store an empty root version. This is needed so we have a well-defined LCA between old and new
     // versions for the entry block.
     root_version: Rc<Version<Analysis>>,
@@ -135,7 +133,7 @@ impl IDManager {
             },
             |canon_id, non_canon_id, old_analysis, combined| {
                 if old_analysis != combined {
-                    self.delta_kb.insert(canon_id);
+                    self.delta_analysis.insert(canon_id);
                 }
                 fn_for_changed_analysis(canon_id, non_canon_id, old_analysis, combined);
             },
@@ -205,11 +203,11 @@ impl Saturator {
             },
             |canon_id, non_canon_id, _, combined| {
                 self.analysis_trie_edits
-                    .push(AnalysisTrieEdit::RemoveKnownBits { id: non_canon_id });
+                    .push(AnalysisTrieEdit::RemoveAnalysis { id: non_canon_id });
                 self.analysis_trie_edits
-                    .push(AnalysisTrieEdit::AddKnownBits {
+                    .push(AnalysisTrieEdit::AddAnalysis {
                         id: canon_id,
-                        kb: combined,
+                        analysis: combined,
                     });
             },
         )
@@ -257,15 +255,23 @@ impl Saturator {
             self.node_trie_edits
                 .push(NodeTrieEdit::Intern { id, canon_id });
             self.analysis_trie_edits
-                .push(AnalysisTrieEdit::AddKnownBits {
+                .push(AnalysisTrieEdit::AddAnalysis {
                     id,
-                    kb: KnownBits::top(),
+                    analysis: Analysis::identity(),
                 });
         }
         canon_id
     }
 
-    pub fn analyze_kb(&mut self, mut id: SSAId, kb: KnownBits) {
+    pub fn analyze_kb(&mut self, id: SSAId, kb: KnownBits) {
+        self.analyze(id, (kb, Interval::Top));
+    }
+
+    pub fn analyze_int(&mut self, id: SSAId, int: Interval) {
+        self.analyze(id, (KnownBits::top(), int));
+    }
+
+    pub fn analyze(&mut self, mut id: SSAId, analysis: Analysis) {
         // Other rules that may have executed since we edited the trie may have caused unions.
         id = self.find(id);
         let VersionState::Mutable(version) = self
@@ -277,14 +283,14 @@ impl Saturator {
             panic!()
         };
         let old_analysis = version.analysis(id);
-        let new_analysis = old_analysis.meet(&kb);
+        let new_analysis = old_analysis.plus(&analysis);
         if old_analysis != new_analysis {
             version.set_analysis(id, new_analysis);
-            self.ids.delta_kb.insert(id);
+            self.ids.delta_analysis.insert(id);
             self.analysis_trie_edits
-                .push(AnalysisTrieEdit::AddKnownBits {
+                .push(AnalysisTrieEdit::AddAnalysis {
                     id,
-                    kb: new_analysis,
+                    analysis: new_analysis,
                 });
         }
     }
@@ -327,7 +333,7 @@ impl Saturator {
 
     pub fn traverse_to_version(&mut self, version: &Version<Analysis>) {
         assert!(self.ids.delta.is_empty());
-        assert!(self.ids.delta_kb.is_empty());
+        assert!(self.ids.delta_analysis.is_empty());
         self.apply_edits();
         let last_version = self
             .ids
@@ -370,9 +376,9 @@ impl Saturator {
                     );
                 }
 
-                let kb = parent.analysis(id);
+                let analysis = parent.analysis(id);
                 Self::apply_analysis_edit(
-                    AnalysisTrieEdit::AddKnownBits { id, kb },
+                    AnalysisTrieEdit::AddAnalysis { id, analysis },
                     &mut self.tries,
                 );
             }
@@ -380,9 +386,9 @@ impl Saturator {
             // And any nodes with version-specific analysis values induce trie edits.
             for id in version.analyzed_ids_at_level() {
                 assert_eq!(id, version.find(id));
-                let kb = parent.analysis(id);
+                let analysis = parent.analysis(id);
                 Self::apply_analysis_edit(
-                    AnalysisTrieEdit::AddKnownBits { id, kb },
+                    AnalysisTrieEdit::AddAnalysis { id, analysis },
                     &mut self.tries,
                 );
             }
@@ -412,18 +418,15 @@ impl Saturator {
                     );
                 }
 
-                Self::apply_analysis_edit(
-                    AnalysisTrieEdit::RemoveKnownBits { id },
-                    &mut self.tries,
-                );
+                Self::apply_analysis_edit(AnalysisTrieEdit::RemoveAnalysis { id }, &mut self.tries);
             }
 
             // And any nodes with version-specific analysis values induce trie edits.
             for id in version.analyzed_ids_at_level() {
                 assert_eq!(id, version.find(id));
-                let kb = version.analysis(id);
+                let analysis = version.analysis(id);
                 Self::apply_analysis_edit(
-                    AnalysisTrieEdit::AddKnownBits { id, kb },
+                    AnalysisTrieEdit::AddAnalysis { id, analysis },
                     &mut self.tries,
                 );
             }
@@ -494,15 +497,15 @@ impl Saturator {
     fn apply_analysis_edit(edit: AnalysisTrieEdit, tries: &mut Tries) {
         use AnalysisTrieEdit::*;
         match edit {
-            AddKnownBits { id, kb } => {
-                if let Some(kb) = tries.inserted_kb(id) {
-                    tries.remove_kb(id, kb);
+            AddAnalysis { id, analysis } => {
+                if let Some(analysis) = tries.inserted_analysis(id) {
+                    tries.remove_analysis(id, analysis);
                 }
-                tries.insert_kb(id, kb, false);
+                tries.insert_analysis(id, analysis, false);
             }
-            RemoveKnownBits { id } => {
-                if let Some(kb) = tries.inserted_kb(id) {
-                    tries.remove_kb(id, kb);
+            RemoveAnalysis { id } => {
+                if let Some(analysis) = tries.inserted_analysis(id) {
+                    tries.remove_analysis(id, analysis);
                 }
             }
         }
@@ -520,13 +523,13 @@ impl Saturator {
     pub fn saturate(&mut self) {
         if let VersionState::Immutable(_) = self.ids.versions[&self.ids.current_version.unwrap()] {
             assert!(self.ids.delta.is_empty());
-            assert!(self.ids.delta_kb.is_empty());
+            assert!(self.ids.delta_analysis.is_empty());
             return;
         };
-        while !self.ids.delta.is_empty() || !self.ids.delta_kb.is_empty() {
+        while !self.ids.delta.is_empty() || !self.ids.delta_analysis.is_empty() {
             if self.is_contradiction_in_version(self.ids.current_version.unwrap()) {
                 self.ids.delta.clear();
-                self.ids.delta_kb.clear();
+                self.ids.delta_analysis.clear();
                 break;
             }
             self.apply_edits();
@@ -565,11 +568,11 @@ impl Saturator {
                     },
                     |canon_id, non_canon_id, _, combined| {
                         self.analysis_trie_edits
-                            .push(AnalysisTrieEdit::RemoveKnownBits { id: non_canon_id });
+                            .push(AnalysisTrieEdit::RemoveAnalysis { id: non_canon_id });
                         self.analysis_trie_edits
-                            .push(AnalysisTrieEdit::AddKnownBits {
+                            .push(AnalysisTrieEdit::AddAnalysis {
                                 id: canon_id,
-                                kb: combined,
+                                analysis: combined,
                             });
                     },
                 );
@@ -584,13 +587,13 @@ impl Saturator {
                     tries.insert_tuple(self.ids.find(*id), node, *id, true);
                 }
             }
-            for id in &self.ids.delta_kb {
+            for id in &self.ids.delta_analysis {
                 if *id == self.ids.find(*id) {
-                    tries.insert_kb(*id, self.ids.analysis(*id), true);
+                    tries.insert_analysis(*id, self.ids.analysis(*id), true);
                 }
             }
             self.ids.delta.clear();
-            self.ids.delta_kb.clear();
+            self.ids.delta_analysis.clear();
 
             apply_rws::<false>(&tries, self);
             tries.clear_delta();
@@ -610,7 +613,7 @@ impl Saturator {
                 correct.insert_tuple(canon_id, node, id, false);
             }
             if id == canon_id {
-                correct.insert_kb(id, self.ids.analysis(id), false);
+                correct.insert_analysis(id, self.ids.analysis(id), false);
             }
         }
         assert_eq!(correct, self.tries);

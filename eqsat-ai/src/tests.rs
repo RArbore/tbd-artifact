@@ -360,7 +360,7 @@ fn simplified(y: i64) {
     let correct = saturator.intern(SSA::Param(0, Type::I64));
     assert_eq!(correct, value);
     // NOTE: This may fail if we implement a backwards transfer for LT in KnownBits.
-    let correct = saturator.intern(SSA::Knot(0, Type::I64, KnownBits::top()));
+    let correct = saturator.intern(SSA::Knot(0, Type::I64, Analysis::identity()));
     assert_eq!(correct, value);
 }
 

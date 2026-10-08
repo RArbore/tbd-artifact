@@ -2,10 +2,10 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use symbol_table::GlobalSymbol as Symbol;
 
-use crate::analysis::KnownBits;
+use crate::analysis::CommutativeMonoid;
 use crate::nonssa::{Block, BlockId, Constant, Expr, NonSSAFunc, Type};
 use crate::saturator::Saturator;
-use crate::ssa::{KnotId, SSA, SSABlock, SSABlockId, SSAId};
+use crate::ssa::{Analysis, KnotId, SSA, SSABlock, SSABlockId, SSAId};
 
 pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonSSAFunc) {
     let rpo = nonssa.rpo();
@@ -35,12 +35,12 @@ type VarMap = HashMap<Symbol, SSAId>;
 
 // Intern tuples of BlockId, variable sets, and analyses to KnotId.
 #[derive(Debug, Default)]
-struct KnotMap(HashMap<(BlockId, BTreeSet<Symbol>, KnownBits), KnotId>);
+struct KnotMap(HashMap<(BlockId, BTreeSet<Symbol>, Analysis), KnotId>);
 
 impl KnotMap {
-    fn intern_knot(&mut self, block: BlockId, var: BTreeSet<Symbol>, kb: KnownBits) -> KnotId {
+    fn intern_knot(&mut self, block: BlockId, var: BTreeSet<Symbol>, analysis: Analysis) -> KnotId {
         let new_id = self.0.len();
-        let entry = self.0.entry((block, var, kb));
+        let entry = self.0.entry((block, var, analysis));
         *entry.or_insert(new_id)
     }
 
@@ -269,17 +269,17 @@ impl<'a> AIContext<'a> {
                 self.saturator.move_to_version(ssa_pred2);
                 self.saturator.saturate();
 
-                let mut pair_to_vars: HashMap<(SSAId, SSAId, KnownBits), HashSet<Symbol>> =
+                let mut pair_to_vars: HashMap<(SSAId, SSAId, Analysis), HashSet<Symbol>> =
                     HashMap::new();
                 for (var, value1) in &self.vars[&pred1] {
                     if let Some(value2) = self.vars[&pred2].get(var) {
                         let value1 = self.saturator.find_in_version(*value1, ssa_pred1);
                         let value2 = self.saturator.find_in_version(*value2, ssa_pred2);
-                        let kb1 = self.saturator.analysis_in_version(value1, ssa_pred1);
-                        let kb2 = self.saturator.analysis_in_version(value2, ssa_pred2);
+                        let analysis1 = self.saturator.analysis_in_version(value1, ssa_pred1);
+                        let analysis2 = self.saturator.analysis_in_version(value2, ssa_pred2);
                         // Group variables by pair of joined SSAIds.
                         pair_to_vars
-                            .entry((value1, value2, kb1.meet(&kb2)))
+                            .entry((value1, value2, analysis1.plus(&analysis2)))
                             .or_default()
                             .insert(*var);
                     }
@@ -288,12 +288,12 @@ impl<'a> AIContext<'a> {
                 // We create a single knot per set of variables sharing values.
                 let mut knot_values = HashMap::new();
                 let mut pair_to_knot = vec![];
-                for ((value1, value2, kb), vars) in pair_to_vars {
+                for ((value1, value2, analysis), vars) in pair_to_vars {
                     let knot_id =
                         self.knot_map
-                            .intern_knot(block, vars.iter().cloned().collect(), kb);
+                            .intern_knot(block, vars.iter().cloned().collect(), analysis);
                     knot_values.insert(knot_id, (value1, value2));
-                    pair_to_knot.push((value1, value2, vars, knot_id, kb));
+                    pair_to_knot.push((value1, value2, vars, knot_id, analysis));
                 }
                 let new_block = self
                     .update_new_block(block, SSABlock::Merge(ssa_pred1, ssa_pred2, knot_values));
@@ -303,11 +303,11 @@ impl<'a> AIContext<'a> {
                 // Now that we have a version for this block, merge the IDs in the intersection of
                 // the sets in the predecessor versions with the knots.
                 let mut new_vars = HashMap::new();
-                for (value1, value2, vars, knot_id, kb) in pair_to_knot {
+                for (value1, value2, vars, knot_id, analysis) in pair_to_knot {
                     let ty1 = self.saturator.ssa.ty(value1);
                     let ty2 = self.saturator.ssa.ty(value2);
                     assert_eq!(ty1, ty2);
-                    let mut knot = self.saturator.intern(SSA::Knot(knot_id, ty1, kb));
+                    let mut knot = self.saturator.intern(SSA::Knot(knot_id, ty1, analysis));
 
                     let idom = self.saturator.version(new_block).parent().unwrap();
                     let set1: HashSet<_> = self
