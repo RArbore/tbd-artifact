@@ -1063,6 +1063,7 @@ fn intervals2() {
         let int2 = Interval::from_constant(cons2);
         assert_eq!(int1.join(&int2), int2.join(&int1));
         assert_eq!(int1.meet(&int2), int2.meet(&int1));
+        assert!(int2.leq(&int1.widen(&int2)));
         assert_eq!(int1.add(&int2), int2.add(&int1));
         assert_eq!(int1.mul(&int2), int2.mul(&int1));
         if let Some(add) = cons1.checked_add(cons2) {

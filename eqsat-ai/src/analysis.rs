@@ -240,6 +240,18 @@ impl Interval {
         }
     }
 
+    pub fn widen(&self, new: &Self) -> Self {
+        match (*self, *new) {
+            (Interval::Interval(low1, high1), Interval::Interval(low2, high2)) => {
+                Interval::Interval(
+                    if low2 < low1 { i64::MIN } else { low2 },
+                    if high2 > high1 { i64::MAX } else { high2 },
+                )
+            }
+            _ => *new,
+        }
+    }
+
     pub fn leq(&self, other: &Self) -> bool {
         let first = *other == self.join(other);
         let second = *self == self.meet(other);
@@ -339,13 +351,14 @@ impl Display for Interval {
     }
 }
 
-pub trait Lattice: Clone + PartialEq + Eq {
+pub trait Domain: Clone + PartialEq + Eq {
     fn top() -> Self;
     fn meet(&self, other: &Self) -> Self;
     fn join(&self, other: &Self) -> Self;
+    fn widen(&self, new: &Self) -> Self;
 }
 
-impl Lattice for () {
+impl Domain for () {
     fn top() -> Self {
         ()
     }
@@ -357,9 +370,13 @@ impl Lattice for () {
     fn join(&self, _: &Self) -> Self {
         ()
     }
+
+    fn widen(&self, _: &Self) -> Self {
+        ()
+    }
 }
 
-impl Lattice for usize {
+impl Domain for usize {
     fn top() -> Self {
         0
     }
@@ -371,9 +388,13 @@ impl Lattice for usize {
     fn join(&self, other: &Self) -> Self {
         min(*self, *other)
     }
+
+    fn widen(&self, new: &Self) -> Self {
+        *new
+    }
 }
 
-impl Lattice for KnownBits {
+impl Domain for KnownBits {
     fn top() -> Self {
         Self::top()
     }
@@ -385,9 +406,13 @@ impl Lattice for KnownBits {
     fn join(&self, other: &Self) -> Self {
         self.join(other)
     }
+
+    fn widen(&self, new: &Self) -> Self {
+        *new
+    }
 }
 
-impl Lattice for Interval {
+impl Domain for Interval {
     fn top() -> Self {
         Self::Top
     }
@@ -399,9 +424,13 @@ impl Lattice for Interval {
     fn join(&self, other: &Self) -> Self {
         self.join(other)
     }
+
+    fn widen(&self, new: &Self) -> Self {
+        self.widen(new)
+    }
 }
 
-impl<A: Lattice, B: Lattice> Lattice for (A, B) {
+impl<A: Domain, B: Domain> Domain for (A, B) {
     fn top() -> Self {
         (A::top(), B::top())
     }
@@ -412,6 +441,10 @@ impl<A: Lattice, B: Lattice> Lattice for (A, B) {
 
     fn join(&self, other: &Self) -> Self {
         (self.0.join(&other.0), self.1.join(&other.1))
+    }
+
+    fn widen(&self, new: &Self) -> Self {
+        (self.0.widen(&new.0), self.1.widen(&new.1))
     }
 }
 

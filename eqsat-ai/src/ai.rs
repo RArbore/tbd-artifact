@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use symbol_table::GlobalSymbol as Symbol;
 
-use crate::analysis::Lattice;
+use crate::analysis::Domain;
 use crate::nonssa::{Block, BlockId, Constant, Expr, NonSSAFunc, Type};
 use crate::saturator::Saturator;
 use crate::ssa::{Analysis, KnotId, SSA, SSABlock, SSABlockId, SSAId};

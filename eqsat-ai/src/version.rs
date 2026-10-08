@@ -3,7 +3,7 @@ use core::ptr::eq;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use crate::analysis::Lattice;
+use crate::analysis::Domain;
 use crate::ssa::{SSA, SSAId};
 
 // We use a sparse representation for union finds, because in the majority of versions there are
@@ -20,7 +20,7 @@ pub struct SparseUnionFind {
 // with using a layered union find, rather than the more complicated versioned union find, because we
 // only ever modify (at-the-moment) leaf versions.
 #[derive(Debug, Default)]
-pub struct Version<A: Lattice> {
+pub struct Version<A: Domain> {
     uf: SparseUnionFind,
     // Track an "analysis" value per e-class. If the map at this version doesn't contain an entry,
     // then the analysis value for the e-class is given by the parent version (recursively).
@@ -47,7 +47,7 @@ pub struct SparseUnionFindSet<'a> {
 }
 
 #[derive(Debug)]
-pub enum VersionSet<'a, A: Lattice> {
+pub enum VersionSet<'a, A: Domain> {
     Trivial(Option<SSAId>),
     NonTrivial {
         set_stack: Vec<SparseUnionFindSet<'a>>,
@@ -201,7 +201,7 @@ impl Iterator for SparseUnionFindSet<'_> {
     }
 }
 
-impl<A: Lattice> Version<A> {
+impl<A: Domain> Version<A> {
     pub fn child(parent: Rc<Version<A>>) -> Self {
         let level = parent.level + 1;
         Self {
@@ -411,7 +411,7 @@ impl<A: Lattice> Version<A> {
     }
 }
 
-impl<A: Lattice> Iterator for VersionSet<'_, A> {
+impl<A: Domain> Iterator for VersionSet<'_, A> {
     type Item = SSAId;
 
     fn next(&mut self) -> Option<SSAId> {
