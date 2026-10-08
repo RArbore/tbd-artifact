@@ -57,7 +57,7 @@ fn get_return(text: &str) -> (SSAId, Saturator) {
 }
 
 #[test]
-fn ai1() {
+fn ai01() {
     let text = r#"
 fn basic() {
 	x = 5;
@@ -75,7 +75,7 @@ fn basic() {
 }
 
 #[test]
-fn ai2() {
+fn ai02() {
     let text = r#"
 fn branch() {
 	x = 5;
@@ -91,7 +91,7 @@ fn branch() {
 }
 
 #[test]
-fn ai3() {
+fn ai03() {
     let text = r#"
 fn add() {
 	x = 5;
@@ -105,7 +105,7 @@ fn add() {
 }
 
 #[test]
-fn ai4() {
+fn ai04() {
     let text = r#"
 fn loop() {
 	x = 5;
@@ -124,7 +124,7 @@ fn loop() {
 }
 
 #[test]
-fn ai5() {
+fn ai05() {
     let text = r#"
 fn gvn(x: i64) {
 	y = x;
@@ -141,7 +141,7 @@ fn gvn(x: i64) {
 }
 
 #[test]
-fn ai6() {
+fn ai06() {
     let text = r#"
 fn loop() {
 	x = 5;
@@ -166,7 +166,7 @@ fn loop() {
 }
 
 #[test]
-fn ai7() {
+fn ai07() {
     let text = r#"
 fn flow(x: bool) {
     if x {
@@ -191,7 +191,7 @@ fn flow(x: bool) {
 }
 
 #[test]
-fn ai8() {
+fn ai08() {
     let text = r#"
 fn flow_constant_prop(x: bool) {
     if x {
@@ -208,7 +208,7 @@ fn flow_constant_prop(x: bool) {
 }
 
 #[test]
-fn ai9() {
+fn ai09() {
     let text = r#"
 fn flow_backwards(x: bool) {
     if !!!x {

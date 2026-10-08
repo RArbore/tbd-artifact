@@ -269,7 +269,7 @@ impl Interval {
     pub fn add(&self, other: &Self) -> Self {
         match (*self, *other) {
             (Interval::Bot, _) | (_, Interval::Bot) => Self::Bot,
-            (Interval::Top, a) | (a, Interval::Top) => a,
+            (Interval::Top, _) | (_, Interval::Top) => Self::Top,
             (Interval::Interval(low1, high1), Interval::Interval(low2, high2)) => {
                 if let Some(low) = low1.checked_add(low2)
                     && let Some(high) = high1.checked_add(high2)
@@ -289,7 +289,7 @@ impl Interval {
     pub fn mul(&self, other: &Self) -> Self {
         match (*self, *other) {
             (Interval::Bot, _) | (_, Interval::Bot) => Self::Bot,
-            (Interval::Top, a) | (a, Interval::Top) => a,
+            (Interval::Top, _) | (_, Interval::Top) => Self::Top,
             (Interval::Interval(low1, high1), Interval::Interval(low2, high2)) => {
                 if let Some(low_low) = low1.checked_mul(low2)
                     && let Some(low_high) = low1.checked_mul(high2)

@@ -86,19 +86,32 @@
 (rule (a:(Constant[bool] true) a:(EE b c)) ((union b c)))
 (rule (a:(Constant[bool] false) a:(NE b c)) ((union b c)))
 
-(rule (a:(Constant[i64] b)) ((KnownBits a `KnownBits::from_constant(b)`)))
-(rule (a:(Param[i64] _)) ((KnownBits a `KnownBits::top()`)))
+(rule (a:(Constant[i64] b)) ((KnownBits a `KnownBits::from_constant(b)`) (Interval a `Interval::from_constant(b)`)))
+(rule (a:(Param[i64] _)) ((KnownBits a `KnownBits::top()`) (Interval a `Interval::Top`)))
+(rule (a:(Knot[i64] kb int _)) ((KnownBits a kb) (Interval a int)))
+
 (rule (a:(Neg b) (KnownBits b kb)) ((KnownBits a `kb.neg()`)))
 (rule (a:(BitwiseNot b) (KnownBits b kb)) ((KnownBits a `kb.bitwise_not()`)))
+
+(rule (a:(Neg b) (Interval b int)) ((Interval a `int.neg()`)))
+(rule (a:(BitwiseNot b) (Interval b int)) ((Interval a `int.bitwise_not()`)))
+
 (rule (a:(Add b c) (KnownBits b b_kb) (KnownBits c c_kb)) ((KnownBits a `b_kb.add(&c_kb)`)))
 (rule (a:(Sub b c) (KnownBits b b_kb) (KnownBits c c_kb)) ((KnownBits a `b_kb.sub(&c_kb)`)))
 (rule (a:(Mul b c) (KnownBits b b_kb) (KnownBits c c_kb)) ((KnownBits a `b_kb.mul(&c_kb)`)))
 (rule (a:(BitwiseAnd b c) (KnownBits b b_kb) (KnownBits c c_kb)) ((KnownBits a `b_kb.bitwise_and(&c_kb)`)))
 (rule (a:(BitwiseOr b c) (KnownBits b b_kb) (KnownBits c c_kb)) ((KnownBits a `b_kb.bitwise_or(&c_kb)`)))
 (rule (a:(BitwiseXor b c) (KnownBits b b_kb) (KnownBits c c_kb)) ((KnownBits a `b_kb.bitwise_xor(&c_kb)`)))
-(rule (a:(Knot[i64] kb int _)) ((KnownBits a kb) (Interval a int)))
+
+(rule (a:(Add b c) (Interval b b_int) (Interval c c_int)) ((Interval a `b_int.add(&c_int)`)))
+(rule (a:(Sub b c) (Interval b b_int) (Interval c c_int)) ((Interval a `b_int.sub(&c_int)`)))
+(rule (a:(Mul b c) (Interval b b_int) (Interval c c_int)) ((Interval a `b_int.mul(&c_int)`)))
+(rule (a:(BitwiseAnd b c) (Interval b b_int) (Interval c c_int)) ((Interval a `b_int.bitwise_and(&c_int)`)))
+(rule (a:(BitwiseOr b c) (Interval b b_int) (Interval c c_int)) ((Interval a `b_int.bitwise_or(&c_int)`)))
+(rule (a:(BitwiseXor b c) (Interval b b_int) (Interval c c_int)) ((Interval a `b_int.bitwise_xor(&c_int)`)))
 
 (rule ((KnownBits a kb)) `let Some(cons) = kb.try_constant()` ((union a (Constant[i64] `cons`))))
+(rule ((Interval a int)) `let Some(cons) = int.try_constant()` ((union a (Constant[i64] `cons`))))
 
 (rule (a:(Constant[i64] b) a:(Constant[i64] c)) `b != c` (contradiction))
 (rule (a:(Constant[bool] true) a:(Constant[bool] false)) (contradiction))

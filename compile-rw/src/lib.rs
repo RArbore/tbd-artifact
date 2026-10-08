@@ -722,21 +722,20 @@ fn emit_wcoj(
                 .iter()
                 .map(|pattern| build_pattern(pattern))
                 .collect();
+            execute_rhs = quote! {
+                if DUMP {
+                    println!("Applied {}.", #rule_str);
+                    #dump_vars
+                }
+                #execute_rhs;
+            };
 
             // If there is a condition, check it.
             if let Some(cond) = rule.cond {
                 let cond = syn::parse_str::<syn::Expr>(cond.as_str()).unwrap();
                 execute_rhs = quote! { if #cond { #execute_rhs } };
             }
-
-            // Union the built RHS with the root of the LHS.
-            quote! {
-                if DUMP {
-                    println!("Applied {}.", #rule_str);
-                    #dump_vars
-                }
-                #execute_rhs;
-            }
+            execute_rhs
         }
     }
 

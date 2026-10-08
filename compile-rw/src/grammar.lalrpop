@@ -6,6 +6,13 @@ use crate::{Literal, Pattern, Rule, Type};
 
 grammar();
 
+match {
+    r";[^\n\r]*[\n\r]*" => { },
+} else {
+    r"\s*" => { },
+    _
+}
+
 pub Rules: Vec<Rule> = {
     Rule* => <>,
 }
