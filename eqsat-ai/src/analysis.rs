@@ -60,7 +60,11 @@ impl KnownBits {
         KnownBits::from_constant(cons).leq(self)
     }
 
-    pub fn flip(&self) -> Self {
+    pub fn any_bottom(&self) -> bool {
+        !self.low_high & !self.concrete != 0
+    }
+
+    fn flip(&self) -> Self {
         // Flip the not concrete bits.
         Self {
             low_high: self.low_high ^ !self.concrete,

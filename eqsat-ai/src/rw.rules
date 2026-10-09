@@ -127,3 +127,5 @@
 
 (rule (a:(Constant[i64] b) a:(Constant[i64] c)) `b != c` (contradiction))
 (rule (a:(Constant[bool] true) a:(Constant[bool] false)) (contradiction))
+(rule ((KnownBits _ kb)) `kb.any_bottom()` (contradiction))
+(rule ((Interval _ int)) `int == Interval::Bot` (contradiction))

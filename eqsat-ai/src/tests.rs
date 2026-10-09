@@ -942,6 +942,7 @@ fn known_bits1() {
             concrete: !2
         }
     );
+    assert!(KnownBits::bot().any_bottom());
 }
 
 #[test]
@@ -949,6 +950,7 @@ fn known_bits2() {
     for _ in 0..100 {
         let cons = random::<i64>();
         let kb = KnownBits::from_constant(cons);
+        assert!(!kb.any_bottom());
         let not_kb = kb.bitwise_not();
         assert!(not_kb.is_constant(!cons));
     }
@@ -959,6 +961,9 @@ fn known_bits2() {
         let kb2 = KnownBits::from_constant(cons2);
         assert_eq!(kb1.join(&kb2), kb2.join(&kb1));
         assert_eq!(kb1.meet(&kb2), kb2.meet(&kb1));
+        if cons1 != cons2 {
+            assert!(kb1.meet(&kb2).any_bottom());
+        }
         assert_eq!(kb1.bitwise_and(&kb2), kb2.bitwise_and(&kb1));
         assert_eq!(kb1.bitwise_or(&kb2), kb2.bitwise_or(&kb1));
         assert_eq!(kb1.bitwise_xor(&kb2), kb2.bitwise_xor(&kb1));
