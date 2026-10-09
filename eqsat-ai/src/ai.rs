@@ -284,8 +284,14 @@ impl<'a> AIContext<'a> {
                     if let Some(value2) = self.vars[&pred2].get(var) {
                         let value1 = self.saturator.find_in_version(*value1, ssa_pred1);
                         let value2 = self.saturator.find_in_version(*value2, ssa_pred2);
-                        let analysis1 = widen(self.saturator.analysis_in_version(value1, ssa_pred1), ssa_pred1);
-                        let analysis2 = widen(self.saturator.analysis_in_version(value2, ssa_pred2), ssa_pred2);
+                        let analysis1 = widen(
+                            self.saturator.analysis_in_version(value1, ssa_pred1),
+                            ssa_pred1,
+                        );
+                        let analysis2 = widen(
+                            self.saturator.analysis_in_version(value2, ssa_pred2),
+                            ssa_pred2,
+                        );
                         // Group variables by pair of joined SSAIds.
                         pair_to_vars
                             .entry((value1, value2, analysis1.join(&analysis2)))

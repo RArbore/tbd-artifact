@@ -2,7 +2,7 @@ use core::mem::take;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
-use crate::analysis::{Interval, KnownBits, Domain};
+use crate::analysis::{Domain, Interval, KnownBits};
 use crate::rw::{Tries, apply_rws};
 use crate::ssa::{Analysis, SSA, SSABlock, SSABlockId, SSAId, SSAProgram};
 use crate::version::Version;

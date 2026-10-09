@@ -339,7 +339,6 @@ fn simplified(y: i64) {
     let (value, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Param(0, Type::I64));
     assert_eq!(correct, value);
-    // NOTE: This may fail if we implement a backwards transfer for LT.
     let correct = saturator.intern(SSA::Knot(0, Type::I64, Analysis::top()));
     assert_eq!(correct, value);
 }
@@ -390,6 +389,25 @@ fn widen() {
     let (value, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(100)));
     assert_eq!(correct, value);
+}
+
+#[test]
+fn ai21() {
+    let text = r#"
+fn reduced(x: i64) {
+    if x < 0 {
+        y = x & -9223372036854775808;
+    } else {
+        y = ~x & -9223372036854775808;
+    }
+    return y;
+}
+"#;
+    let (value, mut saturator) = get_return(text);
+    let correct = saturator.intern(SSA::Constant(Constant::I64(-9223372036854775808)));
+    assert_eq!(correct, value);
+    let other = saturator.intern(SSA::Constant(Constant::I64(0)));
+    assert_ne!(correct, other);
 }
 
 #[test]

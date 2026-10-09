@@ -38,6 +38,10 @@ impl KnownBits {
         }
     }
 
+    pub fn from_low_high_concrete(low_high: i64, concrete: i64) -> Self {
+        Self { low_high, concrete }
+    }
+
     pub fn try_constant(&self) -> Option<i64> {
         if (self.low_high & !self.concrete) != 0 {
             // If any bit is top, then this isn't a constant.

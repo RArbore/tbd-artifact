@@ -122,5 +122,8 @@
 (rule (a:(Constant[bool] false) a:(GT b (Constant[i64] c))) ((Interval b `Interval::from_high(c)`)))
 (rule (a:(Constant[bool] false) a:(GE b (Constant[i64] c))) `let Some(c_minus_one) = c.checked_sub(1)` ((Interval b `Interval::from_high(c_minus_one)`)))
 
+(rule ((Interval a int)) `int.leq(&Interval::from_high(-1))` ((KnownBits a `KnownBits::from_low_high_concrete(!0i64, 1i64 << 63)`)))
+(rule ((Interval a int)) `int.leq(&Interval::from_low(0))` ((KnownBits a `KnownBits::from_low_high_concrete(!(1i64 << 63), 1i64 << 63)`)))
+
 (rule (a:(Constant[i64] b) a:(Constant[i64] c)) `b != c` (contradiction))
 (rule (a:(Constant[bool] true) a:(Constant[bool] false)) (contradiction))

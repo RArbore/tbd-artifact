@@ -6,7 +6,7 @@ use crate::ssa::{SSA, SSAId};
 
 // The relational tuple representation is separate from the hash-cons, so this doesn't have to be the
 // same type as SSAId.
-pub type TupleValue = u32;
+pub type TupleValue = u64;
 
 impl Into<TupleValue> for Constant {
     fn into(self) -> TupleValue {
