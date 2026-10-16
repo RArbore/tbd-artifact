@@ -411,6 +411,28 @@ fn reduced(x: i64) {
 }
 
 #[test]
+fn ai22() {
+    let text = r#"
+fn termination(x: bool, a: i64, b: i64, c: i64, d: i64, e: i64) {
+    y = a;
+    z = b;
+    w = c;
+    v = d;
+    while x {
+        if w != c { v = e; }
+        if z != b { w = e; }
+        if y != a { z = e; }
+        y = e;
+    }
+    return v;
+}
+"#;
+    let (value, mut saturator) = get_return(text);
+    let other = saturator.intern(SSA::Param(4, Type::I64));
+    assert_ne!(value, other);
+}
+
+#[test]
 #[should_panic]
 fn bad_types1() {
     let text = r#"
