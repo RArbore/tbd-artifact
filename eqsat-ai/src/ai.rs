@@ -130,13 +130,6 @@ impl<'a> AIContext<'a> {
         }
     }
 
-    fn assume(&mut self, id: SSAId, direction: bool) {
-        let val = self
-            .saturator
-            .intern(SSA::Constant(Constant::Bool(direction)));
-        self.saturator.union(id, val);
-    }
-
     fn visit_block(&mut self, nonssa: &NonSSAFunc, block: BlockId) {
         use Block::*;
         match &nonssa.cfg[block] {
@@ -179,35 +172,23 @@ impl<'a> AIContext<'a> {
         let ssa_pred = self.blocks[&pred];
         self.saturator.move_to_version(ssa_pred);
         let value = self.visit_expr(cond, pred);
-        assert_eq!(self.saturator.ssa.ty(value), Type::Bool);
-        let false_value = self.saturator.intern(SSA::Constant(Constant::Bool(false)));
-        let true_value = self.saturator.intern(SSA::Constant(Constant::Bool(true)));
-
-        // Saturate so that the condition is analyzed.
+        // Saturate so that the delta from the condition is cleared.
         self.saturator.saturate();
-        let always_false = self.saturator.find(value) == self.saturator.find(false_value);
-        let always_true = self.saturator.find(value) == self.saturator.find(true_value);
-        assert!(!always_false || !always_true);
-
-        if !(always_false && direction || always_true && !direction) {
-            let ssa_block = if always_false && !direction || always_true && direction {
-                self.update_block(block, SSABlock::Identity(ssa_pred))
-            } else {
-                let ssa_block =
-                    self.update_block(block, SSABlock::Guard(ssa_pred, value, direction));
-
-                // When the guard is necessary, we want to assume the guard condition is either true
-                // or false (depending on `direction`) in the created version.
-                self.assume(value, direction);
-                // We need to saturate after the union from the assumption, since jumping to a
-                // different version could cause the potential delta to be lost in this version.
-                self.saturator.saturate();
-                ssa_block
-            };
-            assert!(ssa_pred < ssa_block);
-            // Guards make no assignments.
-            self.update_vars(block, self.vars[&pred].clone());
-        }
+        let canon_id = self.saturator.find(value);
+        assert_eq!(self.saturator.ssa.ty(canon_id), Type::Bool);
+        let ssa_block = self.update_block(block, SSABlock::Guard(ssa_pred, canon_id, direction));
+        // Assume the guard condition is either true or false (depending on `direction`) in the
+        // created version.
+        let val = self
+            .saturator
+            .intern(SSA::Constant(Constant::Bool(direction)));
+        self.saturator.union(canon_id, val);
+        // We need to saturate after the union from the assumption, since jumping to a different
+        // version could cause the potential delta to be lost in this version.
+        self.saturator.saturate();
+        assert!(ssa_pred < ssa_block);
+        // Guards make no assignments.
+        self.update_vars(block, self.vars[&pred].clone());
     }
 
     fn visit_assign(&mut self, block: BlockId, pred: BlockId, var: Symbol, expr: &Expr) {
@@ -215,15 +196,13 @@ impl<'a> AIContext<'a> {
             return;
         }
         let ssa_pred = self.blocks[&pred];
-        self.saturator.move_to_version(ssa_pred);
+        let ssa_block = self.update_block(block, SSABlock::Identity(ssa_pred));
         let value = self.visit_expr(expr, pred);
-        // We need to saturate after every assignment because a jump to an arbitrary other version
-        // may cause the delta to be lost.
+        // We need to saturate after every assignment to clear the delta set.
         self.saturator.saturate();
         let mut vars = self.vars[&pred].clone();
         let canon_id = self.saturator.find(value);
         vars.insert(var, canon_id);
-        let ssa_block = self.update_block(block, SSABlock::Identity(ssa_pred));
         assert!(ssa_pred < ssa_block);
         self.update_vars(block, vars);
     }
@@ -249,12 +228,6 @@ impl<'a> AIContext<'a> {
                 let ssa_pred1 = self.blocks[&pred1];
                 let ssa_pred2 = self.blocks[&pred2];
                 assert_ne!(ssa_pred1, ssa_pred2);
-
-                // Saturate because discovered equalities may help us avoid making knots.
-                self.saturator.move_to_version(ssa_pred1);
-                self.saturator.saturate();
-                self.saturator.move_to_version(ssa_pred2);
-                self.saturator.saturate();
 
                 // Helper to implement widening.
                 let mut widen = |analysis, ssa_pred| {
