@@ -413,23 +413,25 @@ fn reduced(x: i64) {
 #[test]
 fn ai22() {
     let text = r#"
-fn termination(x: bool, a: i64, b: i64, c: i64, d: i64, e: i64) {
-    y = a;
-    z = b;
-    w = c;
-    v = d;
+fn termination(x: bool, a: i64, b: i64, c: i64, d: i64) {
+    y = a + 1;
+    z = b + 1;
+    w = c + 1;
+    v = d + 1;
     while x {
-        if w != c { v = e; }
-        if z != b { w = e; }
-        if y != a { z = e; }
-        y = e;
+        if w != (c + 1) { v = d + 2; }
+        if z != (b + 1) { w = c + 2; }
+        if y != (a + 1) { z = b + 2; }
+        y = a + 2;
     }
     return v;
 }
 "#;
     let (value, mut saturator) = get_return(text);
-    let other = saturator.intern(SSA::Param(4, Type::I64));
-    assert_ne!(value, other);
+    let d = saturator.intern(SSA::Param(4, Type::I64));
+    let one = saturator.intern(SSA::Constant(Constant::I64(1)));
+    let plus = saturator.intern(SSA::Binary(BinaryOp::Add, d, one));
+    assert_ne!(value, plus);
 }
 
 #[test]
