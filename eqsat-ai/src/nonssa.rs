@@ -213,3 +213,201 @@ impl Display for BinaryOp {
         }
     }
 }
+
+fn concrete_eval(expr: &Expr, store: &HashMap<Symbol, Constant>) -> Constant {
+    match expr {
+        Expr::Constant { val } => *val,
+        Expr::Variable { var } => store[var],
+        Expr::Unary { op, input } => {
+            let input = concrete_eval(input, store);
+            use UnaryOp::*;
+            match op {
+                Neg => {
+                    let Constant::I64(input) = input else {
+                        panic!()
+                    };
+                    Constant::I64(input.wrapping_neg())
+                }
+                BitwiseNot => {
+                    let Constant::I64(input) = input else {
+                        panic!()
+                    };
+                    Constant::I64(!input)
+                }
+                Not => {
+                    let Constant::Bool(input) = input else {
+                        panic!()
+                    };
+                    Constant::Bool(!input)
+                }
+            }
+        }
+        Expr::Binary { op, lhs, rhs } => {
+            let lhs = concrete_eval(lhs, store);
+            let rhs = concrete_eval(rhs, store);
+            use BinaryOp::*;
+            match op {
+                Add => {
+                    let (Constant::I64(lhs), Constant::I64(rhs)) = (lhs, rhs) else {
+                        panic!()
+                    };
+                    Constant::I64(lhs.wrapping_add(rhs))
+                }
+                Sub => {
+                    let (Constant::I64(lhs), Constant::I64(rhs)) = (lhs, rhs) else {
+                        panic!()
+                    };
+                    Constant::I64(lhs.wrapping_sub(rhs))
+                }
+                Mul => {
+                    let (Constant::I64(lhs), Constant::I64(rhs)) = (lhs, rhs) else {
+                        panic!()
+                    };
+                    Constant::I64(lhs.wrapping_mul(rhs))
+                }
+                BitwiseAnd => {
+                    let (Constant::I64(lhs), Constant::I64(rhs)) = (lhs, rhs) else {
+                        panic!()
+                    };
+                    Constant::I64(lhs & rhs)
+                }
+                BitwiseOr => {
+                    let (Constant::I64(lhs), Constant::I64(rhs)) = (lhs, rhs) else {
+                        panic!()
+                    };
+                    Constant::I64(lhs | rhs)
+                }
+                BitwiseXor => {
+                    let (Constant::I64(lhs), Constant::I64(rhs)) = (lhs, rhs) else {
+                        panic!()
+                    };
+                    Constant::I64(lhs ^ rhs)
+                }
+                And => {
+                    let (Constant::Bool(lhs), Constant::Bool(rhs)) = (lhs, rhs) else {
+                        panic!()
+                    };
+                    Constant::Bool(lhs & rhs)
+                }
+                Or => {
+                    let (Constant::Bool(lhs), Constant::Bool(rhs)) = (lhs, rhs) else {
+                        panic!()
+                    };
+                    Constant::Bool(lhs | rhs)
+                }
+                Xor => {
+                    let (Constant::Bool(lhs), Constant::Bool(rhs)) = (lhs, rhs) else {
+                        panic!()
+                    };
+                    Constant::Bool(lhs ^ rhs)
+                }
+                EE => {
+                    let (Constant::I64(lhs), Constant::I64(rhs)) = (lhs, rhs) else {
+                        panic!()
+                    };
+                    Constant::Bool(lhs == rhs)
+                }
+                NE => {
+                    let (Constant::I64(lhs), Constant::I64(rhs)) = (lhs, rhs) else {
+                        panic!()
+                    };
+                    Constant::Bool(lhs != rhs)
+                }
+                LT => {
+                    let (Constant::I64(lhs), Constant::I64(rhs)) = (lhs, rhs) else {
+                        panic!()
+                    };
+                    Constant::Bool(lhs < rhs)
+                }
+                LE => {
+                    let (Constant::I64(lhs), Constant::I64(rhs)) = (lhs, rhs) else {
+                        panic!()
+                    };
+                    Constant::Bool(lhs <= rhs)
+                }
+                GT => {
+                    let (Constant::I64(lhs), Constant::I64(rhs)) = (lhs, rhs) else {
+                        panic!()
+                    };
+                    Constant::Bool(lhs > rhs)
+                }
+                GE => {
+                    let (Constant::I64(lhs), Constant::I64(rhs)) = (lhs, rhs) else {
+                        panic!()
+                    };
+                    Constant::Bool(lhs >= rhs)
+                }
+            }
+        }
+    }
+}
+
+fn concrete_traversable(block: &Block, store: &HashMap<Symbol, Constant>) -> bool {
+    if let Block::Guard {
+        cond, direction, ..
+    } = block
+    {
+        let Constant::Bool(cond) = concrete_eval(cond, store) else {
+            panic!()
+        };
+        cond == *direction
+    } else {
+        true
+    }
+}
+
+fn concrete_traverse(block: &Block, store: &mut HashMap<Symbol, Constant>) {
+    if let Block::Assign { var, expr, .. } = block {
+        store.insert(*var, concrete_eval(expr, store));
+    }
+}
+
+#[derive(Debug)]
+pub struct State {
+    pub location: BlockId,
+    pub store: HashMap<Symbol, Constant>,
+}
+
+pub fn concrete_interpret(func: &NonSSAFunc, args: &Vec<Constant>, fuel: usize) -> Vec<State> {
+    let mut succs: HashMap<BlockId, Vec<BlockId>> = HashMap::new();
+    for (id, block) in func.cfg.iter().enumerate() {
+        succs.entry(id).or_default();
+        use Block::*;
+        match block {
+            Entry => {}
+            Guard { pred, .. } | Assign { pred, .. } | Return { pred, .. } => {
+                succs.entry(*pred).or_default().push(id);
+            }
+            Merge { pred1, pred2 } => {
+                succs.entry(*pred1).or_default().push(id);
+                succs.entry(*pred2).or_default().push(id);
+            }
+        }
+    }
+
+    let mut location = 0;
+    let mut store: HashMap<Symbol, Constant> = args
+        .into_iter()
+        .enumerate()
+        .map(|(idx, cons)| {
+            assert_eq!(cons.ty(), func.params[idx].1);
+            (func.params[idx].0, *cons)
+        })
+        .collect();
+    let mut trace = vec![];
+    for _ in 0..fuel {
+        trace.push(State {
+            location,
+            store: store.clone(),
+        });
+        let mut succs = succs[&location]
+            .iter()
+            .filter(|block| concrete_traversable(&func.cfg[**block], &store));
+        let Some(succ) = succs.next() else { break };
+        assert!(succs.next().is_none());
+        location = *succ;
+        let block = &func.cfg[location];
+        concrete_traverse(block, &mut store);
+    }
+    trace
+}

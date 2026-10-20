@@ -36,6 +36,16 @@ fn get_return(text: &str) -> (SSAId, Saturator) {
     panic!()
 }
 
+fn get_trace(text: &str, args: &Vec<Constant>) -> Vec<State> {
+    let parsed = ProgramParser::new().parse(text).unwrap();
+    assert_eq!(parsed.len(), 1);
+    for (_, ast) in parsed {
+        let nonssa = convert_to_cfg(ast);
+        return concrete_interpret(&nonssa, args, 100);
+    }
+    panic!()
+}
+
 #[test]
 fn ai01() {
     let text = r#"
@@ -432,6 +442,46 @@ fn termination(x: bool, a: i64, b: i64, c: i64, d: i64) {
     let one = saturator.intern(SSA::Constant(Constant::I64(1)));
     let plus = saturator.intern(SSA::Binary(BinaryOp::Add, d, one));
     assert_ne!(value, plus);
+}
+
+#[test]
+fn ci01() {
+    let text = r#"
+fn simple(x: i64) {
+    y = x + 1;
+    return y;
+}
+"#;
+    let trace = get_trace(text, &vec![Constant::I64(0)]);
+    assert_eq!(trace.len(), 4, "{:?}", trace);
+    assert_eq!(trace.last().unwrap().store[&"x".into()], Constant::I64(0));
+    assert_eq!(trace.last().unwrap().store[&"y".into()], Constant::I64(1));
+    assert_eq!(trace.last().unwrap().store[&"%0".into()], Constant::I64(1));
+}
+
+#[test]
+fn ci02() {
+    let text = r#"
+fn loop(x: i64) {
+    while x < 10 {
+        x = x + 2;
+    }
+}
+"#;
+    let trace = get_trace(text, &vec![Constant::I64(-5)]);
+    assert_eq!(trace.len(), 27, "{:?}", trace);
+    assert_eq!(trace.last().unwrap().store[&"x".into()], Constant::I64(11));
+}
+
+#[test]
+fn ci03() {
+    let text = r#"
+fn loop() {
+    while true {}
+}
+"#;
+    let trace = get_trace(text, &vec![]);
+    assert_eq!(trace.len(), 100, "{:?}", trace);
 }
 
 #[test]
