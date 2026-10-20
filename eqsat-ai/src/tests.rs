@@ -18,9 +18,9 @@ use crate::version::*;
 fn get_return(text: &str) -> (SSAId, Saturator) {
     let parsed = ProgramParser::new().parse(text).unwrap();
     assert_eq!(parsed.len(), 1);
-    let mut saturator = Saturator::default();
     for (name, ast) in parsed {
         let nonssa = convert_to_cfg(ast);
+        let mut saturator = Saturator::default();
         abstract_interpret(&mut saturator, name, &nonssa);
         assert_eq!(saturator.ssa.get_block(0), &SSABlock::Entry);
         let exit = saturator.ssa.exit(name);
@@ -42,6 +42,20 @@ fn get_trace(text: &str, args: &Vec<Constant>) -> Vec<State> {
     for (_, ast) in parsed {
         let nonssa = convert_to_cfg(ast);
         return concrete_interpret(&nonssa, args, 100);
+    }
+    panic!()
+}
+
+fn check_trace(text: &str, args: &Vec<Constant>) {
+    let parsed = ProgramParser::new().parse(text).unwrap();
+    assert_eq!(parsed.len(), 1);
+    for (name, ast) in parsed {
+        let nonssa = convert_to_cfg(ast);
+        let trace = concrete_interpret(&nonssa, args, 100);
+        let mut saturator = Saturator::default();
+        let (vars, blocks) = abstract_interpret(&mut saturator, name, &nonssa);
+        check_trace_against_analysis(&trace, vars, blocks, &mut saturator);
+        return;
     }
     panic!()
 }
@@ -471,6 +485,18 @@ fn loop(x: i64) {
     let trace = get_trace(text, &vec![Constant::I64(-5)]);
     assert_eq!(trace.len(), 27, "{:?}", trace);
     assert_eq!(trace.last().unwrap().store[&"x".into()], Constant::I64(11));
+}
+
+#[test]
+fn aici01() {
+    let text = r#"
+fn loop(x: i64) {
+    while x < 10 {
+        x = x + 2;
+    }
+}
+"#;
+    check_trace(text, &vec![Constant::I64(-5)]);
 }
 
 #[test]

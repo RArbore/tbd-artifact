@@ -3,11 +3,19 @@ use std::collections::{BTreeSet, HashMap, HashSet, hash_map::Entry};
 use symbol_table::GlobalSymbol as Symbol;
 
 use crate::analysis::Domain;
-use crate::nonssa::{Block, BlockId, Constant, Expr, NonSSAFunc, Type};
+use crate::nonssa::{Block, BlockId, Constant, Expr, NonSSAFunc, State, Type};
 use crate::saturator::Saturator;
 use crate::ssa::{Analysis, KnotId, SSA, SSABlock, SSABlockId, SSAId};
 
-pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonSSAFunc) {
+// We map each program variable to a SSAId. This is the data type to change to Patricia trees to
+// follow Lemerre's advice.
+pub type VarMap = HashMap<Symbol, SSAId>;
+
+pub fn abstract_interpret(
+    saturator: &mut Saturator,
+    name: Symbol,
+    nonssa: &NonSSAFunc,
+) -> (HashMap<BlockId, VarMap>, HashMap<BlockId, SSABlockId>) {
     let rpo = nonssa.rpo();
     let mut context = AIContext {
         name,
@@ -24,15 +32,11 @@ pub fn abstract_interpret(saturator: &mut Saturator, name: Symbol, nonssa: &NonS
             context.visit_block(&nonssa, *block);
         }
         if last_knot_count == Some(context.knot_map.num_knots()) {
-            break;
+            break (context.vars, context.blocks);
         }
         last_knot_count = Some(context.knot_map.num_knots());
     }
 }
-
-// We map each program variable to a SSAId. This is the data type to change to Okasaki maps to follow
-// Lemerre's advice.
-type VarMap = HashMap<Symbol, SSAId>;
 
 // Intern tuples of BlockId, variable sets, and analyses to KnotId.
 #[derive(Debug, Default)]
@@ -346,5 +350,33 @@ impl<'a> AIContext<'a> {
         let ssa_block = self.update_block(block, SSABlock::Return(ssa_pred, values));
         assert!(ssa_pred < ssa_block);
         self.saturator.ssa.add_exit(self.name, ssa_block);
+    }
+}
+
+pub fn check_trace_against_analysis(
+    trace: &Vec<State>,
+    vars: HashMap<BlockId, VarMap>,
+    blocks: HashMap<BlockId, SSABlockId>,
+    saturator: &mut Saturator,
+) {
+    // This is a hack to create scratch versions that inherit from the version at each block.
+    let scratch = saturator.ssa.add_block(SSABlock::Identity(0));
+    for State { location, store } in trace {
+        saturator
+            .ssa
+            .set_block(SSABlock::Identity(blocks[location]), scratch);
+        saturator.create_version(scratch);
+        // Check if the store from the trace is consistent with the version by seeing if we can
+        // derive a contradiction from asserting the constants from the store in the e-graph. If the
+        // e-graph's concretization contains the constants, then the meet of everything will be non-
+        // empty, so a contradiction won't be derived. Notably, this will also cover the case where
+        // the trace reaches a location that we believe to be unreachable.
+        for (var, cons) in store {
+            let other_ssa_id = vars[location][var];
+            let cons_ssa_id = saturator.intern(SSA::Constant(*cons));
+            saturator.union(other_ssa_id, cons_ssa_id);
+        }
+        saturator.saturate();
+        assert!(!saturator.is_contradiction_in_version(scratch));
     }
 }
