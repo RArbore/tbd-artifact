@@ -1,14 +1,24 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use clap::Parser;
 use rand::prelude::*;
 use rand::rngs::Xoshiro128PlusPlus;
 use symbol_table::GlobalSymbol as Symbol;
 
 use eqsat_ai::ai::{abstract_interpret, check_trace_against_analysis};
 use eqsat_ai::imp::ast::{ImpFunc, ImpStmt, convert_to_cfg};
-use eqsat_ai::nonssa::{BinaryOp, Constant, Expr, Type, UnaryOp, concrete_interpret};
+use eqsat_ai::imp::grammar::ProgramParser;
+use eqsat_ai::nonssa::{BinaryOp, Constant, Expr, NonSSAFunc, Type, UnaryOp, concrete_interpret};
 use eqsat_ai::saturator::Saturator;
+
+#[derive(Debug, Parser)]
+struct Args {
+    #[arg(short, long)]
+    index: Option<u64>,
+    #[arg(short, long)]
+    text: Option<String>,
+}
 
 fn sample_constant<R: Rng>(ty: Type, rng: &mut R) -> Constant {
     match ty {
@@ -101,7 +111,7 @@ fn sample_expr<R: Rng>(
     }
 }
 
-fn sample_stmt<R: Rng>(in_scope: &mut HashMap<Symbol, Type>, rng: &mut R, juice: usize) -> ImpStmt {
+fn sample_stmt<R: Rng>(in_scope: &mut HashMap<Symbol, Type>, num_vars: &mut usize, rng: &mut R, juice: usize) -> ImpStmt {
     if juice == 0 {
         return ImpStmt::Block { body: vec![] };
     }
@@ -109,7 +119,7 @@ fn sample_stmt<R: Rng>(in_scope: &mut HashMap<Symbol, Type>, rng: &mut R, juice:
         0 => {
             let mut body = vec![];
             while rng.random_ratio(3, 5) {
-                body.push(sample_stmt(in_scope, rng, juice - 1));
+                body.push(sample_stmt(in_scope, num_vars, rng, juice - 1));
             }
             ImpStmt::Block { body }
         }
@@ -121,7 +131,9 @@ fn sample_stmt<R: Rng>(in_scope: &mut HashMap<Symbol, Type>, rng: &mut R, juice:
                     .unwrap();
                 (*var, *ty)
             } else {
-                (format!("v{}", in_scope.len()).into(), sample_type(rng))
+                let new = (format!("v{}", *num_vars).into(), sample_type(rng));
+                *num_vars += 1;
+                new
             };
             let expr = sample_expr(ty, in_scope, rng, juice - 1);
             in_scope.insert(var, ty);
@@ -129,8 +141,8 @@ fn sample_stmt<R: Rng>(in_scope: &mut HashMap<Symbol, Type>, rng: &mut R, juice:
         }
         2 => {
             let cond = sample_expr(Type::Bool, in_scope, rng, juice - 1);
-            let then_body = Box::new(sample_stmt(&mut in_scope.clone(), rng, juice - 1));
-            let else_body = Box::new(sample_stmt(&mut in_scope.clone(), rng, juice - 1));
+            let then_body = Box::new(sample_stmt(&mut in_scope.clone(), num_vars, rng, juice - 1));
+            let else_body = Box::new(sample_stmt(&mut in_scope.clone(), num_vars, rng, juice - 1));
             ImpStmt::IfElse {
                 cond,
                 then_body,
@@ -139,7 +151,7 @@ fn sample_stmt<R: Rng>(in_scope: &mut HashMap<Symbol, Type>, rng: &mut R, juice:
         }
         3 => {
             let cond = sample_expr(Type::Bool, in_scope, rng, juice - 1);
-            let body = Box::new(sample_stmt(&mut in_scope.clone(), rng, juice - 1));
+            let body = Box::new(sample_stmt(&mut in_scope.clone(), num_vars, rng, juice - 1));
             ImpStmt::While { cond, body }
         }
         _ => panic!(),
@@ -156,8 +168,9 @@ fn generate_func<R: Rng>(rng: &mut R) -> ImpFunc {
         params.push((param, ty));
         in_scope.insert(param, ty);
     }
+    let mut num_vars = params.len();
 
-    let body = sample_stmt(&mut in_scope, rng, 5);
+    let body = sample_stmt(&mut in_scope, &mut num_vars, rng, 5);
 
     ImpFunc {
         name: "func".into(),
@@ -166,32 +179,61 @@ fn generate_func<R: Rng>(rng: &mut R) -> ImpFunc {
     }
 }
 
+fn check_func(nonssa: NonSSAFunc, args: Vec<Constant>) {
+    let ci_time = Instant::now();
+    let trace = concrete_interpret(&nonssa, &args, 100);
+    let ci_time = ci_time.elapsed();
+    println!("Concrete interpretation took {} ms", ci_time.as_millis());
+
+    let mut saturator = Saturator::default();
+    let ai_time = Instant::now();
+    let (vars, blocks) = abstract_interpret(&mut saturator, nonssa.name, &nonssa);
+    let ai_time = ai_time.elapsed();
+    println!("Abstract interpretation took {} ms", ai_time.as_millis());
+
+    let check_time = Instant::now();
+    check_trace_against_analysis(&trace, vars, blocks, &mut saturator);
+    let check_time = check_time.elapsed();
+    println!("Checking took {} ms", check_time.as_millis());
+}
+
 fn main() {
-    for i in 0..100 {
-        let mut rng = Xoshiro128PlusPlus::seed_from_u64(i);
-        let func = generate_func(&mut rng);
-        let mut args = vec![];
-        for (_, ty) in &func.params {
-            args.push(sample_constant(*ty, &mut rng));
+    let args = Args::parse();
+    match (args.index, args.text) {
+        (None, None) => {
+            for i in 0..100000 {
+                let mut rng = Xoshiro128PlusPlus::seed_from_u64(i);
+                let func = generate_func(&mut rng);
+                let mut args = vec![];
+                for (_, ty) in &func.params {
+                    args.push(sample_constant(*ty, &mut rng));
+                }
+                println!("CHECKING {i}");
+                println!("{func}");
+                println!("{args:?}");
+                let nonssa = convert_to_cfg(func);
+                check_func(nonssa, args);
+            }
         }
-        println!("{func}");
-        println!("{args:?}");
-        let nonssa = convert_to_cfg(func);
-
-        let ci_time = Instant::now();
-        let trace = concrete_interpret(&nonssa, &args, 100);
-        let ci_time = ci_time.elapsed();
-        println!("Concrete interpretation took {} ms", ci_time.as_millis());
-
-        let mut saturator = Saturator::default();
-        let ai_time = Instant::now();
-        let (vars, blocks) = abstract_interpret(&mut saturator, nonssa.name, &nonssa);
-        let ai_time = ai_time.elapsed();
-        println!("Abstract interpretation took {} ms", ai_time.as_millis());
-
-        let check_time = Instant::now();
-        check_trace_against_analysis(&trace, vars, blocks, &mut saturator);
-        let check_time = check_time.elapsed();
-        println!("Checking {} took {} ms", i, check_time.as_millis());
+        (None, Some(text)) => {
+            let funcs = ProgramParser::new().parse(&text).unwrap();
+            for (_, func) in funcs {
+                let nonssa = convert_to_cfg(func);
+                check_func(nonssa, vec![]);
+            }
+        }
+        (Some(index), None) => {
+            let mut rng = Xoshiro128PlusPlus::seed_from_u64(index);
+            let func = generate_func(&mut rng);
+            let mut args = vec![];
+            for (_, ty) in &func.params {
+                args.push(sample_constant(*ty, &mut rng));
+            }
+            println!("{func}");
+            println!("{args:?}");
+            let nonssa = convert_to_cfg(func);
+            check_func(nonssa, args);
+        }
+        (Some(_), Some(_)) => panic!("can't provide both index and text of program to examine"),
     }
 }
