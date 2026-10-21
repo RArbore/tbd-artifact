@@ -1,9 +1,11 @@
+use core::sync::atomic::{AtomicUsize, Ordering};
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use clap::Parser;
 use rand::prelude::*;
 use rand::rngs::Xoshiro128PlusPlus;
+use rayon::prelude::*;
 use symbol_table::GlobalSymbol as Symbol;
 
 use eqsat_ai::ai::{abstract_interpret, check_trace_against_analysis};
@@ -184,41 +186,41 @@ fn generate_func<R: Rng>(rng: &mut R) -> ImpFunc {
     }
 }
 
-fn check_func(nonssa: NonSSAFunc, args: Vec<Constant>) {
+fn check_func(nonssa: NonSSAFunc, args: Vec<Constant>) -> (Duration, Duration, Duration) {
     let ci_time = Instant::now();
     let trace = concrete_interpret(&nonssa, &args, 100);
     let ci_time = ci_time.elapsed();
-    println!("Concrete interpretation took {} ms", ci_time.as_millis());
 
     let mut saturator = Saturator::default();
     let ai_time = Instant::now();
     let (vars, blocks) = abstract_interpret(&mut saturator, nonssa.name, &nonssa);
     let ai_time = ai_time.elapsed();
-    println!("Abstract interpretation took {} ms", ai_time.as_millis());
 
     let check_time = Instant::now();
     check_trace_against_analysis(&trace, vars, blocks, &mut saturator);
     let check_time = check_time.elapsed();
-    println!("Checking took {} ms", check_time.as_millis());
+    (ci_time, ai_time, check_time)
 }
 
 fn main() {
     let args = Args::parse();
     match (args.index, args.text) {
         (None, None) => {
-            for i in 0..100000 {
+            let cnt = AtomicUsize::new(0);
+            (0..100000).into_par_iter().for_each(|i| {
                 let mut rng = Xoshiro128PlusPlus::seed_from_u64(i);
                 let func = generate_func(&mut rng);
                 let mut args = vec![];
                 for (_, ty) in &func.params {
                     args.push(sample_constant(*ty, &mut rng));
                 }
-                println!("CHECKING {i}");
-                println!("{func}");
-                println!("{args:?}");
                 let nonssa = convert_to_cfg(func);
                 check_func(nonssa, args);
-            }
+                let cnt = cnt.fetch_add(1, Ordering::Relaxed) + 1;
+                if cnt % 100 == 0 {
+                    eprintln!("{} / 100000", cnt);
+                }
+            });
         }
         (None, Some(text)) => {
             let mut rng = Xoshiro128PlusPlus::seed_from_u64(0);
@@ -231,7 +233,10 @@ fn main() {
                 println!("{func}");
                 println!("{args:?}");
                 let nonssa = convert_to_cfg(func);
-                check_func(nonssa, args);
+                let (ci_time, ai_time, check_time) = check_func(nonssa, args);
+                println!("Concrete interpretation took {} ms", ci_time.as_millis());
+                println!("Abstract interpretation took {} ms", ai_time.as_millis());
+                println!("Checking took {} ms", check_time.as_millis());
             }
         }
         (Some(index), None) => {
@@ -244,7 +249,10 @@ fn main() {
             println!("{func}");
             println!("{args:?}");
             let nonssa = convert_to_cfg(func);
-            check_func(nonssa, args);
+            let (ci_time, ai_time, check_time) = check_func(nonssa, args);
+            println!("Concrete interpretation took {} ms", ci_time.as_millis());
+            println!("Abstract interpretation took {} ms", ai_time.as_millis());
+            println!("Checking took {} ms", check_time.as_millis());
         }
         (Some(_), Some(_)) => panic!("can't provide both index and text of program to examine"),
     }
