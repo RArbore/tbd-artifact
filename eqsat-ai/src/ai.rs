@@ -218,14 +218,12 @@ impl<'a> AIContext<'a> {
             (true, true) => {}
             (false, true) => {
                 let ssa_pred = self.blocks[&pred1];
-                let ssa_block = self.update_block(block, SSABlock::Identity(ssa_pred));
-                assert!(ssa_pred < ssa_block);
+                self.update_block(block, SSABlock::Identity(ssa_pred));
                 self.update_vars(block, self.vars[&pred1].clone());
             }
             (true, false) => {
                 let ssa_pred = self.blocks[&pred2];
-                let ssa_block = self.update_block(block, SSABlock::Identity(ssa_pred));
-                assert!(ssa_pred < ssa_block);
+                self.update_block(block, SSABlock::Identity(ssa_pred));
                 self.update_vars(block, self.vars[&pred2].clone());
             }
             (false, false) => {
@@ -350,6 +348,8 @@ impl<'a> AIContext<'a> {
         let ssa_block = self.update_block(block, SSABlock::Return(ssa_pred, values));
         assert!(ssa_pred < ssa_block);
         self.saturator.ssa.add_exit(self.name, ssa_block);
+        // Returns make no assignments.
+        self.update_vars(block, self.vars[&pred].clone());
     }
 }
 

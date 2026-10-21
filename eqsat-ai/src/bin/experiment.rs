@@ -120,15 +120,15 @@ fn sample_stmt<R: Rng>(
     if juice == 0 {
         return ImpStmt::Block { body: vec![] };
     }
-    match rng.random_range(0..4) {
+    match rng.random_range(0..10) {
         0 => {
             let mut body = vec![];
-            while rng.random_ratio(3, 5) {
+            while rng.random_ratio(4, 5) {
                 body.push(sample_stmt(in_scope, num_vars, rng, juice - 1));
             }
             ImpStmt::Block { body }
         }
-        1 => {
+        1..5 => {
             let (var, ty) = if !in_scope.is_empty() && rng.random_ratio(3, 5) {
                 let (var, ty) = in_scope
                     .iter()
@@ -144,7 +144,7 @@ fn sample_stmt<R: Rng>(
             in_scope.insert(var, ty);
             ImpStmt::Assign { var, expr }
         }
-        2 => {
+        5..8 => {
             let cond = sample_expr(Type::Bool, in_scope, rng, juice - 1);
             let then_body = Box::new(sample_stmt(&mut in_scope.clone(), num_vars, rng, juice - 1));
             let else_body = Box::new(sample_stmt(&mut in_scope.clone(), num_vars, rng, juice - 1));
@@ -154,7 +154,7 @@ fn sample_stmt<R: Rng>(
                 else_body,
             }
         }
-        3 => {
+        8..10 => {
             let cond = sample_expr(Type::Bool, in_scope, rng, juice - 1);
             let body = Box::new(sample_stmt(&mut in_scope.clone(), num_vars, rng, juice - 1));
             ImpStmt::While { cond, body }
@@ -175,7 +175,7 @@ fn generate_func<R: Rng>(rng: &mut R) -> ImpFunc {
     }
     let mut num_vars = params.len();
 
-    let body = sample_stmt(&mut in_scope, &mut num_vars, rng, 5);
+    let body = sample_stmt(&mut in_scope, &mut num_vars, rng, 7);
 
     ImpFunc {
         name: "func".into(),
@@ -221,10 +221,17 @@ fn main() {
             }
         }
         (None, Some(text)) => {
+            let mut rng = Xoshiro128PlusPlus::seed_from_u64(0);
             let funcs = ProgramParser::new().parse(&text).unwrap();
             for (_, func) in funcs {
+                let mut args = vec![];
+                for (_, ty) in &func.params {
+                    args.push(sample_constant(*ty, &mut rng));
+                }
+                println!("{func}");
+                println!("{args:?}");
                 let nonssa = convert_to_cfg(func);
-                check_func(nonssa, vec![]);
+                check_func(nonssa, args);
             }
         }
         (Some(index), None) => {
