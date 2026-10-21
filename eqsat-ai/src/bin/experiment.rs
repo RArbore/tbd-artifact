@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use rand::prelude::*;
 use rand::rngs::Xoshiro128PlusPlus;
@@ -107,7 +108,7 @@ fn sample_stmt<R: Rng>(in_scope: &mut HashMap<Symbol, Type>, rng: &mut R, juice:
     match rng.random_range(0..4) {
         0 => {
             let mut body = vec![];
-            while rng.random_ratio(4, 5) {
+            while rng.random_ratio(3, 5) {
                 body.push(sample_stmt(in_scope, rng, juice - 1));
             }
             ImpStmt::Block { body }
@@ -120,9 +121,10 @@ fn sample_stmt<R: Rng>(in_scope: &mut HashMap<Symbol, Type>, rng: &mut R, juice:
                     .unwrap();
                 (*var, *ty)
             } else {
-                (format!("{}", in_scope.len()).into(), sample_type(rng))
+                (format!("v{}", in_scope.len()).into(), sample_type(rng))
             };
             let expr = sample_expr(ty, in_scope, rng, juice - 1);
+            in_scope.insert(var, ty);
             ImpStmt::Assign { var, expr }
         }
         2 => {
@@ -149,13 +151,13 @@ fn generate_func<R: Rng>(rng: &mut R) -> ImpFunc {
     let mut params = vec![];
 
     while rng.random() {
-        let param = format!("{}", params.len()).into();
+        let param = format!("v{}", params.len()).into();
         let ty = sample_type(rng);
         params.push((param, ty));
         in_scope.insert(param, ty);
     }
 
-    let body = sample_stmt(&mut in_scope, rng, 10);
+    let body = sample_stmt(&mut in_scope, rng, 5);
 
     ImpFunc {
         name: "func".into(),
@@ -174,10 +176,21 @@ fn main() {
         }
         println!("{func}");
         let nonssa = convert_to_cfg(func);
+
+        let ci_time = Instant::now();
         let trace = concrete_interpret(&nonssa, &args, 100);
+        let ci_time = ci_time.elapsed();
+        println!("Concrete interpretation took {} ms", ci_time.as_millis());
+
         let mut saturator = Saturator::default();
+        let ai_time = Instant::now();
         let (vars, blocks) = abstract_interpret(&mut saturator, nonssa.name, &nonssa);
+        let ai_time = ai_time.elapsed();
+        println!("Abstract interpretation took {} ms", ai_time.as_millis());
+
+        let check_time = Instant::now();
         check_trace_against_analysis(&trace, vars, blocks, &mut saturator);
-        println!("CHECKED {i}");
+        let check_time = check_time.elapsed();
+        println!("Checking {} took {} ms", i, check_time.as_millis());
     }
 }

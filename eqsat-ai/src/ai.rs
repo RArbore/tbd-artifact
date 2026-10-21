@@ -372,9 +372,12 @@ pub fn check_trace_against_analysis(
         // empty, so a contradiction won't be derived. Notably, this will also cover the case where
         // the trace reaches a location that we believe to be unreachable.
         for (var, cons) in store {
-            let other_ssa_id = vars[location][var];
-            let cons_ssa_id = saturator.intern(SSA::Constant(*cons));
-            saturator.union(other_ssa_id, cons_ssa_id);
+            // Traces don't drop out-of-scope variables. Treat a variable being absent from the
+            // abstract store as top.
+            if let Some(other_ssa_id) = vars[location].get(var) {
+                let cons_ssa_id = saturator.intern(SSA::Constant(*cons));
+                saturator.union(*other_ssa_id, cons_ssa_id);
+            }
         }
         saturator.saturate();
         assert!(!saturator.is_contradiction_in_version(scratch));
