@@ -61,13 +61,13 @@
 (rw (EE (Sub a b) (Constant[i64] 0)) (EE a b))
 (rw (NE (Sub a b) (Constant[i64] 0)) (NE a b))
 
-(rw (Neg (Constant[i64] a)) (Constant[i64] `-a`))
+(rw (Neg (Constant[i64] a)) (Constant[i64] `a.wrapping_neg()`))
 (rw (BitwiseNot (Constant[i64] a)) (Constant[i64] `!a`))
 (rw (Not (Constant[bool] a)) (Constant[bool] `!a`))
 
-(rw (Add (Constant[i64] a) (Constant[i64] b)) (Constant[i64] `a + b`))
-(rw (Sub (Constant[i64] a) (Constant[i64] b)) (Constant[i64] `a - b`))
-(rw (Mul (Constant[i64] a) (Constant[i64] b)) (Constant[i64] `a * b`))
+(rw (Add (Constant[i64] a) (Constant[i64] b)) (Constant[i64] `a.wrapping_add(b)`))
+(rw (Sub (Constant[i64] a) (Constant[i64] b)) (Constant[i64] `a.wrapping_sub(b)`))
+(rw (Mul (Constant[i64] a) (Constant[i64] b)) (Constant[i64] `a.wrapping_mul(b)`))
 (rw (BitwiseAnd (Constant[i64] a) (Constant[i64] b)) (Constant[i64] `a & b`))
 (rw (BitwiseOr (Constant[i64] a) (Constant[i64] b)) (Constant[i64] `a | b`))
 (rw (BitwiseXor (Constant[i64] a) (Constant[i64] b)) (Constant[i64] `a ^ b`))
@@ -81,7 +81,7 @@
 (rw (GT (Constant[i64] a) (Constant[i64] b)) (Constant[bool] `a > b`))
 (rw (GE (Constant[i64] a) (Constant[i64] b)) (Constant[bool] `a >= b`))
 
-(rule (a:(Constant[i64] b) a:(Neg c)) ((union c (Constant[i64] `-b`))))
+(rule (a:(Constant[i64] b) a:(Neg c)) ((union c (Constant[i64] `b.wrapping_neg()`))))
 (rule (a:(Constant[i64] b) a:(BitwiseNot c)) ((union c (Constant[i64] `!b`))))
 (rule (a:(Constant[bool] b) a:(Not c)) ((union c (Constant[bool] `!b`))))
 (rule (a:(Constant[bool] true) a:(And b c)) ((union a b) (union b c)))
