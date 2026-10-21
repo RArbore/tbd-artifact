@@ -242,15 +242,13 @@ impl Saturator {
         let id = self.ssa.intern(ssa);
         let canon_id = self.ids.find(id);
         let after = self.ssa.num_nodes();
-        if before != after || self.ids.previously_examined.remove(&canon_id) {
-            let VersionState::Mutable(version) = self
+        if (before != after || self.ids.previously_examined.remove(&canon_id))
+            && let VersionState::Mutable(version) = self
                 .ids
                 .versions
                 .get_mut(&self.ids.current_version.unwrap())
                 .unwrap()
-            else {
-                panic!()
-            };
+        {
             version.examine(canon_id);
             self.ids.delta.insert(canon_id);
         }
