@@ -1,6 +1,8 @@
 use core::mem::take;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::rc::Rc;
+
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::analysis::{Domain, Interval, KnownBits};
 use crate::rw::{Tries, apply_rws};
@@ -62,17 +64,17 @@ struct IDManager {
     // 1. Added to the hash-cons...
     // 2. Have had their canonical SSAId changed (due to a union)...
     // ...since the last iteration of rewriting.
-    delta: HashSet<SSAId>,
+    delta: FxHashSet<SSAId>,
     // What nodes have either been:
     // 1. `Saturator::analyze_analysis` called on their ID...
     // 2. Unioned with another node...
     // ...and their analysis value changed since the last iteration of rewriting.
-    delta_analysis: HashSet<SSAId>,
+    delta_analysis: FxHashSet<SSAId>,
     // Store an empty root version. This is needed so we have a well-defined LCA between old and new
     // versions for the entry block.
     root_version: Rc<Version<Analysis>>,
     // Store the latest version for each SSA block.
-    versions: HashMap<SSABlockId, VersionState>,
+    versions: FxHashMap<SSABlockId, VersionState>,
     // Store the "current" version. Moving between versions requires careful maintenance of the delta
     // set, so we use `move_to_version` to explicitly change this member.
     current_version: Option<SSABlockId>,
@@ -83,7 +85,7 @@ struct IDManager {
     // so that they are re-examined if they are re-interned. When moving into a version with examined
     // SSAIds, those SSAIds need to be removed from `previously_examined`, so that they are not re-
     // examined unnecessarily.
-    previously_examined: HashSet<SSAId>,
+    previously_examined: FxHashSet<SSAId>,
 }
 
 #[derive(Default)]

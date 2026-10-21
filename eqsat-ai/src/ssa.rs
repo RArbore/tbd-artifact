@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use symbol_table::GlobalSymbol as Symbol;
 
 use crate::analysis::{Interval, KnownBits};
@@ -32,15 +32,15 @@ pub enum SSABlock {
     Guard(SSABlockId, SSAId, bool),
     // The third field maps knots to SSA values corresponding to the two predecessors (think of these
     // like the inputs to a phi function).
-    Merge(SSABlockId, SSABlockId, HashMap<KnotId, (SSAId, SSAId)>),
+    Merge(SSABlockId, SSABlockId, FxHashMap<KnotId, (SSAId, SSAId)>),
     Return(SSABlockId, Vec<SSAId>),
 }
 
 #[derive(Debug, Clone, Default)]
 struct SSAHashCons {
-    map: HashMap<SSA, SSAId>,
+    map: FxHashMap<SSA, SSAId>,
     vec: Vec<SSA>,
-    users: HashMap<SSAId, HashSet<SSAId>>,
+    users: FxHashMap<SSAId, FxHashSet<SSAId>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -48,7 +48,7 @@ pub struct SSAProgram {
     ssa: SSAHashCons,
     types: Vec<Type>,
     cfg: Vec<SSABlock>,
-    exits: HashMap<Symbol, SSABlockId>,
+    exits: FxHashMap<Symbol, SSABlockId>,
 }
 
 impl SSA {

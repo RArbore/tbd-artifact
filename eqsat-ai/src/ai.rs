@@ -1,5 +1,6 @@
-use std::collections::{BTreeSet, HashMap, HashSet, hash_map::Entry};
+use std::collections::{BTreeSet, hash_map::Entry};
 
+use rustc_hash::{FxHashMap, FxHashSet};
 use symbol_table::GlobalSymbol as Symbol;
 
 use crate::analysis::Domain;
@@ -9,20 +10,20 @@ use crate::ssa::{Analysis, KnotId, SSA, SSABlock, SSABlockId, SSAId};
 
 // We map each program variable to a SSAId. This is the data type to change to Patricia trees to
 // follow Lemerre's advice.
-pub type VarMap = HashMap<Symbol, SSAId>;
+pub type VarMap = FxHashMap<Symbol, SSAId>;
 
 pub fn abstract_interpret(
     saturator: &mut Saturator,
     name: Symbol,
     nonssa: &NonSSAFunc,
-) -> (HashMap<BlockId, VarMap>, HashMap<BlockId, SSABlockId>) {
+) -> (FxHashMap<BlockId, VarMap>, FxHashMap<BlockId, SSABlockId>) {
     let rpo = nonssa.rpo();
     let mut context = AIContext {
         name,
-        vars: HashMap::new(),
-        blocks: HashMap::new(),
+        vars: FxHashMap::default(),
+        blocks: FxHashMap::default(),
         knot_map: KnotMap::default(),
-        old_analyses: HashMap::new(),
+        old_analyses: FxHashMap::default(),
         saturator,
     };
 
@@ -40,7 +41,7 @@ pub fn abstract_interpret(
 
 // Intern tuples of BlockId, variable sets, and analyses to KnotId.
 #[derive(Debug, Default)]
-struct KnotMap(HashMap<(BlockId, BTreeSet<Symbol>, Analysis), KnotId>);
+struct KnotMap(FxHashMap<(BlockId, BTreeSet<Symbol>, Analysis), KnotId>);
 
 impl KnotMap {
     fn intern_knot(&mut self, block: BlockId, var: BTreeSet<Symbol>, analysis: Analysis) -> KnotId {
@@ -57,14 +58,14 @@ impl KnotMap {
 struct AIContext<'a> {
     name: Symbol,
     // At each (visited) original block, map each variable to an SSA value.
-    vars: HashMap<BlockId, VarMap>,
+    vars: FxHashMap<BlockId, VarMap>,
     // Map each (visited) original block to a SSA block.
-    blocks: HashMap<BlockId, SSABlockId>,
+    blocks: FxHashMap<BlockId, SSABlockId>,
     // Intern sets of variables and locations to KnotIds (knots are our name for "symbolic variables"
     // from Lemerre's paper).
     knot_map: KnotMap,
     // Old analyses along widening edges.
-    old_analyses: HashMap<(SSABlockId, SSABlockId), Analysis>,
+    old_analyses: FxHashMap<(SSABlockId, SSABlockId), Analysis>,
     // All building of the SSA program goes through the Saturator. This includes applying rewrite
     // rules and managing versions.
     saturator: &'a mut Saturator,
@@ -253,8 +254,8 @@ impl<'a> AIContext<'a> {
                     }
                 };
 
-                let mut pair_to_vars: HashMap<(SSAId, SSAId, Analysis), HashSet<Symbol>> =
-                    HashMap::new();
+                let mut pair_to_vars: FxHashMap<(SSAId, SSAId, Analysis), FxHashSet<Symbol>> =
+                    FxHashMap::default();
                 for (var, value1) in &self.vars[&pred1] {
                     if let Some(value2) = self.vars[&pred2].get(var) {
                         let value1 = self.saturator.find_in_version(*value1, ssa_pred1);
@@ -276,7 +277,7 @@ impl<'a> AIContext<'a> {
                 }
 
                 // We create a single knot per set of variables sharing values.
-                let mut knot_values = HashMap::new();
+                let mut knot_values = FxHashMap::default();
                 let mut pair_to_knot = vec![];
                 for ((value1, value2, analysis), vars) in pair_to_vars {
                     let knot_id =
@@ -292,7 +293,7 @@ impl<'a> AIContext<'a> {
 
                 // Now that we have a version for this block, merge the IDs in the intersection of
                 // the sets in the predecessor versions with the knots.
-                let mut new_vars = HashMap::new();
+                let mut new_vars = FxHashMap::default();
                 for (value1, value2, vars, knot_id, analysis) in pair_to_knot {
                     let ty1 = self.saturator.ssa.ty(value1);
                     let ty2 = self.saturator.ssa.ty(value2);
@@ -300,12 +301,12 @@ impl<'a> AIContext<'a> {
                     let mut knot = self.saturator.intern(SSA::Knot(knot_id, ty1, analysis));
 
                     let idom = self.saturator.version(new_block).parent().unwrap();
-                    let set1: HashSet<_> = self
+                    let set1: FxHashSet<_> = self
                         .saturator
                         .version(ssa_pred1)
                         .set(value1, Some(idom))
                         .collect();
-                    let set2: HashSet<_> = self
+                    let set2: FxHashSet<_> = self
                         .saturator
                         .version(ssa_pred2)
                         .set(value2, Some(idom))
@@ -355,8 +356,8 @@ impl<'a> AIContext<'a> {
 
 pub fn check_trace_against_analysis(
     trace: &Vec<State>,
-    vars: HashMap<BlockId, VarMap>,
-    blocks: HashMap<BlockId, SSABlockId>,
+    vars: FxHashMap<BlockId, VarMap>,
+    blocks: FxHashMap<BlockId, SSABlockId>,
     saturator: &mut Saturator,
 ) {
     // This is a hack to create scratch versions that inherit from the version at each block.

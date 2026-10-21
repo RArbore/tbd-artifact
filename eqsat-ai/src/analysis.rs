@@ -1,7 +1,8 @@
 use core::cmp::{max, min};
 use core::fmt::{Display, Formatter, Result};
-use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
+
+use rustc_hash::FxHashMap;
 
 use crate::trie::TupleValue;
 
@@ -465,7 +466,7 @@ impl<A: Domain, B: Domain> Domain for (A, B) {
 }
 
 // Global intern tables for analysis values. This is hacky.
-type Interner<T> = (HashMap<T, TupleValue>, Vec<T>);
+type Interner<T> = (FxHashMap<T, TupleValue>, Vec<T>);
 static KB_INTERN: LazyLock<Mutex<Interner<KnownBits>>> =
     LazyLock::new(|| Mutex::new(Default::default()));
 static INT_INTERN: LazyLock<Mutex<Interner<Interval>>> =

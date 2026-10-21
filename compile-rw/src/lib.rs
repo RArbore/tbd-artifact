@@ -1,12 +1,12 @@
 lalrpop_mod!(grammar);
 
 use core::fmt::{Display, Formatter, Result};
-use std::collections::{HashMap, HashSet};
 
 use itertools::Itertools;
 use lalrpop_util::lalrpop_mod;
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{ToTokens, TokenStreamExt, format_ident, quote};
+use rustc_hash::{FxHashMap, FxHashSet};
 use symbol_table::GlobalSymbol as Symbol;
 
 use grammar::RulesParser;
@@ -81,7 +81,7 @@ enum Pattern {
 struct Query {
     // We need to record the types of variables when building the query so that we can use those
     // variables as their proper types in the RHS of each rule.
-    types: HashMap<Symbol, Symbol>,
+    types: FxHashMap<Symbol, Symbol>,
     atoms: Vec<Atom>,
 }
 
@@ -309,7 +309,7 @@ impl ToTokens for NeededTrie {
 
 // Flatten a nested pattern into a relational qeury - see "Relational E-matching" by Zhang et al.
 fn patterns_to_query(patterns: &[Pattern]) -> Query {
-    fn record_type(term: Term, ty: Symbol, types: &mut HashMap<Symbol, Symbol>) {
+    fn record_type(term: Term, ty: Symbol, types: &mut FxHashMap<Symbol, Symbol>) {
         if let Term::Variable(var) = term {
             types.insert(var, ty);
         }
@@ -318,7 +318,7 @@ fn patterns_to_query(patterns: &[Pattern]) -> Query {
     fn pattern_to_query_helper(
         pattern: &Pattern,
         atoms: &mut Vec<Atom>,
-        types: &mut HashMap<Symbol, Symbol>,
+        types: &mut FxHashMap<Symbol, Symbol>,
     ) -> Term {
         use Pattern::*;
         match pattern {
@@ -444,7 +444,7 @@ fn patterns_to_query(patterns: &[Pattern]) -> Query {
     }
 
     let mut atoms = vec![];
-    let mut types = HashMap::new();
+    let mut types = FxHashMap::default();
     for pattern in patterns {
         pattern_to_query_helper(pattern, &mut atoms, &mut types);
     }
@@ -456,7 +456,7 @@ fn variable_order(query: &Query, delta_idx: usize) -> Vec<Symbol> {
     // For now, we just order variables by # of occurrences in the query. Occurrences inside delta
     // atoms are more heavily weighed, since delta relations will be smaller than normal relations.
     const DELTA_WEIGHT: isize = 10;
-    let mut num_occurs: HashMap<Symbol, isize> = HashMap::new();
+    let mut num_occurs: FxHashMap<Symbol, isize> = FxHashMap::default();
     for (atom_idx, atom) in query.atoms.iter().enumerate() {
         for term in &atom.terms {
             if let Term::Variable(var) = term {
@@ -476,9 +476,9 @@ fn variable_order(query: &Query, delta_idx: usize) -> Vec<Symbol> {
 
 // For each variable in a query, determine the set of atoms (indices) that contain that variable, and
 // for each atom at what column indices that variable appears.
-type AtomsContaining = HashMap<Symbol, HashMap<usize, Vec<usize>>>;
+type AtomsContaining = FxHashMap<Symbol, FxHashMap<usize, Vec<usize>>>;
 fn atoms_containing(query: &Query) -> AtomsContaining {
-    let mut atoms_containing = AtomsContaining::new();
+    let mut atoms_containing = AtomsContaining::default();
     for (atom_idx, atom) in query.atoms.iter().enumerate() {
         for (column_idx, term) in atom.terms.iter().enumerate() {
             if let Term::Variable(var) = term {
@@ -840,7 +840,7 @@ pub fn compile_rw(contents: &str) -> String {
 
     // Second, we need to determine the set of tries that are needed. The set of needed tries is
     // shared across all rewrites.
-    let mut needed_tries = HashSet::new();
+    let mut needed_tries = FxHashSet::default();
     let mut query_tries = vec![];
     for query_idx in 0..queries.len() {
         let query = &queries[query_idx];
@@ -1002,9 +1002,9 @@ pub fn compile_rw(contents: &str) -> String {
     let trie_struct = quote! {
         #[derive(Default, PartialEq, Eq)]
         pub struct Tries {
-            inserted_as: HashMap<SSAId, SSAId>,
-            inserted_kb: HashMap<SSAId, KnownBits>,
-            inserted_int: HashMap<SSAId, Interval>,
+            inserted_as: FxHashMap<SSAId, SSAId>,
+            inserted_kb: FxHashMap<SSAId, KnownBits>,
+            inserted_int: FxHashMap<SSAId, Interval>,
             #trie_fields
         }
 
@@ -1158,7 +1158,9 @@ pub fn compile_rw(contents: &str) -> String {
     // Finally, emit the top level rewriting function.
     let rw_fn = quote! {
         use core::fmt::{Debug, Formatter, Result};
-        use std::collections::{BTreeMap, HashMap};
+        use std::collections::BTreeMap;
+
+        use rustc_hash::FxHashMap;
 
         use crate::analysis::{Interval, KnownBits, get_int, get_kb};
         use crate::nonssa::{BinaryOp, Constant, Type, UnaryOp};
@@ -1192,7 +1194,7 @@ mod tests {
         assert_eq!(
             query,
             Query {
-                types: HashMap::from_iter([
+                types: FxHashMap::from_iter([
                     ("_root_0".into(), "SSAId".into()),
                     ("_root_lhs".into(), "SSAId".into()),
                     ("a".into(), "SSAId".into())

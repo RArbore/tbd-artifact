@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::analysis::{Interval, KnownBits, intern_int, intern_kb};
 use crate::nonssa::Constant;
@@ -79,12 +79,12 @@ pub fn interval_tuple_field(id: SSAId, int: Interval, column: usize) -> TupleVal
 // canonical* SSAIds of inserted nodes into the leaf nodes of the trie.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Trie {
-    Internal(HashMap<TupleValue, Trie>),
-    Leaf(HashSet<SSAId>),
+    Internal(FxHashMap<TupleValue, Trie>),
+    Leaf(FxHashSet<SSAId>),
 }
 
 impl Trie {
-    pub fn try_internal(&self) -> Option<&HashMap<TupleValue, Trie>> {
+    pub fn try_internal(&self) -> Option<&FxHashMap<TupleValue, Trie>> {
         use Trie::*;
         match self {
             Internal(map) => Some(map),
@@ -92,7 +92,7 @@ impl Trie {
         }
     }
 
-    pub fn try_leaf(&self) -> Option<&HashSet<SSAId>> {
+    pub fn try_leaf(&self) -> Option<&FxHashSet<SSAId>> {
         use Trie::*;
         match self {
             Internal(_) => None,
@@ -113,7 +113,7 @@ impl Trie {
         match it {
             Internal(map) => {
                 assert!(map.is_empty());
-                *it = Leaf(HashSet::from_iter([id]));
+                *it = Leaf(FxHashSet::from_iter([id]));
             }
             Leaf(ids) => {
                 ids.insert(id);

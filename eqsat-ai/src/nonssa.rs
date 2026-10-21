@@ -1,5 +1,6 @@
 use core::fmt::{Display, Formatter, Result};
-use std::collections::{HashMap, HashSet};
+
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use symbol_table::GlobalSymbol as Symbol;
 
@@ -113,7 +114,7 @@ impl Block {
 
 impl NonSSAFunc {
     pub fn rpo(&self) -> Vec<BlockId> {
-        let mut succ: HashMap<BlockId, Vec<BlockId>> = HashMap::new();
+        let mut succ: FxHashMap<BlockId, Vec<BlockId>> = FxHashMap::default();
         for (id, block) in self.cfg.iter().enumerate().rev() {
             match block {
                 Block::Entry => {}
@@ -129,7 +130,7 @@ impl NonSSAFunc {
             }
         }
         let mut rpo = vec![];
-        let mut visited = HashSet::new();
+        let mut visited = FxHashSet::default();
         self.rpo_helper(0, &succ, &mut rpo, &mut visited);
         rpo.reverse();
         rpo
@@ -138,9 +139,9 @@ impl NonSSAFunc {
     fn rpo_helper(
         &self,
         id: BlockId,
-        succ: &HashMap<BlockId, Vec<BlockId>>,
+        succ: &FxHashMap<BlockId, Vec<BlockId>>,
         rpo: &mut Vec<BlockId>,
-        visited: &mut HashSet<BlockId>,
+        visited: &mut FxHashSet<BlockId>,
     ) {
         if visited.contains(&id) {
             return;
@@ -214,7 +215,7 @@ impl Display for BinaryOp {
     }
 }
 
-fn concrete_eval(expr: &Expr, store: &HashMap<Symbol, Constant>) -> Constant {
+fn concrete_eval(expr: &Expr, store: &FxHashMap<Symbol, Constant>) -> Constant {
     match expr {
         Expr::Constant { val } => *val,
         Expr::Variable { var } => store[var],
@@ -342,7 +343,7 @@ fn concrete_eval(expr: &Expr, store: &HashMap<Symbol, Constant>) -> Constant {
     }
 }
 
-fn concrete_traversable(block: &Block, store: &HashMap<Symbol, Constant>) -> bool {
+fn concrete_traversable(block: &Block, store: &FxHashMap<Symbol, Constant>) -> bool {
     if let Block::Guard {
         cond, direction, ..
     } = block
@@ -356,7 +357,7 @@ fn concrete_traversable(block: &Block, store: &HashMap<Symbol, Constant>) -> boo
     }
 }
 
-fn concrete_traverse(block: &Block, store: &mut HashMap<Symbol, Constant>) {
+fn concrete_traverse(block: &Block, store: &mut FxHashMap<Symbol, Constant>) {
     if let Block::Assign { var, expr, .. } = block {
         store.insert(*var, concrete_eval(expr, store));
     }
@@ -365,11 +366,11 @@ fn concrete_traverse(block: &Block, store: &mut HashMap<Symbol, Constant>) {
 #[derive(Debug)]
 pub struct State {
     pub location: BlockId,
-    pub store: HashMap<Symbol, Constant>,
+    pub store: FxHashMap<Symbol, Constant>,
 }
 
 pub fn concrete_interpret(func: &NonSSAFunc, args: &Vec<Constant>, fuel: usize) -> Vec<State> {
-    let mut succs: HashMap<BlockId, Vec<BlockId>> = HashMap::new();
+    let mut succs: FxHashMap<BlockId, Vec<BlockId>> = FxHashMap::default();
     for (id, block) in func.cfg.iter().enumerate() {
         succs.entry(id).or_default();
         use Block::*;
@@ -386,7 +387,7 @@ pub fn concrete_interpret(func: &NonSSAFunc, args: &Vec<Constant>, fuel: usize) 
     }
 
     let mut location = 0;
-    let mut store: HashMap<Symbol, Constant> = args
+    let mut store: FxHashMap<Symbol, Constant> = args
         .into_iter()
         .enumerate()
         .map(|(idx, cons)| {

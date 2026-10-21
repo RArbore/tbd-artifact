@@ -1,7 +1,8 @@
 use core::cell::RefCell;
 use core::ptr::eq;
-use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::analysis::Domain;
 use crate::ssa::{SSA, SSAId};
@@ -11,8 +12,8 @@ use crate::ssa::{SSA, SSAId};
 // store sibling pointers for set traversal (each set corresponds to a circular linked list).
 #[derive(Debug, Default)]
 pub struct SparseUnionFind {
-    parents: RefCell<HashMap<SSAId, SSAId>>,
-    siblings: HashMap<SSAId, SSAId>,
+    parents: RefCell<FxHashMap<SSAId, SSAId>>,
+    siblings: FxHashMap<SSAId, SSAId>,
 }
 
 // A version is a layer of a layered union find. Each layer of the layered union find is "just" a
@@ -24,7 +25,7 @@ pub struct Version<A: Domain> {
     uf: SparseUnionFind,
     // Track an "analysis" value per e-class. If the map at this version doesn't contain an entry,
     // then the analysis value for the e-class is given by the parent version (recursively).
-    analysis: HashMap<SSAId, A>,
+    analysis: FxHashMap<SSAId, A>,
     // Track whether we have found a contradiction in this version.
     contradiction: bool,
     // Store a pointer to the parent version. This is ref-counted to simplify the code in the
@@ -36,7 +37,7 @@ pub struct Version<A: Domain> {
     // version if it was ever 1. added as a new node in the hash-cons while this is the current
     // version or 2. was ever interned when the SSAId was in `IDManager::previously_examined` (see
     // `saturator.rs`) while this is the current version.
-    examined_ids: HashSet<SSAId>,
+    examined_ids: FxHashSet<SSAId>,
 }
 
 #[derive(Debug)]
@@ -206,11 +207,11 @@ impl<A: Domain> Version<A> {
         let level = parent.level + 1;
         Self {
             uf: SparseUnionFind::default(),
-            analysis: HashMap::new(),
+            analysis: FxHashMap::default(),
             contradiction: parent.contradiction,
             parent: Some(parent),
             level,
-            examined_ids: HashSet::new(),
+            examined_ids: FxHashSet::default(),
         }
     }
 
