@@ -57,11 +57,7 @@ impl SSA {
             SSA::Constant(Constant::I64(_)) => Type::I64,
             SSA::Constant(Constant::Bool(_)) => Type::Bool,
             SSA::Param(_, ty) | SSA::Knot(_, ty, _) => ty,
-            SSA::Unary(UnaryOp::Neg, input) => {
-                assert_eq!(types[input], Type::I64);
-                Type::I64
-            }
-            SSA::Unary(UnaryOp::BitwiseNot, input) => {
+            SSA::Unary(UnaryOp::Neg, input) | SSA::Unary(UnaryOp::BitwiseNot, input) => {
                 assert_eq!(types[input], Type::I64);
                 Type::I64
             }
@@ -70,12 +66,12 @@ impl SSA {
                 Type::Bool
             }
             SSA::Binary(op, lhs, rhs) => match op {
-                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul => {
-                    assert_eq!(types[lhs], Type::I64);
-                    assert_eq!(types[rhs], Type::I64);
-                    Type::I64
-                }
-                BinaryOp::BitwiseAnd | BinaryOp::BitwiseOr | BinaryOp::BitwiseXor => {
+                BinaryOp::Add
+                | BinaryOp::Sub
+                | BinaryOp::Mul
+                | BinaryOp::BitwiseAnd
+                | BinaryOp::BitwiseOr
+                | BinaryOp::BitwiseXor => {
                     assert_eq!(types[lhs], Type::I64);
                     assert_eq!(types[rhs], Type::I64);
                     Type::I64

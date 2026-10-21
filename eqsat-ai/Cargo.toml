@@ -11,7 +11,6 @@ path = "src/lib.rs"
 name = "experiment"
 
 [dependencies]
-clap = { version = "*", features = ["derive"] }
 lalrpop-util = { version = "*", features = ["lexer", "unicode"] }
 rand = "*"
 symbol_table = { version = "*", features = ["global", "serde"] }
