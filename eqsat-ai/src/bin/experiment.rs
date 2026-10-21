@@ -20,7 +20,17 @@ fn sample_type<R: Rng>(rng: &mut R) -> Type {
     if rng.random() { Type::Bool } else { Type::I64 }
 }
 
-fn sample_expr<R: Rng>(ty: Type, in_scope: &mut HashMap<Symbol, Type>, rng: &mut R) -> Expr {
+fn sample_expr<R: Rng>(
+    ty: Type,
+    in_scope: &mut HashMap<Symbol, Type>,
+    rng: &mut R,
+    juice: usize,
+) -> Expr {
+    if juice == 0 {
+        return Expr::Constant {
+            val: sample_constant(ty, rng),
+        };
+    }
     use BinaryOp::*;
     use UnaryOp::*;
     match rng.random_range(0..4) {
@@ -31,18 +41,18 @@ fn sample_expr<R: Rng>(ty: Type, in_scope: &mut HashMap<Symbol, Type>, rng: &mut
             let mut iter_of_ty = in_scope.iter().filter(|(_, var_ty)| **var_ty == ty);
             let num_of_ty = iter_of_ty.clone().count();
             if num_of_ty == 0 {
-                return sample_expr(ty, in_scope, rng);
+                return sample_expr(ty, in_scope, rng, juice - 1);
             }
             let (var, _) = iter_of_ty.nth(rng.random_range(0..num_of_ty)).unwrap();
             Expr::Variable { var: *var }
         }
         2 => match ty {
             Type::Bool => {
-                let input = Box::new(sample_expr(ty, in_scope, rng));
+                let input = Box::new(sample_expr(ty, in_scope, rng, juice - 1));
                 Expr::Unary { op: Not, input }
             }
             Type::I64 => {
-                let input = Box::new(sample_expr(ty, in_scope, rng));
+                let input = Box::new(sample_expr(ty, in_scope, rng, juice - 1));
                 if rng.random() {
                     Expr::Unary { op: Neg, input }
                 } else {
@@ -67,8 +77,8 @@ fn sample_expr<R: Rng>(ty: Type, in_scope: &mut HashMap<Symbol, Type>, rng: &mut
                     8 => (GE, Type::I64),
                     _ => panic!(),
                 };
-                let lhs = Box::new(sample_expr(input_ty, in_scope, rng));
-                let rhs = Box::new(sample_expr(input_ty, in_scope, rng));
+                let lhs = Box::new(sample_expr(input_ty, in_scope, rng, juice - 1));
+                let rhs = Box::new(sample_expr(input_ty, in_scope, rng, juice - 1));
                 Expr::Binary { op, lhs, rhs }
             }
             Type::I64 => {
@@ -81,8 +91,8 @@ fn sample_expr<R: Rng>(ty: Type, in_scope: &mut HashMap<Symbol, Type>, rng: &mut
                     5 => BitwiseXor,
                     _ => panic!(),
                 };
-                let lhs = Box::new(sample_expr(Type::I64, in_scope, rng));
-                let rhs = Box::new(sample_expr(Type::I64, in_scope, rng));
+                let lhs = Box::new(sample_expr(Type::I64, in_scope, rng, juice - 1));
+                let rhs = Box::new(sample_expr(Type::I64, in_scope, rng, juice - 1));
                 Expr::Binary { op, lhs, rhs }
             }
         },
@@ -90,12 +100,15 @@ fn sample_expr<R: Rng>(ty: Type, in_scope: &mut HashMap<Symbol, Type>, rng: &mut
     }
 }
 
-fn sample_stmt<R: Rng>(in_scope: &mut HashMap<Symbol, Type>, rng: &mut R) -> ImpStmt {
+fn sample_stmt<R: Rng>(in_scope: &mut HashMap<Symbol, Type>, rng: &mut R, juice: usize) -> ImpStmt {
+    if juice == 0 {
+        return ImpStmt::Block { body: vec![] };
+    }
     match rng.random_range(0..4) {
         0 => {
             let mut body = vec![];
             while rng.random_ratio(4, 5) {
-                body.push(sample_stmt(in_scope, rng));
+                body.push(sample_stmt(in_scope, rng, juice - 1));
             }
             ImpStmt::Block { body }
         }
@@ -109,13 +122,13 @@ fn sample_stmt<R: Rng>(in_scope: &mut HashMap<Symbol, Type>, rng: &mut R) -> Imp
             } else {
                 (format!("{}", in_scope.len()).into(), sample_type(rng))
             };
-            let expr = sample_expr(ty, in_scope, rng);
+            let expr = sample_expr(ty, in_scope, rng, juice - 1);
             ImpStmt::Assign { var, expr }
         }
         2 => {
-            let cond = sample_expr(Type::Bool, in_scope, rng);
-            let then_body = Box::new(sample_stmt(&mut in_scope.clone(), rng));
-            let else_body = Box::new(sample_stmt(&mut in_scope.clone(), rng));
+            let cond = sample_expr(Type::Bool, in_scope, rng, juice - 1);
+            let then_body = Box::new(sample_stmt(&mut in_scope.clone(), rng, juice - 1));
+            let else_body = Box::new(sample_stmt(&mut in_scope.clone(), rng, juice - 1));
             ImpStmt::IfElse {
                 cond,
                 then_body,
@@ -123,8 +136,8 @@ fn sample_stmt<R: Rng>(in_scope: &mut HashMap<Symbol, Type>, rng: &mut R) -> Imp
             }
         }
         3 => {
-            let cond = sample_expr(Type::Bool, in_scope, rng);
-            let body = Box::new(sample_stmt(&mut in_scope.clone(), rng));
+            let cond = sample_expr(Type::Bool, in_scope, rng, juice - 1);
+            let body = Box::new(sample_stmt(&mut in_scope.clone(), rng, juice - 1));
             ImpStmt::While { cond, body }
         }
         _ => panic!(),
@@ -142,7 +155,7 @@ fn generate_func<R: Rng>(rng: &mut R) -> ImpFunc {
         in_scope.insert(param, ty);
     }
 
-    let body = sample_stmt(&mut in_scope, rng);
+    let body = sample_stmt(&mut in_scope, rng, 10);
 
     ImpFunc {
         name: "func".into(),
@@ -159,6 +172,7 @@ fn main() {
         for (_, ty) in &func.params {
             args.push(sample_constant(*ty, &mut rng));
         }
+        println!("{func}");
         let nonssa = convert_to_cfg(func);
         let trace = concrete_interpret(&nonssa, &args, 100);
         let mut saturator = Saturator::default();
