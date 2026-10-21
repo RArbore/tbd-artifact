@@ -111,7 +111,12 @@ fn sample_expr<R: Rng>(
     }
 }
 
-fn sample_stmt<R: Rng>(in_scope: &mut HashMap<Symbol, Type>, num_vars: &mut usize, rng: &mut R, juice: usize) -> ImpStmt {
+fn sample_stmt<R: Rng>(
+    in_scope: &mut HashMap<Symbol, Type>,
+    num_vars: &mut usize,
+    rng: &mut R,
+    juice: usize,
+) -> ImpStmt {
     if juice == 0 {
         return ImpStmt::Block { body: vec![] };
     }

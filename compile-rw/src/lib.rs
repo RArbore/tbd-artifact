@@ -618,7 +618,8 @@ fn emit_wcoj(
     atoms_containing: &AtomsContaining,
     var_order: &Vec<Symbol>,
     rule_tries: &Vec<NeededTrie>,
-) -> TokenStream {
+    rule_num: usize,
+) -> (TokenStream, TokenStream) {
     // Emits one nested loop of the WCOJ.
     fn emit_wcoj_helper(
         query: &Query,
@@ -698,12 +699,13 @@ fn emit_wcoj(
             );
 
             quote! {
-            #smallest
-            for (#var_iden, child_of_smallest) in smallest_trie.try_internal().unwrap() {
-                #probe
-                #cast
-                #nested
-            } }
+                #smallest
+                for (#var_iden, child_of_smallest) in smallest_trie.try_internal().unwrap() {
+                    #probe
+                    #cast
+                    #nested
+                }
+            }
         } else {
             // Log the rule application.
             let rule_str = format!("{}", rule);
@@ -739,6 +741,7 @@ fn emit_wcoj(
         }
     }
 
+    let name = format_ident!("apply_rule{}", rule_num);
     let init: TokenStream = rule_tries
         .iter()
         .enumerate()
@@ -748,12 +751,14 @@ fn emit_wcoj(
         })
         .collect();
     let block = emit_wcoj_helper(query, rule, delta_idx, atoms_containing, var_order, 0);
-    quote! {
-        {
+    let def = quote! {
+        fn #name<const DUMP: bool>(tries: &Tries, saturator: &mut Saturator) {
             #init
             #block
         }
-    }
+    };
+    let call = quote! { #name::<DUMP>(tries, saturator); };
+    (def, call)
 }
 
 // Emit the code that tries to insert / remove a node into / from a trie. This emits both the
@@ -1126,21 +1131,27 @@ pub fn compile_rw(contents: &str) -> String {
     };
 
     // Fourth, emit the code that implements WCOJ.
-    let mut wcojs = quote! {};
+    let mut wcoj_defs = quote! {};
+    let mut wcoj_calls = quote! {};
+    let mut num_rules = 0;
     for query_idx in 0..queries.len() {
         let query = &queries[query_idx];
         let atoms_containing = &atoms_containings[query_idx];
         for delta_idx in 0..query.atoms.len() {
             let var_order = &var_orders[query_idx][delta_idx];
             let rule_tries = &query_tries[query_idx][delta_idx];
-            wcojs.extend(emit_wcoj(
+            let (wcoj_def, wcoj_call) = emit_wcoj(
                 query,
                 &rws[query_idx],
                 delta_idx,
                 atoms_containing,
                 var_order,
                 rule_tries,
-            ));
+                num_rules,
+            );
+            num_rules += 1;
+            wcoj_defs.extend(wcoj_def);
+            wcoj_calls.extend(wcoj_call);
         }
     }
 
@@ -1157,8 +1168,10 @@ pub fn compile_rw(contents: &str) -> String {
 
         #trie_struct
 
+        #wcoj_defs
+
         pub fn apply_rws<const DUMP: bool>(tries: &Tries, saturator: &mut Saturator) {
-            #wcojs
+            #wcoj_calls
         }
     };
     // Format the Rust code so it's (more) pretty to look at.
