@@ -175,6 +175,7 @@ fn main() {
             args.push(sample_constant(*ty, &mut rng));
         }
         println!("{func}");
+        println!("{args:?}");
         let nonssa = convert_to_cfg(func);
 
         let ci_time = Instant::now();

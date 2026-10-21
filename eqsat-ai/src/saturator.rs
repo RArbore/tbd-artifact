@@ -7,6 +7,9 @@ use crate::rw::{Tries, apply_rws};
 use crate::ssa::{Analysis, SSA, SSABlock, SSABlockId, SSAId, SSAProgram};
 use crate::version::Version;
 
+// The maximum number of iterations of equality saturation, per invocation of `Saturator::saturate`.
+const MAX_ITERS: usize = 5;
+
 #[derive(Debug)]
 enum VersionState {
     // If the version is mutable, it is a leaf version.
@@ -526,10 +529,10 @@ impl Saturator {
             assert!(self.ids.delta_analysis.is_empty());
             return;
         };
-        while !self.ids.delta.is_empty() || !self.ids.delta_analysis.is_empty() {
-            if self.is_contradiction_in_version(self.ids.current_version.unwrap()) {
-                self.ids.delta.clear();
-                self.ids.delta_analysis.clear();
+        for _ in 0..MAX_ITERS {
+            if (self.ids.delta.is_empty() && self.ids.delta_analysis.is_empty())
+                || self.is_contradiction_in_version(self.ids.current_version.unwrap())
+            {
                 break;
             }
             self.apply_edits();
@@ -599,6 +602,8 @@ impl Saturator {
             tries.clear_delta();
             self.tries = tries;
         }
+        self.ids.delta.clear();
+        self.ids.delta_analysis.clear();
         self.apply_edits();
     }
 

@@ -488,6 +488,17 @@ fn loop(x: i64) {
 }
 
 #[test]
+fn ci03() {
+    let text = r#"
+fn loop() {
+    while true {}
+}
+"#;
+    let trace = get_trace(text, &vec![]);
+    assert_eq!(trace.len(), 100, "{:?}", trace);
+}
+
+#[test]
 fn aici01() {
     let text = r#"
 fn loop(x: i64) {
@@ -497,17 +508,6 @@ fn loop(x: i64) {
 }
 "#;
     check_trace(text, &vec![Constant::I64(-5)]);
-}
-
-#[test]
-fn ci03() {
-    let text = r#"
-fn loop() {
-    while true {}
-}
-"#;
-    let trace = get_trace(text, &vec![]);
-    assert_eq!(trace.len(), 100, "{:?}", trace);
 }
 
 #[test]
