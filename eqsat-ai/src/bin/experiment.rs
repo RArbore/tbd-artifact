@@ -1,5 +1,5 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
@@ -35,7 +35,7 @@ fn sample_type<R: Rng>(rng: &mut R) -> Type {
 
 fn sample_expr<R: Rng>(
     ty: Type,
-    in_scope: &mut HashMap<Symbol, Type>,
+    in_scope: &mut BTreeMap<Symbol, Type>,
     rng: &mut R,
     juice: usize,
 ) -> Expr {
@@ -46,11 +46,11 @@ fn sample_expr<R: Rng>(
     }
     use BinaryOp::*;
     use UnaryOp::*;
-    match rng.random_range(0..4) {
-        0 => Expr::Constant {
+    match rng.random_range(0..10) {
+        0..2 => Expr::Constant {
             val: sample_constant(ty, rng),
         },
-        1 => {
+        2..7 => {
             let mut iter_of_ty = in_scope.iter().filter(|(_, var_ty)| **var_ty == ty);
             let num_of_ty = iter_of_ty.clone().count();
             if num_of_ty == 0 {
@@ -59,7 +59,7 @@ fn sample_expr<R: Rng>(
             let (var, _) = iter_of_ty.nth(rng.random_range(0..num_of_ty)).unwrap();
             Expr::Variable { var: *var }
         }
-        2 => match ty {
+        7..8 => match ty {
             Type::Bool => {
                 let input = Box::new(sample_expr(ty, in_scope, rng, juice - 1));
                 Expr::Unary { op: Not, input }
@@ -76,7 +76,7 @@ fn sample_expr<R: Rng>(
                 }
             }
         },
-        3 => match ty {
+        8..10 => match ty {
             Type::Bool => {
                 let (op, input_ty) = match rng.random_range(0..9) {
                     0 => (And, Type::Bool),
@@ -114,7 +114,7 @@ fn sample_expr<R: Rng>(
 }
 
 fn sample_stmt<R: Rng>(
-    in_scope: &mut HashMap<Symbol, Type>,
+    in_scope: &mut BTreeMap<Symbol, Type>,
     num_vars: &mut usize,
     rng: &mut R,
     juice: usize,
@@ -123,14 +123,14 @@ fn sample_stmt<R: Rng>(
         return ImpStmt::Block { body: vec![] };
     }
     match rng.random_range(0..10) {
-        0 => {
+        0..1 => {
             let mut body = vec![];
             while rng.random_ratio(4, 5) {
                 body.push(sample_stmt(in_scope, num_vars, rng, juice - 1));
             }
             ImpStmt::Block { body }
         }
-        1..5 => {
+        1..6 => {
             let (var, ty) = if !in_scope.is_empty() && rng.random_ratio(3, 5) {
                 let (var, ty) = in_scope
                     .iter()
@@ -146,7 +146,7 @@ fn sample_stmt<R: Rng>(
             in_scope.insert(var, ty);
             ImpStmt::Assign { var, expr }
         }
-        5..8 => {
+        6..8 => {
             let cond = sample_expr(Type::Bool, in_scope, rng, juice - 1);
             let then_body = Box::new(sample_stmt(&mut in_scope.clone(), num_vars, rng, juice - 1));
             let else_body = Box::new(sample_stmt(&mut in_scope.clone(), num_vars, rng, juice - 1));
@@ -166,10 +166,10 @@ fn sample_stmt<R: Rng>(
 }
 
 fn generate_func<R: Rng>(rng: &mut R) -> ImpFunc {
-    let mut in_scope = HashMap::new();
+    let mut in_scope = BTreeMap::new();
     let mut params = vec![];
 
-    while rng.random() {
+    while rng.random_ratio(3, 5) {
         let param = format!("v{}", params.len()).into();
         let ty = sample_type(rng);
         params.push((param, ty));
