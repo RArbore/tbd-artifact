@@ -219,6 +219,10 @@ impl<A: Domain> Version<A> {
         self.parent.as_ref()
     }
 
+    pub fn level(&self) -> usize {
+        self.level
+    }
+
     pub fn lca<'a, F1, F2>(
         mut a: &'a Version<A>,
         mut b: &'a Version<A>,

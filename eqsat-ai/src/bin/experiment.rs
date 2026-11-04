@@ -22,6 +22,8 @@ struct Args {
     text: Option<String>,
     #[arg(short, long, default_value = "5")]
     max_saturate_iters: usize,
+    #[arg(long, action)]
+    no_check: bool,
 }
 
 struct Sampler<R: Rng> {
@@ -215,9 +217,15 @@ struct Stats {
     num_blocks: usize,
     num_reachable_blocks: usize,
     num_iterations: usize,
+    max_version_level: usize,
 }
 
-fn check_func(nonssa: NonSSAFunc, args: Vec<Constant>, max_saturate_iters: usize) -> Stats {
+fn check_func(
+    nonssa: NonSSAFunc,
+    args: Vec<Constant>,
+    max_saturate_iters: usize,
+    no_check: bool,
+) -> Stats {
     let concrete_interpret_time = Instant::now();
     let trace = concrete_interpret(&nonssa, &args, 100);
     let concrete_interpret_time = concrete_interpret_time.elapsed();
@@ -227,9 +235,12 @@ fn check_func(nonssa: NonSSAFunc, args: Vec<Constant>, max_saturate_iters: usize
     let (vars, blocks, reachable, num_iterations) =
         abstract_interpret(&mut saturator, nonssa.name, &nonssa);
     let abstract_interpret_time = abstract_interpret_time.elapsed();
+    let max_version_level = blocks.values().map(|ssa_block_id| saturator.version(*ssa_block_id).level()).max().unwrap_or(0);
 
     let checking_time = Instant::now();
-    check_trace_against_analysis(&trace, vars, blocks, &mut saturator);
+    if !no_check {
+        check_trace_against_analysis(&trace, vars, blocks, &mut saturator);
+    }
     let checking_time = checking_time.elapsed();
     Stats {
         concrete_interpret_time,
@@ -238,6 +249,7 @@ fn check_func(nonssa: NonSSAFunc, args: Vec<Constant>, max_saturate_iters: usize
         num_blocks: nonssa.cfg.len(),
         num_reachable_blocks: reachable.len(),
         num_iterations,
+        max_version_level,
     }
 }
 
@@ -246,7 +258,7 @@ fn main() {
     match (args.index, args.text) {
         (None, None) => {
             println!(
-                "Program Index,Number of Blocks,Number of Reachable Blocks,Number of Iterations over Program,Abstract Interpretation Time (ms)"
+                "Program Index,Number of Blocks,Number of Reachable Blocks,Number of Iterations over Program,Max Version Level,Abstract Interpretation Time (ms)"
             );
             for i in 0..100000 {
                 let mut sampler = Sampler {
@@ -260,13 +272,14 @@ fn main() {
                     func_args.push(sampler.sample_constant(*ty));
                 }
                 let nonssa = convert_to_cfg(func);
-                let stats = check_func(nonssa, func_args, args.max_saturate_iters);
+                let stats = check_func(nonssa, func_args, args.max_saturate_iters, args.no_check);
                 println!(
-                    "{},{},{},{},{}",
+                    "{},{},{},{},{},{}",
                     i,
                     stats.num_blocks,
                     stats.num_reachable_blocks,
                     stats.num_iterations,
+                    stats.max_version_level,
                     stats.abstract_interpret_time.as_millis()
                 );
             }
@@ -285,7 +298,7 @@ fn main() {
                 }
                 println!("{func}");
                 let nonssa = convert_to_cfg(func);
-                let stats = check_func(nonssa, func_args, args.max_saturate_iters);
+                let stats = check_func(nonssa, func_args, args.max_saturate_iters, args.no_check);
                 println!("{:?}", stats);
             }
         }
@@ -302,7 +315,7 @@ fn main() {
             }
             println!("{func}");
             let nonssa = convert_to_cfg(func);
-            let stats = check_func(nonssa, func_args, args.max_saturate_iters);
+            let stats = check_func(nonssa, func_args, args.max_saturate_iters, args.no_check);
             println!("{:?}", stats);
         }
         (Some(_), Some(_)) => panic!("can't provide both index and text of program to examine"),
