@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, hash_map::Entry};
+use std::collections::BTreeSet;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use symbol_table::GlobalSymbol as Symbol;
@@ -16,17 +16,37 @@ pub fn abstract_interpret(
     saturator: &mut Saturator,
     name: Symbol,
     nonssa: &NonSSAFunc,
-) -> (FxHashMap<BlockId, VarMap>, FxHashMap<BlockId, SSABlockId>, Vec<BlockId>, usize) {
+) -> (
+    FxHashMap<BlockId, VarMap>,
+    FxHashMap<BlockId, SSABlockId>,
+    Vec<BlockId>,
+    usize,
+) {
     let rpo = nonssa.rpo();
+    // Pre-compute widening edges.
+    let mut visited = FxHashSet::default();
+    let mut widening_edges = FxHashMap::default();
+    for block in &rpo {
+        if let Block::Merge { pred1, pred2 } = nonssa.cfg[*block] {
+            if !visited.contains(&pred1) {
+                widening_edges.insert(*block, pred1);
+            }
+            if !visited.contains(&pred2) {
+                assert!(widening_edges.insert(*block, pred2).is_none());
+            }
+        }
+        visited.insert(*block);
+    }
+
     let mut context = AIContext {
         name,
         vars: FxHashMap::default(),
         blocks: FxHashMap::default(),
         knot_map: KnotMap::default(),
+        widening_edges,
         old_analyses: FxHashMap::default(),
         saturator,
     };
-
     let mut num_iterations = 0;
     let mut last_knot_count = None;
     loop {
@@ -35,8 +55,15 @@ pub fn abstract_interpret(
         }
         num_iterations += 1;
         if last_knot_count == Some(context.knot_map.num_knots()) {
-            let reachable_blocks = (0..nonssa.cfg.len()).filter(|id| !context.is_bottom(*id)).collect();
-            break (context.vars, context.blocks, reachable_blocks, num_iterations);
+            let reachable_blocks = (0..nonssa.cfg.len())
+                .filter(|id| !context.is_bottom(*id))
+                .collect();
+            break (
+                context.vars,
+                context.blocks,
+                reachable_blocks,
+                num_iterations,
+            );
         }
         last_knot_count = Some(context.knot_map.num_knots());
     }
@@ -67,8 +94,11 @@ struct AIContext<'a> {
     // Intern sets of variables and locations to KnotIds (knots are our name for "symbolic variables"
     // from Lemerre's paper).
     knot_map: KnotMap,
-    // Old analyses along widening edges.
-    old_analyses: FxHashMap<(SSABlockId, SSABlockId), Analysis>,
+    // Pre-computed widening edges. Maps merge blocks to predecessor on a widening edge, if any.
+    widening_edges: FxHashMap<BlockId, BlockId>,
+    // Old analyses along widening edges. Maps merge blocks and variables to the old analysis along a
+    // widening edge, if any.
+    old_analyses: FxHashMap<(BlockId, Symbol), Analysis>,
     // All building of the SSA program goes through the Saturator. This includes applying rewrite
     // rules and managing versions.
     saturator: &'a mut Saturator,
@@ -236,25 +266,16 @@ impl<'a> AIContext<'a> {
                 assert_ne!(ssa_pred1, ssa_pred2);
 
                 // Helper to implement widening.
-                let mut widen = |analysis, ssa_pred| {
-                    let Some(ssa_block) = self.blocks.get(&block).cloned() else {
-                        return analysis;
-                    };
-                    if ssa_pred < ssa_block {
-                        return analysis;
-                    }
-
-                    match self.old_analyses.entry((ssa_pred, ssa_block)) {
-                        Entry::Occupied(mut entry) => {
-                            let widened = entry.get().widen(&analysis);
-                            entry.insert(widened);
-                            widened
+                let mut widen = |mut analysis, var, pred| {
+                    if let Some(edge) = self.widening_edges.get(&block)
+                        && pred == *edge
+                    {
+                        if let Some(old_analysis) = self.old_analyses.get(&(block, var)) {
+                            analysis = old_analysis.widen(&analysis);
                         }
-                        Entry::Vacant(entry) => {
-                            entry.insert(analysis);
-                            analysis
-                        }
+                        self.old_analyses.insert((block, var), analysis);
                     }
+                    analysis
                 };
 
                 let mut pair_to_vars: FxHashMap<(SSAId, SSAId, Analysis), FxHashSet<Symbol>> =
@@ -265,11 +286,13 @@ impl<'a> AIContext<'a> {
                         let value2 = self.saturator.find_in_version(*value2, ssa_pred2);
                         let analysis1 = widen(
                             self.saturator.analysis_in_version(value1, ssa_pred1),
-                            ssa_pred1,
+                            *var,
+                            pred1,
                         );
                         let analysis2 = widen(
                             self.saturator.analysis_in_version(value2, ssa_pred2),
-                            ssa_pred2,
+                            *var,
+                            pred2,
                         );
                         // Group variables by pair of joined SSAIds.
                         pair_to_vars
