@@ -10,6 +10,9 @@ path = "src/lib.rs"
 [[bin]]
 name = "experiment"
 
+[[bin]]
+name = "minimize"
+
 [dependencies]
 clap = { version = "*", features = ["derive"] }
 lalrpop-util = { version = "*", features = ["lexer", "unicode"] }
