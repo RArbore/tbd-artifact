@@ -20,6 +20,8 @@ struct Args {
     index: Option<u64>,
     #[arg(short, long)]
     text: Option<String>,
+    #[arg(short, long, default_value = "5")]
+    max_saturate_iters: usize,
 }
 
 struct Sampler<R: Rng> {
@@ -203,22 +205,27 @@ fn generate_func<R: Rng>(sampler: &mut Sampler<R>) -> ImpFunc {
     }
 }
 
+#[derive(Debug)]
 struct Stats {
+    #[allow(dead_code)]
     concrete_interpret_time: Duration,
     abstract_interpret_time: Duration,
+    #[allow(dead_code)]
     checking_time: Duration,
     num_blocks: usize,
     num_reachable_blocks: usize,
+    num_iterations: usize,
 }
 
-fn check_func(nonssa: NonSSAFunc, args: Vec<Constant>) -> Stats {
+fn check_func(nonssa: NonSSAFunc, args: Vec<Constant>, max_saturate_iters: usize) -> Stats {
     let concrete_interpret_time = Instant::now();
     let trace = concrete_interpret(&nonssa, &args, 100);
     let concrete_interpret_time = concrete_interpret_time.elapsed();
 
-    let mut saturator = Saturator::default();
+    let mut saturator = Saturator::new(max_saturate_iters);
     let abstract_interpret_time = Instant::now();
-    let (vars, blocks, reachable) = abstract_interpret(&mut saturator, nonssa.name, &nonssa);
+    let (vars, blocks, reachable, num_iterations) =
+        abstract_interpret(&mut saturator, nonssa.name, &nonssa);
     let abstract_interpret_time = abstract_interpret_time.elapsed();
 
     let checking_time = Instant::now();
@@ -230,6 +237,7 @@ fn check_func(nonssa: NonSSAFunc, args: Vec<Constant>) -> Stats {
         checking_time,
         num_blocks: nonssa.cfg.len(),
         num_reachable_blocks: reachable.len(),
+        num_iterations,
     }
 }
 
@@ -237,6 +245,9 @@ fn main() {
     let args = Args::parse();
     match (args.index, args.text) {
         (None, None) => {
+            println!(
+                "Program Index,Number of Blocks,Number of Reachable Blocks,Number of Iterations over Program,Abstract Interpretation Time (ms)"
+            );
             for i in 0..100000 {
                 let mut sampler = Sampler {
                     in_scope: BTreeMap::new(),
@@ -244,22 +255,20 @@ fn main() {
                     rng: Xoshiro128PlusPlus::seed_from_u64(i),
                 };
                 let func = generate_func(&mut sampler);
-                let mut args = vec![];
+                let mut func_args = vec![];
                 for (_, ty) in &func.params {
-                    args.push(sampler.sample_constant(*ty));
+                    func_args.push(sampler.sample_constant(*ty));
                 }
                 let nonssa = convert_to_cfg(func);
-                let stats = check_func(nonssa, args);
-                eprintln!("{} / 100000 had {} blocks ({} were reachable)", i, stats.num_blocks, stats.num_reachable_blocks);
+                let stats = check_func(nonssa, func_args, args.max_saturate_iters);
                 println!(
-                    "Concrete interpretation took {} ms",
-                    stats.concrete_interpret_time.as_millis()
-                );
-                println!(
-                    "Abstract interpretation took {} ms",
+                    "{},{},{},{},{}",
+                    i,
+                    stats.num_blocks,
+                    stats.num_reachable_blocks,
+                    stats.num_iterations,
                     stats.abstract_interpret_time.as_millis()
                 );
-                println!("Checking took {} ms", stats.checking_time.as_millis());
             }
         }
         (None, Some(text)) => {
@@ -270,23 +279,14 @@ fn main() {
             };
             let funcs = ProgramParser::new().parse(&text).unwrap();
             for (_, func) in funcs {
-                let mut args = vec![];
+                let mut func_args = vec![];
                 for (_, ty) in &func.params {
-                    args.push(sampler.sample_constant(*ty));
+                    func_args.push(sampler.sample_constant(*ty));
                 }
                 println!("{func}");
-                println!("{args:?}");
                 let nonssa = convert_to_cfg(func);
-                let stats = check_func(nonssa, args);
-                println!(
-                    "Concrete interpretation took {} ms",
-                    stats.concrete_interpret_time.as_millis()
-                );
-                println!(
-                    "Abstract interpretation took {} ms",
-                    stats.abstract_interpret_time.as_millis()
-                );
-                println!("Checking took {} ms", stats.checking_time.as_millis());
+                let stats = check_func(nonssa, func_args, args.max_saturate_iters);
+                println!("{:?}", stats);
             }
         }
         (Some(index), None) => {
@@ -296,23 +296,14 @@ fn main() {
                 rng: Xoshiro128PlusPlus::seed_from_u64(index),
             };
             let func = generate_func(&mut sampler);
-            let mut args = vec![];
+            let mut func_args = vec![];
             for (_, ty) in &func.params {
-                args.push(sampler.sample_constant(*ty));
+                func_args.push(sampler.sample_constant(*ty));
             }
             println!("{func}");
-            println!("{args:?}");
             let nonssa = convert_to_cfg(func);
-            let stats = check_func(nonssa, args);
-            println!(
-                "Concrete interpretation took {} ms",
-                stats.concrete_interpret_time.as_millis()
-            );
-            println!(
-                "Abstract interpretation took {} ms",
-                stats.abstract_interpret_time.as_millis()
-            );
-            println!("Checking took {} ms", stats.checking_time.as_millis());
+            let stats = check_func(nonssa, func_args, args.max_saturate_iters);
+            println!("{:?}", stats);
         }
         (Some(_), Some(_)) => panic!("can't provide both index and text of program to examine"),
     }

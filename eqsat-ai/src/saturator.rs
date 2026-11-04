@@ -9,9 +9,6 @@ use crate::rw::{Tries, apply_rws};
 use crate::ssa::{Analysis, SSA, SSABlock, SSABlockId, SSAId, SSAProgram};
 use crate::version::Version;
 
-// The maximum number of iterations of equality saturation, per invocation of `Saturator::saturate`.
-const MAX_ITERS: usize = 5;
-
 #[derive(Debug)]
 enum VersionState {
     // If the version is mutable, it is a leaf version.
@@ -88,13 +85,13 @@ struct IDManager {
     previously_examined: FxHashSet<SSAId>,
 }
 
-#[derive(Default)]
 pub struct Saturator {
     pub ssa: SSAProgram,
     ids: IDManager,
     tries: Tries,
     node_trie_edits: Vec<NodeTrieEdit>,
     analysis_trie_edits: Vec<AnalysisTrieEdit>,
+    max_num_iters: usize,
 }
 
 impl IDManager {
@@ -186,6 +183,17 @@ impl IDManager {
 }
 
 impl Saturator {
+    pub fn new(max_num_iters: usize) -> Self {
+        Self {
+            ssa: Default::default(),
+            ids: Default::default(),
+            tries: Default::default(),
+            node_trie_edits: Default::default(),
+            analysis_trie_edits: Default::default(),
+            max_num_iters,
+        }
+    }
+
     pub fn find(&self, id: SSAId) -> SSAId {
         self.ids.find(id)
     }
@@ -529,7 +537,7 @@ impl Saturator {
             assert!(self.ids.delta_analysis.is_empty());
             return;
         };
-        for _ in 0..MAX_ITERS {
+        for _ in 0..self.max_num_iters {
             if (self.ids.delta.is_empty() && self.ids.delta_analysis.is_empty())
                 || self.is_contradiction_in_version(self.ids.current_version.unwrap())
             {
