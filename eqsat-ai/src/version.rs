@@ -31,6 +31,8 @@ pub struct Version<A: Domain> {
     // Store a pointer to the parent version. This is ref-counted to simplify the code in the
     // saturator w.r.t. ownership of versions.
     parent: Option<Rc<Version<A>>>,
+    // Cache calls to `Version::find_in_parent`.
+    find_cache: RefCell<FxHashMap<SSAId, SSAId>>,
     // Track which level in the version hierarchy this version corresponds to.
     level: usize,
     // Track which SSAIds have been "examined" in this version. A SSAId is considered "examined" in a
@@ -206,12 +208,13 @@ impl<A: Domain> Version<A> {
     pub fn child(parent: Rc<Version<A>>) -> Self {
         let level = parent.level + 1;
         Self {
-            uf: SparseUnionFind::default(),
-            analysis: FxHashMap::default(),
+            uf: Default::default(),
+            analysis: Default::default(),
             contradiction: parent.contradiction,
             parent: Some(parent),
+            find_cache: Default::default(),
             level,
-            examined_ids: FxHashSet::default(),
+            examined_ids: Default::default(),
         }
     }
 
@@ -262,10 +265,18 @@ impl<A: Domain> Version<A> {
     }
 
     pub fn find_in_parent(&self, id: SSAId) -> SSAId {
-        self.parent
-            .as_ref()
-            .map(|parent| parent.find(id))
-            .unwrap_or(id)
+        let mut find_cache = self.find_cache.borrow_mut();
+        if let Some(cached) = find_cache.get(&id) {
+            *cached
+        } else {
+            let parent = self
+                .parent
+                .as_ref()
+                .map(|parent| parent.find(id))
+                .unwrap_or(id);
+            find_cache.insert(id, parent);
+            parent
+        }
     }
 
     pub fn find(&self, id: SSAId) -> SSAId {
