@@ -16,7 +16,7 @@ pub fn abstract_interpret(
     saturator: &mut Saturator,
     name: Symbol,
     nonssa: &NonSSAFunc,
-) -> (FxHashMap<BlockId, VarMap>, FxHashMap<BlockId, SSABlockId>) {
+) -> (FxHashMap<BlockId, VarMap>, FxHashMap<BlockId, SSABlockId>, Vec<BlockId>) {
     let rpo = nonssa.rpo();
     let mut context = AIContext {
         name,
@@ -33,7 +33,8 @@ pub fn abstract_interpret(
             context.visit_block(&nonssa, *block);
         }
         if last_knot_count == Some(context.knot_map.num_knots()) {
-            break (context.vars, context.blocks);
+            let reachable_blocks = (0..nonssa.cfg.len()).filter(|id| !context.is_bottom(*id)).collect();
+            break (context.vars, context.blocks, reachable_blocks);
         }
         last_knot_count = Some(context.knot_map.num_knots());
     }
