@@ -731,6 +731,7 @@ fn emit_wcoj(
                     println!("Applied {}.", #rule_str);
                     #dump_vars
                 }
+                saturator.num_rule_fires += 1;
                 #execute_rhs;
             };
 

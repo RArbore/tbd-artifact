@@ -91,6 +91,7 @@ pub struct Saturator {
     tries: Tries,
     node_trie_edits: Vec<NodeTrieEdit>,
     analysis_trie_edits: Vec<AnalysisTrieEdit>,
+    pub num_rule_fires: usize,
     max_num_iters: usize,
     enable_rws: bool,
 }
@@ -191,6 +192,7 @@ impl Saturator {
             tries: Default::default(),
             node_trie_edits: Default::default(),
             analysis_trie_edits: Default::default(),
+            num_rule_fires: 0,
             max_num_iters,
             enable_rws,
         }

@@ -20,6 +20,7 @@ pub struct AnalysisResult {
     pub reachable_blocks: Vec<BlockId>,
     pub num_iterations: usize,
     pub num_interesting_visits: usize,
+    pub num_rule_fires: usize,
 }
 
 pub fn abstract_interpret(
@@ -70,6 +71,7 @@ pub fn abstract_interpret(
                 reachable_blocks,
                 num_iterations: context.num_iterations,
                 num_interesting_visits: context.num_interesting_visits,
+                num_rule_fires: context.saturator.num_rule_fires,
             };
         }
         last_knot_count = Some(context.knot_map.num_knots());
