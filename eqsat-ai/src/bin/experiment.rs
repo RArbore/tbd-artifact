@@ -6,7 +6,7 @@ use rand::prelude::*;
 use rand::rngs::Xoshiro128PlusPlus;
 use symbol_table::GlobalSymbol as Symbol;
 
-use eqsat_ai::ai::{AnalysisResult, abstract_interpret, check_trace_against_analysis};
+use eqsat_ai::ai::{abstract_interpret, check_trace_against_analysis};
 use eqsat_ai::imp::ast::{ImpFunc, ImpStmt, convert_to_cfg};
 use eqsat_ai::imp::grammar::ProgramParser;
 use eqsat_ai::nonssa::{BinaryOp, Constant, Expr, NonSSAFunc, Type, UnaryOp, concrete_interpret};

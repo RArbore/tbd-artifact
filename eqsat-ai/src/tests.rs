@@ -53,8 +53,8 @@ fn check_trace(text: &str, args: &Vec<Constant>) {
         let nonssa = convert_to_cfg(ast);
         let trace = concrete_interpret(&nonssa, args, 100);
         let mut saturator = Saturator::new(5);
-        let (vars, blocks, _, _) = abstract_interpret(&mut saturator, name, &nonssa);
-        check_trace_against_analysis(&trace, vars, blocks, &mut saturator);
+        let result = abstract_interpret(&mut saturator, name, &nonssa);
+        check_trace_against_analysis(&trace, result.vars, result.ssa_blocks, &mut saturator);
         return;
     }
     panic!()

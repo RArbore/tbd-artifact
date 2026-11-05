@@ -15,8 +15,8 @@ struct Args {
 fn evaluate(func: &ImpFunc, max_saturate_iters: usize) -> usize {
     let nonssa = convert_to_cfg(func.clone());
     let mut saturator = Saturator::new(max_saturate_iters);
-    let (_, _, _, num_iterations) = abstract_interpret(&mut saturator, nonssa.name, &nonssa);
-    num_iterations
+    let result = abstract_interpret(&mut saturator, nonssa.name, &nonssa);
+    result.num_iterations
 }
 
 fn minimize(stmt: &mut ImpStmt) -> bool {
