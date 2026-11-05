@@ -8,6 +8,8 @@ use crate::nonssa::{Block, BlockId, Constant, Expr, NonSSAFunc, State, Type};
 use crate::saturator::Saturator;
 use crate::ssa::{Analysis, KnotId, SSA, SSABlock, SSABlockId, SSAId};
 
+const MAX_NARROW_ITERS: usize = 4;
+
 // We map each program variable to a SSAId. This is the data type to change to Patricia trees to
 // follow Lemerre's advice.
 pub type VarMap = FxHashMap<Symbol, SSAId>;
@@ -45,15 +47,15 @@ pub fn abstract_interpret(
         knot_map: KnotMap::default(),
         widening_edges,
         old_analyses: FxHashMap::default(),
+        num_iterations: 0,
         saturator,
     };
-    let mut num_iterations = 0;
     let mut last_knot_count = None;
     loop {
         for block in &rpo {
             context.visit_block(&nonssa, *block);
         }
-        num_iterations += 1;
+        context.num_iterations += 1;
         if last_knot_count == Some(context.knot_map.num_knots()) {
             let reachable_blocks = (0..nonssa.cfg.len())
                 .filter(|id| !context.is_bottom(*id))
@@ -62,7 +64,7 @@ pub fn abstract_interpret(
                 context.vars,
                 context.blocks,
                 reachable_blocks,
-                num_iterations,
+                context.num_iterations,
             );
         }
         last_knot_count = Some(context.knot_map.num_knots());
@@ -99,6 +101,8 @@ struct AIContext<'a> {
     // Old analyses along widening edges. Maps merge blocks and variables to the old analysis along a
     // widening edge, if any.
     old_analyses: FxHashMap<(BlockId, Symbol), Analysis>,
+    // Track the number of iterations through the program, to determine when to stop narrowing.
+    num_iterations: usize,
     // All building of the SSA program goes through the Saturator. This includes applying rewrite
     // rules and managing versions.
     saturator: &'a mut Saturator,
@@ -272,6 +276,9 @@ impl<'a> AIContext<'a> {
                     {
                         if let Some(old_analysis) = self.old_analyses.get(&(block, var)) {
                             analysis = old_analysis.widen(&analysis);
+                            if self.num_iterations >= MAX_NARROW_ITERS {
+                                analysis = old_analysis.join(&analysis);
+                            }
                         }
                         self.old_analyses.insert((block, var), analysis);
                     }
