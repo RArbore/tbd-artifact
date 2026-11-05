@@ -33,6 +33,8 @@ pub struct Version<A: Domain> {
     parent: Option<Rc<Version<A>>>,
     // Cache calls to `Version::find_in_parent`.
     find_cache: RefCell<FxHashMap<SSAId, SSAId>>,
+    // Cache calls to `Version::analysis_in_parent`.
+    analysis_cache: RefCell<FxHashMap<SSAId, A>>,
     // Track which level in the version hierarchy this version corresponds to.
     level: usize,
     // Track which SSAIds have been "examined" in this version. A SSAId is considered "examined" in a
@@ -213,6 +215,7 @@ impl<A: Domain> Version<A> {
             contradiction: parent.contradiction,
             parent: Some(parent),
             find_cache: Default::default(),
+            analysis_cache: Default::default(),
             level,
             examined_ids: Default::default(),
         }
@@ -283,14 +286,27 @@ impl<A: Domain> Version<A> {
         self.uf.find(self.find_in_parent(id))
     }
 
-    pub fn analysis(&self, mut id: SSAId) -> A {
-        id = self.find(id);
-        self.analysis.get(&id).cloned().unwrap_or_else(|| {
-            self.parent
+    fn analysis_in_parent(&self, id: SSAId) -> A {
+        let mut analysis_cache = self.analysis_cache.borrow_mut();
+        if let Some(cached) = analysis_cache.get(&id) {
+            cached.clone()
+        } else {
+            let parent = self
+                .parent
                 .as_ref()
                 .map(|parent| parent.analysis(id))
-                .unwrap_or_else(|| A::top())
-        })
+                .unwrap_or_else(|| A::top());
+            analysis_cache.insert(id, parent.clone());
+            parent
+        }
+    }
+
+    pub fn analysis(&self, mut id: SSAId) -> A {
+        id = self.find(id);
+        self.analysis
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| self.analysis_in_parent(id))
     }
 
     pub fn mark_contradiction(&mut self) {
