@@ -92,6 +92,7 @@ pub struct Saturator {
     node_trie_edits: Vec<NodeTrieEdit>,
     analysis_trie_edits: Vec<AnalysisTrieEdit>,
     max_num_iters: usize,
+    enable_rws: bool,
 }
 
 impl IDManager {
@@ -183,7 +184,7 @@ impl IDManager {
 }
 
 impl Saturator {
-    pub fn new(max_num_iters: usize) -> Self {
+    pub fn new(max_num_iters: usize, enable_rws: bool) -> Self {
         Self {
             ssa: Default::default(),
             ids: Default::default(),
@@ -191,6 +192,7 @@ impl Saturator {
             node_trie_edits: Default::default(),
             analysis_trie_edits: Default::default(),
             max_num_iters,
+            enable_rws,
         }
     }
 
@@ -606,7 +608,7 @@ impl Saturator {
             self.ids.delta.clear();
             self.ids.delta_analysis.clear();
 
-            apply_rws::<false>(&tries, self);
+            apply_rws::<false>(self, &tries, self.enable_rws);
             tries.clear_delta();
             self.tries = tries;
         }

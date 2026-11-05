@@ -1,6 +1,7 @@
 lalrpop_mod!(grammar);
 
 use core::fmt::{Display, Formatter, Result};
+use std::collections::BTreeMap;
 
 use itertools::Itertools;
 use lalrpop_util::lalrpop_mod;
@@ -25,6 +26,7 @@ enum Literal {
 
 #[derive(Debug, Clone)]
 struct Rule {
+    ruleset: Option<Symbol>,
     lhs: Vec<Pattern>,
     cond: Option<Symbol>,
     rhs: Vec<Pattern>,
@@ -1132,7 +1134,7 @@ pub fn compile_rw(contents: &str) -> String {
 
     // Fourth, emit the code that implements WCOJ.
     let mut wcoj_defs = quote! {};
-    let mut wcoj_calls = quote! {};
+    let mut wcoj_calls: BTreeMap<Option<Symbol>, TokenStream> = BTreeMap::default();
     let mut num_rules = 0;
     for query_idx in 0..queries.len() {
         let query = &queries[query_idx];
@@ -1151,9 +1153,31 @@ pub fn compile_rw(contents: &str) -> String {
             );
             num_rules += 1;
             wcoj_defs.extend(wcoj_def);
-            wcoj_calls.extend(wcoj_call);
+            wcoj_calls
+                .entry(rws[query_idx].ruleset)
+                .or_default()
+                .extend(wcoj_call);
         }
     }
+
+    let ruleset_params: TokenStream = wcoj_calls
+        .iter()
+        .filter_map(|(ruleset, _)| {
+            let ruleset = format_ident!("{}", (*ruleset)?.as_str());
+            Some(quote! { , #ruleset: bool })
+        })
+        .collect();
+    let gated_wcoj_calls: TokenStream = wcoj_calls
+        .into_iter()
+        .map(|(ruleset, calls)| {
+            if let Some(ruleset) = ruleset {
+                let ruleset = format_ident!("{}", ruleset.as_str());
+                quote! { if #ruleset { #calls } }
+            } else {
+                calls
+            }
+        })
+        .collect();
 
     // Finally, emit the top level rewriting function.
     let rw_fn = quote! {
@@ -1172,8 +1196,8 @@ pub fn compile_rw(contents: &str) -> String {
 
         #wcoj_defs
 
-        pub fn apply_rws<const DUMP: bool>(tries: &Tries, saturator: &mut Saturator) {
-            #wcoj_calls
+        pub fn apply_rws<const DUMP: bool>(saturator: &mut Saturator, tries: &Tries #ruleset_params) {
+            #gated_wcoj_calls
         }
     };
     // Format the Rust code so it's (more) pretty to look at.

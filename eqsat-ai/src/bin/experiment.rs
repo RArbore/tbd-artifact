@@ -23,6 +23,8 @@ struct Args {
     #[arg(short, long, default_value = "5")]
     max_saturate_iters: usize,
     #[arg(long, action)]
+    enable_rws: bool,
+    #[arg(long, action)]
     no_check: bool,
 }
 
@@ -225,13 +227,14 @@ fn check_func(
     nonssa: NonSSAFunc,
     args: Vec<Constant>,
     max_saturate_iters: usize,
+    enable_rws: bool,
     no_check: bool,
 ) -> Stats {
     let concrete_interpret_time = Instant::now();
     let trace = concrete_interpret(&nonssa, &args, 100);
     let concrete_interpret_time = concrete_interpret_time.elapsed();
 
-    let mut saturator = Saturator::new(max_saturate_iters);
+    let mut saturator = Saturator::new(max_saturate_iters, enable_rws);
     let abstract_interpret_time = Instant::now();
     let result = abstract_interpret(&mut saturator, nonssa.name, &nonssa);
     let abstract_interpret_time = abstract_interpret_time.elapsed();
@@ -278,7 +281,13 @@ fn main() {
                     func_args.push(sampler.sample_constant(*ty));
                 }
                 let nonssa = convert_to_cfg(func);
-                let stats = check_func(nonssa, func_args, args.max_saturate_iters, args.no_check);
+                let stats = check_func(
+                    nonssa,
+                    func_args,
+                    args.max_saturate_iters,
+                    args.enable_rws,
+                    args.no_check,
+                );
                 println!(
                     "{},{},{},{},{},{},{}",
                     i,
@@ -305,7 +314,13 @@ fn main() {
                 }
                 println!("{func}");
                 let nonssa = convert_to_cfg(func);
-                let stats = check_func(nonssa, func_args, args.max_saturate_iters, args.no_check);
+                let stats = check_func(
+                    nonssa,
+                    func_args,
+                    args.max_saturate_iters,
+                    args.enable_rws,
+                    args.no_check,
+                );
                 println!("{:?}", stats);
             }
         }
@@ -322,7 +337,13 @@ fn main() {
             }
             println!("{func}");
             let nonssa = convert_to_cfg(func);
-            let stats = check_func(nonssa, func_args, args.max_saturate_iters, args.no_check);
+            let stats = check_func(
+                nonssa,
+                func_args,
+                args.max_saturate_iters,
+                args.enable_rws,
+                args.no_check,
+            );
             println!("{:?}", stats);
         }
         (Some(_), Some(_)) => panic!("can't provide both index and text of program to examine"),
