@@ -10,13 +10,15 @@ struct Args {
     text: String,
     #[arg(short, long, default_value = "5")]
     max_saturate_iters: usize,
+    #[arg(short, long)]
+    stat_threshold: Option<usize>,
 }
 
 fn evaluate(func: &ImpFunc, max_saturate_iters: usize) -> usize {
     let nonssa = convert_to_cfg(func.clone());
     let mut saturator = Saturator::new(max_saturate_iters, true);
     let result = abstract_interpret(&mut saturator, nonssa.name, &nonssa);
-    result.num_iterations
+    result.num_rule_fires
 }
 
 fn minimize(stmt: &mut ImpStmt) -> bool {
@@ -75,17 +77,18 @@ fn main() {
     let args = Args::parse();
     let funcs = ProgramParser::new().parse(&args.text).unwrap();
     for (_, mut func) in funcs {
-        let initial_num_iterations = evaluate(&func, args.max_saturate_iters);
-        println!("Initial number of iterations: {}", initial_num_iterations);
+        let initial_stat = evaluate(&func, args.max_saturate_iters);
+        println!("Initial statistic: {}", initial_stat);
+        let threshold = args.stat_threshold.unwrap_or(initial_stat);
         let mut iters_since_successful_edit = 0;
-        while iters_since_successful_edit < 10000 {
+        while iters_since_successful_edit < 1000 {
             let old_func = func.clone();
             println!("Minimizing...");
             while !minimize(&mut func.body) {}
             println!("Evaluating...");
-            let num_iterations = evaluate(&func, args.max_saturate_iters);
-            if num_iterations >= initial_num_iterations {
-                println!("New program takes {} iterations: {}", num_iterations, func);
+            let stat = evaluate(&func, args.max_saturate_iters);
+            if stat >= threshold {
+                println!("New program has {} statistic: {}", stat, func);
                 iters_since_successful_edit = 0;
             } else {
                 func = old_func;

@@ -12,16 +12,6 @@
 (rw (And a b) (And b a) #rws)
 (rw (Or a b) (Or b a) #rws)
 (rw (Xor a b) (Xor b a) #rws)
-(rw (BitwiseNot (BitwiseNot a)) a #rws)
-(rw (BitwiseNot (BitwiseAnd a b)) (BitwiseOr (BitwiseNot a) (BitwiseNot b)) #rws)
-(rw (BitwiseNot (BitwiseOr a b)) (BitwiseAnd (BitwiseNot a) (BitwiseNot b)) #rws)
-(rw (BitwiseNot (BitwiseXor a b)) (BitwiseXor (BitwiseNot a) b) #rws)
-(rw (BitwiseNot (BitwiseXor a b)) (BitwiseXor a (BitwiseNot b)) #rws)
-(rw (Not (Not a)) a #rws)
-(rw (Not (And a b)) (Or (Not a) (Not b)) #rws)
-(rw (Not (Or a b)) (And (Not a) (Not b)) #rws)
-(rw (Not (Xor a b)) (Xor (Not a) b) #rws)
-(rw (Not (Xor a b)) (Xor a (Not b)) #rws)
 
 (rw (Not (EE a b)) (NE a b) #rws)
 (rw (Not (NE a b)) (EE a b) #rws)
@@ -42,6 +32,8 @@
 
 
 
+(rw (BitwiseNot (BitwiseNot a)) a)
+(rw (Not (Not a)) a)
 (rw (Neg (Neg a)) a)
 (rw (Add a (Constant[i64] 0)) a)
 (rw (Sub a a) (Constant[i64] 0))
