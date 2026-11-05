@@ -1,3 +1,4 @@
+use core::cmp::max;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
@@ -167,10 +168,10 @@ impl<R: Rng> Sampler<R> {
             }
         }
         let mut sequence = vec![];
-        for i in 0..preceding_ifs {
+        for _ in 0..preceding_ifs {
             sequence.push(ImpStmt::IfElse {
                 cond: Expr::Variable {
-                    var: format!("if{}", i).into(),
+                    var: format!("if0").into(),
                 },
                 then_body: Box::new(ImpStmt::Block { body: vec![] }),
                 else_body: Box::new(ImpStmt::Block { body: vec![] }),
@@ -245,7 +246,7 @@ fn generate_func<R: Rng>(
     enclosing_ifs: usize,
 ) -> ImpFunc {
     let mut params = vec![];
-    let num_if_params = preceding_ifs + enclosing_ifs;
+    let num_if_params = max(preceding_ifs, 1) + enclosing_ifs;
     for i in 0..num_if_params {
         let param = format!("if{}", i).into();
         params.push((param, Type::Bool));

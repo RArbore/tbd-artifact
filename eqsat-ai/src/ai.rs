@@ -218,6 +218,8 @@ impl<'a> AIContext<'a> {
 
     fn visit_entry(&mut self, nonssa: &NonSSAFunc, block: BlockId) {
         self.update_block(block, SSABlock::Entry);
+        self.saturator.intern(SSA::Constant(Constant::Bool(false)));
+        self.saturator.intern(SSA::Constant(Constant::Bool(true)));
         let vars = nonssa
             .params
             .iter()
