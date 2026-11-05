@@ -459,6 +459,25 @@ fn termination(x: bool, a: i64, b: i64, c: i64, d: i64) {
 }
 
 #[test]
+fn ai23() {
+    let text = r#"
+fn flow(x: i64, y: i64) {
+    if x == y {
+        z = 2 * x;
+    } else {
+        z = x + y;
+    }
+    return z;
+}
+"#;
+    let (value, mut saturator) = get_return(text);
+    let p0 = saturator.intern(SSA::Param(0, Type::I64));
+    let p1 = saturator.intern(SSA::Param(1, Type::I64));
+    let correct = saturator.intern(SSA::Binary(BinaryOp::Add, p0, p1));
+    assert_eq!(correct, value);
+}
+
+#[test]
 fn ci01() {
     let text = r#"
 fn simple(x: i64) {
