@@ -480,10 +480,9 @@ fn flow(x: i64, y: i64) {
 #[test]
 fn ai24() {
     let text = r#"
-fn flow(l: bool) {
-    x = 0;
-    y = 0;
-    while l {
+fn equate_sym_vars(x: i64, y: i64) {
+    x = y;
+    while x != 42 {
         if x - y == 0 {
             x = x + 1;
         }
