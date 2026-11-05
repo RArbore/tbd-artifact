@@ -140,20 +140,20 @@ impl<R: Rng> Sampler<R> {
     fn sample_assigns_and_ifs(&mut self, preceding_ifs: usize, enclosing_ifs: usize) -> ImpStmt {
         let mut body = vec![];
         while body.is_empty() || self.rng.random_ratio(19, 20) {
-            let (var, ty) = if !self.in_scope.is_empty() && self.rng.random_ratio(3, 5) {
-                let (var, ty) = self
+            let var = if !self.in_scope.is_empty() && self.rng.random_ratio(3, 5) {
+                *self
                     .in_scope
                     .iter()
                     .nth(self.rng.random_range(0..self.in_scope.len()))
-                    .unwrap();
-                (*var, *ty)
+                    .unwrap()
+                    .0
             } else {
-                let new = (format!("v{}", self.num_vars).into(), self.sample_type());
+                let new = format!("v{}", self.num_vars).into();
                 self.num_vars += 1;
                 new
             };
-            let expr = self.sample_expr(ty);
-            self.in_scope.insert(var, ty);
+            let expr = self.sample_expr(Type::I64);
+            self.in_scope.insert(var, Type::I64);
             body.push(ImpStmt::Assign { var, expr });
         }
         let mut body = ImpStmt::Block { body };
