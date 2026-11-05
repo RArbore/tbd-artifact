@@ -6,7 +6,7 @@ use rand::prelude::*;
 use rand::rngs::Xoshiro128PlusPlus;
 use symbol_table::GlobalSymbol as Symbol;
 
-use eqsat_ai::ai::{abstract_interpret, check_trace_against_analysis};
+use eqsat_ai::ai::{AnalysisResult, abstract_interpret, check_trace_against_analysis};
 use eqsat_ai::imp::ast::{ImpFunc, ImpStmt, convert_to_cfg};
 use eqsat_ai::imp::grammar::ProgramParser;
 use eqsat_ai::nonssa::{BinaryOp, Constant, Expr, NonSSAFunc, Type, UnaryOp, concrete_interpret};
@@ -217,6 +217,7 @@ struct Stats {
     num_blocks: usize,
     num_reachable_blocks: usize,
     num_iterations: usize,
+    num_interesting_visits: usize,
     max_version_level: usize,
 }
 
@@ -232,14 +233,18 @@ fn check_func(
 
     let mut saturator = Saturator::new(max_saturate_iters);
     let abstract_interpret_time = Instant::now();
-    let (vars, blocks, reachable, num_iterations) =
-        abstract_interpret(&mut saturator, nonssa.name, &nonssa);
+    let result = abstract_interpret(&mut saturator, nonssa.name, &nonssa);
     let abstract_interpret_time = abstract_interpret_time.elapsed();
-    let max_version_level = blocks.values().map(|ssa_block_id| saturator.version(*ssa_block_id).level()).max().unwrap_or(0);
+    let max_version_level = result
+        .ssa_blocks
+        .values()
+        .map(|ssa_block_id| saturator.version(*ssa_block_id).level())
+        .max()
+        .unwrap_or(0);
 
     let checking_time = Instant::now();
     if !no_check {
-        check_trace_against_analysis(&trace, vars, blocks, &mut saturator);
+        check_trace_against_analysis(&trace, result.vars, result.ssa_blocks, &mut saturator);
     }
     let checking_time = checking_time.elapsed();
     Stats {
@@ -247,8 +252,9 @@ fn check_func(
         abstract_interpret_time,
         checking_time,
         num_blocks: nonssa.cfg.len(),
-        num_reachable_blocks: reachable.len(),
-        num_iterations,
+        num_reachable_blocks: result.reachable_blocks.len(),
+        num_iterations: result.num_iterations,
+        num_interesting_visits: result.num_interesting_visits,
         max_version_level,
     }
 }
@@ -258,7 +264,7 @@ fn main() {
     match (args.index, args.text) {
         (None, None) => {
             println!(
-                "Program Index,Number of Blocks,Number of Reachable Blocks,Number of Iterations over Program,Max Version Level,Abstract Interpretation Time (ms)"
+                "Program Index,Number of Blocks,Number of Reachable Blocks,Number of Iterations over Program,Number of Interesting Visits,Max Version Level,Abstract Interpretation Time (micros)"
             );
             for i in 0..100000 {
                 let mut sampler = Sampler {
@@ -274,13 +280,14 @@ fn main() {
                 let nonssa = convert_to_cfg(func);
                 let stats = check_func(nonssa, func_args, args.max_saturate_iters, args.no_check);
                 println!(
-                    "{},{},{},{},{},{}",
+                    "{},{},{},{},{},{},{}",
                     i,
                     stats.num_blocks,
                     stats.num_reachable_blocks,
                     stats.num_iterations,
+                    stats.num_interesting_visits,
                     stats.max_version_level,
-                    stats.abstract_interpret_time.as_millis()
+                    stats.abstract_interpret_time.as_micros()
                 );
             }
         }

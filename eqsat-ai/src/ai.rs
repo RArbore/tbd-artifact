@@ -14,16 +14,19 @@ const MAX_NARROW_ITERS: usize = 4;
 // follow Lemerre's advice.
 pub type VarMap = FxHashMap<Symbol, SSAId>;
 
+pub struct AnalysisResult {
+    pub vars: FxHashMap<BlockId, VarMap>,
+    pub ssa_blocks: FxHashMap<BlockId, SSABlockId>,
+    pub reachable_blocks: Vec<BlockId>,
+    pub num_iterations: usize,
+    pub num_interesting_visits: usize,
+}
+
 pub fn abstract_interpret(
     saturator: &mut Saturator,
     name: Symbol,
     nonssa: &NonSSAFunc,
-) -> (
-    FxHashMap<BlockId, VarMap>,
-    FxHashMap<BlockId, SSABlockId>,
-    Vec<BlockId>,
-    usize,
-) {
+) -> AnalysisResult {
     let rpo = nonssa.rpo();
     // Pre-compute widening edges.
     let mut visited = FxHashSet::default();
@@ -48,6 +51,7 @@ pub fn abstract_interpret(
         widening_edges,
         old_analyses: FxHashMap::default(),
         num_iterations: 0,
+        num_interesting_visits: 0,
         saturator,
     };
     let mut last_knot_count = None;
@@ -60,12 +64,13 @@ pub fn abstract_interpret(
             let reachable_blocks = (0..nonssa.cfg.len())
                 .filter(|id| !context.is_bottom(*id))
                 .collect();
-            break (
-                context.vars,
-                context.blocks,
+            break AnalysisResult {
+                vars: context.vars,
+                ssa_blocks: context.blocks,
                 reachable_blocks,
-                context.num_iterations,
-            );
+                num_iterations: context.num_iterations,
+                num_interesting_visits: context.num_interesting_visits,
+            };
         }
         last_knot_count = Some(context.knot_map.num_knots());
     }
@@ -103,6 +108,8 @@ struct AIContext<'a> {
     old_analyses: FxHashMap<(BlockId, Symbol), Analysis>,
     // Track the number of iterations through the program, to determine when to stop narrowing.
     num_iterations: usize,
+    // Track the number of blocks that were visited (and did something interesting), for statistics.
+    num_interesting_visits: usize,
     // All building of the SSA program goes through the Saturator. This includes applying rewrite
     // rules and managing versions.
     saturator: &'a mut Saturator,
@@ -180,10 +187,30 @@ impl<'a> AIContext<'a> {
                 pred,
                 cond,
                 direction,
-            } => self.visit_guard(block, *pred, cond, *direction),
-            Assign { pred, var, expr } => self.visit_assign(block, *pred, *var, expr),
-            Merge { pred1, pred2 } => self.visit_merge(block, *pred1, *pred2),
-            Return { pred, exprs } => self.visit_return(block, *pred, exprs),
+            } => {
+                if self.is_bottom(*pred) {
+                    self.num_interesting_visits += 1;
+                }
+                self.visit_guard(block, *pred, cond, *direction);
+            }
+            Assign { pred, var, expr } => {
+                if self.is_bottom(*pred) {
+                    self.num_interesting_visits += 1;
+                }
+                self.visit_assign(block, *pred, *var, expr);
+            }
+            Merge { pred1, pred2 } => {
+                if self.is_bottom(*pred1) || self.is_bottom(*pred2) {
+                    self.num_interesting_visits += 1;
+                }
+                self.visit_merge(block, *pred1, *pred2);
+            }
+            Return { pred, exprs } => {
+                if self.is_bottom(*pred) {
+                    self.num_interesting_visits += 1;
+                }
+                self.visit_return(block, *pred, exprs);
+            }
         }
     }
 
