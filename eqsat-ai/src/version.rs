@@ -1,4 +1,5 @@
 use core::cell::RefCell;
+use core::cmp::max;
 use core::ptr::eq;
 use std::rc::Rc;
 
@@ -33,8 +34,12 @@ pub struct Version<A: Domain> {
     parent: Option<Rc<Version<A>>>,
     // Cache calls to `Version::find_in_parent`.
     find_cache: RefCell<FxHashMap<SSAId, SSAId>>,
+    // Track the maximum SSAId that was ever given a non-trivial parent in this version.
+    max_find_id: SSAId,
     // Cache calls to `Version::analysis_in_parent`.
     analysis_cache: RefCell<FxHashMap<SSAId, A>>,
+    // Track the maximum SSAId that was ever given a non-trivial analysis in this version.
+    max_analysis_id: SSAId,
     // Track which level in the version hierarchy this version corresponds to.
     level: usize,
     // Track which SSAIds have been "examined" in this version. A SSAId is considered "examined" in a
@@ -208,6 +213,8 @@ impl Iterator for SparseUnionFindSet<'_> {
 
 impl<A: Domain> Version<A> {
     pub fn child(parent: Rc<Version<A>>) -> Self {
+        let max_find_id = parent.max_find_id;
+        let max_analysis_id = parent.max_analysis_id;
         let level = parent.level + 1;
         Self {
             uf: Default::default(),
@@ -216,6 +223,8 @@ impl<A: Domain> Version<A> {
             parent: Some(parent),
             find_cache: Default::default(),
             analysis_cache: Default::default(),
+            max_find_id,
+            max_analysis_id,
             level,
             examined_ids: Default::default(),
         }
@@ -271,6 +280,8 @@ impl<A: Domain> Version<A> {
         let mut find_cache = self.find_cache.borrow_mut();
         if let Some(cached) = find_cache.get(&id) {
             *cached
+        } else if self.max_find_id < id {
+            id
         } else {
             let parent = self
                 .parent
@@ -290,6 +301,8 @@ impl<A: Domain> Version<A> {
         let mut analysis_cache = self.analysis_cache.borrow_mut();
         if let Some(cached) = analysis_cache.get(&id) {
             cached.clone()
+        } else if self.max_analysis_id < id {
+            A::top()
         } else {
             let parent = self
                 .parent
@@ -333,6 +346,7 @@ impl<A: Domain> Version<A> {
         fn_for_changed_analysis(canon, non_canon, old_analysis, combined.clone());
         self.analysis.insert(canon, combined);
         self.analysis.remove(&non_canon);
+        self.max_analysis_id = max(self.max_analysis_id, canon);
     }
 
     pub fn union(&mut self, mut x: SSAId, mut y: SSAId) -> SSAId {
@@ -342,6 +356,7 @@ impl<A: Domain> Version<A> {
             x
         } else {
             let canon = self.uf.union(x, y);
+            self.max_find_id = max(self.max_find_id, if canon == x { y } else { x });
             self.update_analysis(x, y, canon, |_, _, _, _| {});
             canon
         }
@@ -378,6 +393,7 @@ impl<A: Domain> Version<A> {
                     fn_for_changed_set(id, old_canon_id, new_canon_id);
                 }
             });
+            self.max_find_id = max(self.max_find_id, if canon == x { y } else { x });
             self.update_analysis(x, y, canon, fn_for_changed_analysis);
             canon
         }
@@ -431,6 +447,7 @@ impl<A: Domain> Version<A> {
     pub fn set_analysis(&mut self, id: SSAId, analysis: A) {
         if self.analysis(id) != analysis {
             self.analysis.insert(id, analysis);
+            self.max_analysis_id = max(self.max_analysis_id, id);
         }
     }
 
