@@ -17,6 +17,7 @@ name = "minimize"
 clap = { version = "*", features = ["derive"] }
 lalrpop-util = { version = "*", features = ["lexer", "unicode"] }
 rand = "*"
+rayon = "*"
 rustc-hash = "*"
 symbol_table = { version = "*", features = ["global", "serde"] }
 
