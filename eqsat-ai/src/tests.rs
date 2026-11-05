@@ -478,6 +478,26 @@ fn flow(x: i64, y: i64) {
 }
 
 #[test]
+fn ai24() {
+    let text = r#"
+fn flow(l: bool) {
+    x = 0;
+    y = 0;
+    while l {
+        if x - y == 0 {
+            x = x + 1;
+        }
+        y = y + 1;
+    }
+    return x == y;
+}
+"#;
+    let (value, mut saturator) = get_return(text);
+    let correct = saturator.intern(SSA::Constant(Constant::Bool(true)));
+    assert_eq!(correct, value);
+}
+
+#[test]
 fn ci01() {
     let text = r#"
 fn simple(x: i64) {
