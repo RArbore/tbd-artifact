@@ -1,4 +1,5 @@
 use core::fmt::{Display, Formatter, Result};
+use core::mem::take;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -93,6 +94,12 @@ pub struct NonSSAFunc {
     pub cfg: Vec<Block>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum WTO {
+    Single(BlockId),
+    Component(BlockId, Vec<WTO>),
+}
+
 impl Constant {
     pub fn ty(&self) -> Type {
         match self {
@@ -151,6 +158,41 @@ impl NonSSAFunc {
             self.rpo_helper(*id, succ, rpo, visited);
         }
         rpo.push(id);
+    }
+
+    pub fn wto(&self) -> Vec<WTO> {
+        let rpo = self.rpo();
+        let mut wto_stack = vec![];
+        let mut wto = vec![];
+        let mut seen = FxHashSet::default();
+        for id in rpo {
+            match self.cfg[id] {
+                Block::Merge { pred1, pred2 }
+                    if !seen.contains(&pred1) || !seen.contains(&pred2) =>
+                {
+                    let feedback = if seen.contains(&pred1) {
+                        pred2
+                    } else {
+                        assert!(seen.contains(&pred2));
+                        pred1
+                    };
+                    wto_stack.push((id, feedback, take(&mut wto)));
+                }
+                _ => {
+                    wto.push(WTO::Single(id));
+                    seen.insert(id);
+                    if let Some((head, _, enclosing)) =
+                        wto_stack.pop_if(|(_, feedback, _)| *feedback == id)
+                    {
+                        let component = WTO::Component(head, take(&mut wto));
+                        wto = enclosing;
+                        wto.push(component);
+                    }
+                }
+            }
+        }
+        assert!(wto_stack.is_empty());
+        wto
     }
 }
 

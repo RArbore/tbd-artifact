@@ -617,8 +617,9 @@ fn test(x: i64, y: i64) { while x < 7 { x = x + 1; } if y < x { return y; } retu
 }
 
 #[test]
-fn rpo1() {
+fn wto1() {
     use Block::*;
+    use WTO::*;
     let cond = Expr::Constant {
         val: Constant::Bool(true),
     };
@@ -645,11 +646,13 @@ fn rpo1() {
         ],
     };
     assert_eq!(func.rpo(), vec![0, 1, 2, 3, 4]);
+    assert_eq!(func.wto(), vec![Single(0), Single(1), Single(2), Single(3), Single(4)]);
 }
 
 #[test]
-fn rpo2() {
+fn wto2() {
     use Block::*;
+    use WTO::*;
     let cond = Expr::Constant {
         val: Constant::Bool(true),
     };
@@ -676,6 +679,51 @@ fn rpo2() {
         ],
     };
     assert_eq!(func.rpo(), vec![0, 1, 2, 3, 4]);
+    assert_eq!(func.wto(), vec![Single(0), Component(1, vec![Single(2)]), Single(3), Single(4)]);
+}
+
+#[test]
+fn wto3() {
+    use Block::*;
+    use WTO::*;
+    let cond = Expr::Constant {
+        val: Constant::Bool(true),
+    };
+    let func = NonSSAFunc {
+        name: "".into(),
+        params: vec![],
+        cfg: vec![
+            Entry,
+            Merge { pred1: 0, pred2: 5 },
+            Guard {
+                pred: 1,
+                cond: cond.clone(),
+                direction: true,
+            },
+            Merge { pred1: 2, pred2: 4 },
+            Guard {
+                pred: 3,
+                cond: cond.clone(),
+                direction: true,
+            },
+            Guard {
+                pred: 3,
+                cond: cond.clone(),
+                direction: true,
+            },
+            Guard {
+                pred: 1,
+                cond: cond.clone(),
+                direction: true,
+            },
+            Return {
+                pred: 6,
+                exprs: vec![],
+            },
+        ],
+    };
+    assert_eq!(func.rpo(), vec![0, 1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(func.wto(), vec![Single(0), Component(1, vec![Single(2), Component(3, vec![Single(4)]), Single(5)]), Single(6), Single(7)]);
 }
 
 #[test]
