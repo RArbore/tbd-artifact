@@ -4,7 +4,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use symbol_table::GlobalSymbol as Symbol;
 
 use crate::analysis::Domain;
-use crate::nonssa::{Block, BlockId, Constant, Expr, NonSSAFunc, State, Type};
+use crate::nonssa::{Block, BlockId, Constant, Expr, NonSSAFunc, State, Type, WTO};
 use crate::saturator::Saturator;
 use crate::ssa::{Analysis, KnotId, SSA, SSABlock, SSABlockId, SSAId};
 
@@ -28,22 +28,7 @@ pub fn abstract_interpret(
     name: Symbol,
     nonssa: &NonSSAFunc,
 ) -> AnalysisResult {
-    let rpo = nonssa.rpo();
-    // Pre-compute widening edges.
-    let mut visited = FxHashSet::default();
-    let mut widening_edges = FxHashMap::default();
-    for block in &rpo {
-        if let Block::Merge { pred1, pred2 } = nonssa.cfg[*block] {
-            if !visited.contains(&pred1) {
-                widening_edges.insert(*block, pred1);
-            }
-            if !visited.contains(&pred2) {
-                assert!(widening_edges.insert(*block, pred2).is_none());
-            }
-        }
-        visited.insert(*block);
-    }
-
+    let (wto, widening_edges) = nonssa.wto();
     let mut context = AIContext {
         name,
         vars: FxHashMap::default(),
@@ -55,26 +40,19 @@ pub fn abstract_interpret(
         num_interesting_visits: 0,
         saturator,
     };
-    let mut last_knot_count = None;
-    loop {
-        for block in &rpo {
-            context.visit_block(&nonssa, *block);
-        }
-        context.num_iterations += 1;
-        if last_knot_count == Some(context.knot_map.num_knots()) {
-            let reachable_blocks = (0..nonssa.cfg.len())
-                .filter(|id| !context.is_bottom(*id))
-                .collect();
-            break AnalysisResult {
-                vars: context.vars,
-                ssa_blocks: context.blocks,
-                reachable_blocks,
-                num_iterations: context.num_iterations,
-                num_interesting_visits: context.num_interesting_visits,
-                num_rule_fires: context.saturator.num_rule_fires,
-            };
-        }
-        last_knot_count = Some(context.knot_map.num_knots());
+    for wto in &wto {
+        context.iterate_wto(&nonssa, wto);
+    }
+    let reachable_blocks = (0..nonssa.cfg.len())
+        .filter(|id| !context.is_bottom(*id))
+        .collect();
+    AnalysisResult {
+        vars: context.vars,
+        ssa_blocks: context.blocks,
+        reachable_blocks,
+        num_iterations: context.num_iterations,
+        num_interesting_visits: context.num_interesting_visits,
+        num_rule_fires: context.saturator.num_rule_fires,
     }
 }
 
@@ -118,6 +96,25 @@ struct AIContext<'a> {
 }
 
 impl<'a> AIContext<'a> {
+    fn iterate_wto(&mut self, nonssa: &NonSSAFunc, wto: &WTO) {
+        match wto {
+            WTO::Single(block) => self.visit_block(nonssa, *block),
+            WTO::Component(head, wtos) => {
+                let mut last_knot_count = None;
+                loop {
+                    self.visit_block(nonssa, *head);
+                    for wto in wtos {
+                        self.iterate_wto(nonssa, wto);
+                    }
+                    if last_knot_count == Some(self.knot_map.num_knots()) {
+                        break;
+                    }
+                    last_knot_count = Some(self.knot_map.num_knots());
+                }
+            }
+        }
+    }
+
     fn update_vars(&mut self, block: BlockId, vars: VarMap) -> bool {
         if self
             .vars

@@ -160,11 +160,12 @@ impl NonSSAFunc {
         rpo.push(id);
     }
 
-    pub fn wto(&self) -> Vec<WTO> {
+    pub fn wto(&self) -> (Vec<WTO>, FxHashMap<BlockId, BlockId>) {
         let rpo = self.rpo();
         let mut wto_stack = vec![];
         let mut wto = vec![];
         let mut seen = FxHashSet::default();
+        let mut widening_edges = FxHashMap::default();
         for id in rpo {
             match self.cfg[id] {
                 Block::Merge { pred1, pred2 }
@@ -176,6 +177,7 @@ impl NonSSAFunc {
                         assert!(seen.contains(&pred2));
                         pred1
                     };
+                    widening_edges.insert(id, feedback);
                     wto_stack.push((id, feedback, take(&mut wto)));
                 }
                 _ => {
@@ -192,7 +194,7 @@ impl NonSSAFunc {
             }
         }
         assert!(wto_stack.is_empty());
-        wto
+        (wto, widening_edges)
     }
 }
 

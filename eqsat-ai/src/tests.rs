@@ -462,10 +462,10 @@ fn termination(x: bool, a: i64, b: i64, c: i64, d: i64) {
 fn ai23() {
     let text = r#"
 fn flow(x: i64, y: i64) {
-    if x == y {
-        z = 2 * x;
-    } else {
+    if x != y {
         z = x + y;
+    } else {
+        z = 2 * x;
     }
     return z;
 }
@@ -646,7 +646,13 @@ fn wto1() {
         ],
     };
     assert_eq!(func.rpo(), vec![0, 1, 2, 3, 4]);
-    assert_eq!(func.wto(), vec![Single(0), Single(1), Single(2), Single(3), Single(4)]);
+    assert_eq!(
+        func.wto(),
+        (
+            vec![Single(0), Single(1), Single(2), Single(3), Single(4)],
+            [].into_iter().collect()
+        )
+    );
 }
 
 #[test]
@@ -679,7 +685,18 @@ fn wto2() {
         ],
     };
     assert_eq!(func.rpo(), vec![0, 1, 2, 3, 4]);
-    assert_eq!(func.wto(), vec![Single(0), Component(1, vec![Single(2)]), Single(3), Single(4)]);
+    assert_eq!(
+        func.wto(),
+        (
+            vec![
+                Single(0),
+                Component(1, vec![Single(2)]),
+                Single(3),
+                Single(4)
+            ],
+            [(1, 2)].into_iter().collect()
+        )
+    );
 }
 
 #[test]
@@ -723,7 +740,18 @@ fn wto3() {
         ],
     };
     assert_eq!(func.rpo(), vec![0, 1, 2, 3, 4, 5, 6, 7]);
-    assert_eq!(func.wto(), vec![Single(0), Component(1, vec![Single(2), Component(3, vec![Single(4)]), Single(5)]), Single(6), Single(7)]);
+    assert_eq!(
+        func.wto(),
+        (
+            vec![
+                Single(0),
+                Component(1, vec![Single(2), Component(3, vec![Single(4)]), Single(5)]),
+                Single(6),
+                Single(7)
+            ],
+            [(1, 5), (3, 4)].into_iter().collect()
+        )
+    );
 }
 
 #[test]
