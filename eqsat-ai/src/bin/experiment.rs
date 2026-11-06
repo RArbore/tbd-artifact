@@ -279,7 +279,7 @@ struct Stats {
     checking_time: Duration,
     num_blocks: usize,
     num_reachable_blocks: usize,
-    num_iterations: usize,
+    max_num_iterations: usize,
     num_interesting_visits: usize,
     num_rule_fires: usize,
     max_version_level: usize,
@@ -318,7 +318,7 @@ fn check_func(
         checking_time,
         num_blocks: nonssa.cfg.len(),
         num_reachable_blocks: result.reachable_blocks.len(),
-        num_iterations: result.num_iterations,
+        max_num_iterations: result.max_num_iterations,
         num_interesting_visits: result.num_interesting_visits,
         num_rule_fires: result.num_rule_fires,
         max_version_level,
@@ -330,7 +330,7 @@ fn main() {
     match (args.index, args.text) {
         (None, None) => {
             println!(
-                "Program Index,Number of Blocks,Number of Reachable Blocks,Number of Iterations over Program,Number of Interesting Visits,Number of Rule Fires,Max Version Level,Abstract Interpretation Time (micros)"
+                "Program Index,Number of Blocks,Number of Reachable Blocks,Maximum Number of Iterations over Any Block,Number of Interesting Visits,Number of Rule Fires,Max Version Level,Abstract Interpretation Time (micros)"
             );
             let iter_func = |i| {
                 let mut sampler = Sampler {
@@ -356,7 +356,7 @@ fn main() {
                     i,
                     stats.num_blocks,
                     stats.num_reachable_blocks,
-                    stats.num_iterations,
+                    stats.max_num_iterations,
                     stats.num_interesting_visits,
                     stats.num_rule_fires,
                     stats.max_version_level,
