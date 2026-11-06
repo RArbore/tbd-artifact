@@ -32,12 +32,12 @@ while bucket <= max_num_rule_fires:
     old_bucket = bucket if bucket > 1 else 0
     bucket *= 10
     mask = (data[:, 6] >= old_bucket) & (data[:, 6] < bucket)
-    ax.scatter(data[mask, 3], data[mask, 8], s=1)
+    ax.scatter(data[mask, 3], data[mask, 8], s=2)
 
-ax.set_xlim(left=0)
-ax.set_ylim(bottom=0)
 ax.set_xlabel("Number of Reachable Locations")
 ax.set_ylabel("Analysis Time (micros)")
+#ax.set_xscale("log")
+ax.set_yscale("log")
 ax.spines[["top", "right"]].set_visible(False)
 fig.tight_layout()
 fig.save("time_vs_locations.pdf")
