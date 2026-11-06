@@ -462,18 +462,18 @@ fn termination(x: bool, a: i64, b: i64, c: i64, d: i64) {
 fn ai23() {
     let text = r#"
 fn flow(x: i64, y: i64) {
-    if x != y {
-        z = x + y;
+    p = x + y;
+    t = 2 * x;
+    if x == y {
+        z = t;
     } else {
-        z = 2 * x;
+        z = p;
     }
-    return z;
+    return z == x + y;
 }
 "#;
     let (value, mut saturator) = get_return(text);
-    let p0 = saturator.intern(SSA::Param(0, Type::I64));
-    let p1 = saturator.intern(SSA::Param(1, Type::I64));
-    let correct = saturator.intern(SSA::Binary(BinaryOp::Add, p0, p1));
+    let correct = saturator.intern(SSA::Constant(Constant::Bool(true)));
     assert_eq!(correct, value);
 }
 
