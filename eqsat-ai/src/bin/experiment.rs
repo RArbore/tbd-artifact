@@ -1,4 +1,3 @@
-use core::cmp::max;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
@@ -158,10 +157,10 @@ impl<R: Rng> Sampler<R> {
             body.push(ImpStmt::Assign { var, expr });
         }
         let mut body = ImpStmt::Block { body };
-        for i in 0..enclosing_ifs {
+        for _ in 0..enclosing_ifs {
             body = ImpStmt::IfElse {
                 cond: Expr::Variable {
-                    var: format!("if{}", enclosing_ifs - i - 1 + preceding_ifs).into(),
+                    var: format!("b").into(),
                 },
                 then_body: Box::new(body),
                 else_body: Box::new(ImpStmt::Block { body: vec![] }),
@@ -171,7 +170,7 @@ impl<R: Rng> Sampler<R> {
         for _ in 0..preceding_ifs {
             sequence.push(ImpStmt::IfElse {
                 cond: Expr::Variable {
-                    var: format!("if0").into(),
+                    var: format!("b").into(),
                 },
                 then_body: Box::new(ImpStmt::Block { body: vec![] }),
                 else_body: Box::new(ImpStmt::Block { body: vec![] }),
@@ -246,9 +245,8 @@ fn generate_func<R: Rng>(
     enclosing_ifs: usize,
 ) -> ImpFunc {
     let mut params = vec![];
-    let num_if_params = max(preceding_ifs, 1) + enclosing_ifs;
-    for i in 0..num_if_params {
-        let param = format!("if{}", i).into();
+    if preceding_ifs > 0 || enclosing_ifs > 0 {
+        let param = format!("b").into();
         params.push((param, Type::Bool));
     }
     while sampler.rng.random_ratio(3, 5) {
@@ -259,7 +257,7 @@ fn generate_func<R: Rng>(
         sampler.num_vars += 1;
     }
 
-    let body = if num_if_params > 0 {
+    let body = if preceding_ifs > 0 || enclosing_ifs > 0 {
         sampler.sample_assigns_and_ifs(preceding_ifs, enclosing_ifs)
     } else {
         sampler.sample_stmt(INITIAL_JUICE)
