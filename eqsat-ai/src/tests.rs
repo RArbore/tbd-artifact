@@ -1413,7 +1413,7 @@ fn paper_figure_3(x: i64, y: i64) {
         }
         y = y + 1;
     }
-    return x == y;
+    return y == 42;
 }
 "#;
     let (values, mut saturator) = get_return(text);
