@@ -14,7 +14,7 @@ use eqsat_ai::nonssa::{BinaryOp, Constant, Expr, NonSSAFunc, Type, UnaryOp, conc
 use eqsat_ai::saturator::Saturator;
 
 const NUM_GENERATED: u64 = 10000;
-const INITIAL_JUICE: usize = 7;
+const INITIAL_JUICE: usize = 5;
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -186,21 +186,12 @@ impl<R: Rng> Sampler<R> {
             return ImpStmt::Block { body: vec![] };
         }
         let choice = if juice == INITIAL_JUICE {
-            0
+            4
         } else {
             self.rng.random_range(0..10)
         };
         match choice {
-            0..3 => {
-                let mut body = vec![];
-                let mut prob = 10;
-                while body.is_empty() || self.rng.random_ratio(prob, prob + 1) {
-                    body.push(self.sample_stmt(juice - 1));
-                    prob -= 1;
-                }
-                ImpStmt::Block { body }
-            }
-            3..7 => {
+            0..4 => {
                 let (var, ty) = if !self.in_scope.is_empty() && self.rng.random_ratio(7, 10) {
                     let (var, ty) = self
                         .in_scope
@@ -216,6 +207,15 @@ impl<R: Rng> Sampler<R> {
                 let expr = self.sample_expr(ty);
                 self.in_scope.insert(var, ty);
                 ImpStmt::Assign { var, expr }
+            }
+            4..7 => {
+                let mut body = vec![];
+                let mut prob = 10;
+                while body.is_empty() || self.rng.random_ratio(prob, prob + 1) {
+                    body.push(self.sample_stmt(juice - 1));
+                    prob -= 1;
+                }
+                ImpStmt::Block { body }
             }
             7..9 => {
                 let cond = self.sample_expr(Type::Bool);
@@ -332,9 +332,6 @@ fn main() {
     let args = Args::parse();
     match (args.index, args.text) {
         (None, None) => {
-            println!(
-                "Program Index,Number of Blocks,Number of Reachable Blocks,Maximum Number of Iterations over Any Block,Number of Interesting Visits,Number of Rule Fires,Max Version Level,Abstract Interpretation Time (micros)"
-            );
             let iter_func = |i| {
                 let mut sampler = Sampler {
                     in_scope: BTreeMap::new(),
@@ -355,8 +352,9 @@ fn main() {
                     args.no_check,
                 );
                 println!(
-                    "{},{},{},{},{},{},{},{}",
+                    "{},{},{},{},{},{},{},{},{}",
                     i,
+                    args.max_saturate_iters,
                     stats.num_blocks,
                     stats.num_reachable_blocks,
                     stats.max_num_iterations,
