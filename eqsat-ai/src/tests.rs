@@ -15,7 +15,7 @@ use crate::ssa::*;
 use crate::trie::*;
 use crate::version::*;
 
-fn get_return(text: &str) -> (SSAId, Saturator) {
+fn get_return(text: &str) -> (Vec<SSAId>, Saturator) {
     let parsed = ProgramParser::new().parse(text).unwrap();
     assert_eq!(parsed.len(), 1);
     for (name, ast) in parsed {
@@ -24,14 +24,12 @@ fn get_return(text: &str) -> (SSAId, Saturator) {
         abstract_interpret(&mut saturator, name, &nonssa);
         assert_eq!(saturator.ssa.get_block(0), &SSABlock::Entry);
         let exit = saturator.ssa.exit(name);
+        saturator.move_to_version(exit);
+        saturator.check_trie_consistency();
         let SSABlock::Return(_, values) = saturator.ssa.get_block(exit) else {
             panic!("{:?}", saturator.ssa)
         };
-        assert_eq!(values.len(), 1);
-        let value = values[0];
-        saturator.move_to_version(exit);
-        saturator.check_trie_consistency();
-        return (value, saturator);
+        return (values.clone(), saturator);
     }
     panic!()
 }
@@ -70,12 +68,12 @@ fn basic() {
 	return y + z;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let five = saturator.intern(SSA::Constant(Constant::I64(5)));
     let seven = saturator.intern(SSA::Constant(Constant::I64(7)));
     let add = saturator.intern(SSA::Binary(BinaryOp::Add, five, seven));
     let correct = saturator.intern(SSA::Binary(BinaryOp::Add, add, add));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
 }
 
 #[test]
@@ -89,9 +87,9 @@ fn branch() {
 	return x;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(9)));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
 }
 
 #[test]
@@ -103,9 +101,9 @@ fn add() {
 	return x + y;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(14)));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
 }
 
 #[test]
@@ -122,9 +120,9 @@ fn loop() {
     return 7;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(5)));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
 }
 
 #[test]
@@ -139,9 +137,9 @@ fn gvn(x: i64) {
 	return x - y;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(0)));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
 }
 
 #[test]
@@ -164,9 +162,9 @@ fn nested_flow() {
     }
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(2)));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
 }
 
 #[test]
@@ -189,9 +187,9 @@ fn nested_flow(x: bool) {
     return y;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(42)));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
 }
 
 #[test]
@@ -206,9 +204,9 @@ fn flow_constant_prop(x: bool) {
     return y;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::Bool(true)));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
 }
 
 #[test]
@@ -223,9 +221,9 @@ fn flow_backwards(x: bool) {
     return y;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::Bool(false)));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
 }
 
 #[test]
@@ -239,9 +237,9 @@ fn flow_backwards_ee(x: i64, y: i64) {
     return z;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(0)));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
 }
 
 #[test]
@@ -263,9 +261,9 @@ fn old_paper_example1(y: i64) {
     return z + 7;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(49)));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
 }
 
 #[test]
@@ -281,9 +279,9 @@ fn old_paper_example2(x: i64) {
     return x - y;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(0)));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
 }
 
 #[test]
@@ -295,9 +293,9 @@ fn simplified(y: i64) {
     return z + 7;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(49)));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
 }
 
 #[test]
@@ -312,9 +310,9 @@ fn tricky(x: bool) {
     return y;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(9)));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
 }
 
 #[test]
@@ -330,9 +328,9 @@ fn simplified(y: i64) {
     return 7;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(7)));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
 }
 
 #[test]
@@ -347,9 +345,9 @@ fn tricky(x: bool) {
     return y;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(16)));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
 }
 
 #[test]
@@ -360,11 +358,11 @@ fn simplified(y: i64) {
     return y + 0;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Param(0, Type::I64));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
     let correct = saturator.intern(SSA::Knot(0, Type::I64, Analysis::top()));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
 }
 
 #[test]
@@ -376,9 +374,9 @@ fn kb(x: i64) {
     return x;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(0)));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
 }
 
 #[test]
@@ -392,11 +390,11 @@ fn contradiction(x: i64) {
     return x;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(4)));
     let incorrect = saturator.intern(SSA::Constant(Constant::I64(5)));
-    assert_eq!(correct, value);
-    assert_ne!(incorrect, value);
+    assert_eq!(correct, values[0]);
+    assert_ne!(incorrect, values[0]);
 }
 
 #[test]
@@ -410,9 +408,9 @@ fn widen() {
     return x;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(100)));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
 }
 
 #[test]
@@ -427,9 +425,9 @@ fn reduced(x: i64) {
     return y;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Constant(Constant::I64(-9223372036854775808)));
-    assert_eq!(correct, value);
+    assert_eq!(correct, values[0]);
     let other = saturator.intern(SSA::Constant(Constant::I64(0)));
     assert_ne!(correct, other);
 }
@@ -451,49 +449,11 @@ fn termination(x: bool, a: i64, b: i64, c: i64, d: i64) {
     return v;
 }
 "#;
-    let (value, mut saturator) = get_return(text);
+    let (values, mut saturator) = get_return(text);
     let d = saturator.intern(SSA::Param(4, Type::I64));
     let one = saturator.intern(SSA::Constant(Constant::I64(1)));
     let plus = saturator.intern(SSA::Binary(BinaryOp::Add, d, one));
-    assert_ne!(value, plus);
-}
-
-#[test]
-fn ai23() {
-    let text = r#"
-fn flow(x: i64, y: i64) {
-    p = x + y;
-    t = 2 * x;
-    if x == y {
-        z = t;
-    } else {
-        z = p;
-    }
-    return z == x + y;
-}
-"#;
-    let (value, mut saturator) = get_return(text);
-    let correct = saturator.intern(SSA::Constant(Constant::Bool(true)));
-    assert_eq!(correct, value);
-}
-
-#[test]
-fn ai24() {
-    let text = r#"
-fn equate_sym_vars(x: i64, y: i64) {
-    x = y;
-    while x != 42 {
-        if x - y == 0 {
-            x = x + 1;
-        }
-        y = y + 1;
-    }
-    return x == y;
-}
-"#;
-    let (value, mut saturator) = get_return(text);
-    let correct = saturator.intern(SSA::Constant(Constant::Bool(true)));
-    assert_eq!(correct, value);
+    assert_ne!(plus, values[0]);
 }
 
 #[test]
@@ -1399,4 +1359,64 @@ fn intervals4() {
             }
         }
     }
+}
+
+#[test]
+fn paper_figure_1() {
+    let text = r#"
+fn paper_figure_1() {
+    x = 1;
+    y = 2;
+    while x < 10 {
+        x = x + 1;
+        if y * x != x + x {
+            y = 3;
+        }
+    }
+    return x, y;
+}
+"#;
+    let (values, mut saturator) = get_return(text);
+    let correct = saturator.intern(SSA::Constant(Constant::I64(10)));
+    assert_eq!(correct, values[0]);
+    let correct = saturator.intern(SSA::Constant(Constant::I64(2)));
+    assert_eq!(correct, values[1]);
+}
+
+#[test]
+fn paper_figure_2() {
+    let text = r#"
+fn paper_figure_2(x: i64, y: i64) {
+    p = x + y;
+    t = 2 * x;
+    if x == y {
+        z = t;
+    } else {
+        z = p;
+    }
+    return z == x + y;
+}
+"#;
+    let (values, mut saturator) = get_return(text);
+    let correct = saturator.intern(SSA::Constant(Constant::Bool(true)));
+    assert_eq!(correct, values[0]);
+}
+
+#[test]
+fn paper_figure_3() {
+    let text = r#"
+fn paper_figure_3(x: i64, y: i64) {
+    x = y;
+    while x != 42 {
+        if x - y == 0 {
+            x = x + 1;
+        }
+        y = y + 1;
+    }
+    return x == y;
+}
+"#;
+    let (values, mut saturator) = get_return(text);
+    let correct = saturator.intern(SSA::Constant(Constant::Bool(true)));
+    assert_eq!(correct, values[0]);
 }
