@@ -731,8 +731,11 @@ fn emit_wcoj(
                     println!("Applied {}.", #rule_str);
                     #dump_vars
                 }
-                saturator.num_rule_fires += 1;
                 #execute_rhs;
+                saturator.num_rule_fires += 1;
+                if saturator.num_rule_fires >= threshold {
+                   return false; 
+                }
             };
 
             // If there is a condition, check it.
@@ -755,12 +758,13 @@ fn emit_wcoj(
         .collect();
     let block = emit_wcoj_helper(query, rule, delta_idx, atoms_containing, var_order, 0);
     let def = quote! {
-        fn #name<const DUMP: bool>(tries: &Tries, saturator: &mut Saturator) {
+        fn #name<const DUMP: bool>(tries: &Tries, saturator: &mut Saturator, threshold: usize) -> bool {
             #init
             #block
+            return true;
         }
     };
-    let call = quote! { #name::<DUMP>(tries, saturator); };
+    let call = quote! { if !#name::<DUMP>(tries, saturator, threshold) { return; } };
     (def, call)
 }
 
@@ -1197,7 +1201,7 @@ pub fn compile_rw(contents: &str) -> String {
 
         #wcoj_defs
 
-        pub fn apply_rws<const DUMP: bool>(saturator: &mut Saturator, tries: &Tries #ruleset_params) {
+        pub fn apply_rws<const DUMP: bool>(saturator: &mut Saturator, tries: &Tries #ruleset_params, threshold: usize) {
             #gated_wcoj_calls
         }
     };

@@ -92,7 +92,7 @@ pub struct Saturator {
     node_trie_edits: Vec<NodeTrieEdit>,
     analysis_trie_edits: Vec<AnalysisTrieEdit>,
     pub num_rule_fires: usize,
-    max_num_iters: usize,
+    max_num_rule_fires: usize,
     enable_rws: bool,
 }
 
@@ -185,7 +185,7 @@ impl IDManager {
 }
 
 impl Saturator {
-    pub fn new(max_num_iters: usize, enable_rws: bool) -> Self {
+    pub fn new(max_num_rule_fires: usize, enable_rws: bool) -> Self {
         Self {
             ssa: Default::default(),
             ids: Default::default(),
@@ -193,7 +193,7 @@ impl Saturator {
             node_trie_edits: Default::default(),
             analysis_trie_edits: Default::default(),
             num_rule_fires: 0,
-            max_num_iters,
+            max_num_rule_fires,
             enable_rws,
         }
     }
@@ -541,7 +541,8 @@ impl Saturator {
             assert!(self.ids.delta_analysis.is_empty());
             return;
         };
-        for _ in 0..self.max_num_iters {
+        let threshold = self.num_rule_fires + self.max_num_rule_fires;
+        while self.num_rule_fires < threshold {
             if (self.ids.delta.is_empty() && self.ids.delta_analysis.is_empty())
                 || self.is_contradiction_in_version(self.ids.current_version.unwrap())
             {
@@ -610,7 +611,7 @@ impl Saturator {
             self.ids.delta.clear();
             self.ids.delta_analysis.clear();
 
-            apply_rws::<false>(self, &tries, self.enable_rws);
+            apply_rws::<false>(self, &tries, self.enable_rws, threshold);
             tries.clear_delta();
             self.tries = tries;
         }

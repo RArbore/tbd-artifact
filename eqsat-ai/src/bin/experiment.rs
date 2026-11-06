@@ -14,7 +14,7 @@ use eqsat_ai::nonssa::{BinaryOp, Constant, Expr, NonSSAFunc, Type, UnaryOp, conc
 use eqsat_ai::saturator::Saturator;
 
 const NUM_GENERATED: u64 = 10000;
-const INITIAL_JUICE: usize = 8;
+const INITIAL_JUICE: usize = 7;
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -22,7 +22,7 @@ struct Args {
     index: Option<u64>,
     #[arg(short, long)]
     text: Option<String>,
-    #[arg(short, long, default_value = "5")]
+    #[arg(short, long, default_value = "0")]
     max_saturate_iters: usize,
     #[arg(long, action)]
     enable_rws: bool,

@@ -20,7 +20,7 @@ fn get_return(text: &str) -> (Vec<SSAId>, Saturator) {
     assert_eq!(parsed.len(), 1);
     for (name, ast) in parsed {
         let nonssa = convert_to_cfg(ast);
-        let mut saturator = Saturator::new(5, true);
+        let mut saturator = Saturator::new(1000, true);
         abstract_interpret(&mut saturator, name, &nonssa);
         assert_eq!(saturator.ssa.get_block(0), &SSABlock::Entry);
         let exit = saturator.ssa.exit(name);
@@ -50,7 +50,7 @@ fn check_trace(text: &str, args: &Vec<Constant>) {
     for (name, ast) in parsed {
         let nonssa = convert_to_cfg(ast);
         let trace = concrete_interpret(&nonssa, args, 100);
-        let mut saturator = Saturator::new(5, true);
+        let mut saturator = Saturator::new(1000, true);
         let result = abstract_interpret(&mut saturator, name, &nonssa);
         check_trace_against_analysis(&trace, result.vars, result.ssa_blocks, &mut saturator);
         return;
@@ -716,7 +716,7 @@ fn wto3() {
 
 #[test]
 fn saturator1() {
-    let mut saturator = Saturator::new(5, true);
+    let mut saturator = Saturator::new(1000, true);
     let block_id = saturator.ssa.add_block(SSABlock::Entry);
     saturator.create_version(block_id);
     saturator.move_to_version(block_id);
@@ -743,7 +743,7 @@ fn saturator1() {
 
 #[test]
 fn saturator2() {
-    let mut saturator = Saturator::new(5, true);
+    let mut saturator = Saturator::new(1000, true);
     let entry = saturator.ssa.add_block(SSABlock::Entry);
     saturator.create_version(entry);
     saturator.move_to_version(entry);
