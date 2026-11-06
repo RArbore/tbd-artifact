@@ -13,7 +13,8 @@ use eqsat_ai::imp::grammar::ProgramParser;
 use eqsat_ai::nonssa::{BinaryOp, Constant, Expr, NonSSAFunc, Type, UnaryOp, concrete_interpret};
 use eqsat_ai::saturator::Saturator;
 
-const INITIAL_JUICE: usize = 7;
+const NUM_GENERATED: u64 = 10000;
+const INITIAL_JUICE: usize = 8;
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -190,15 +191,17 @@ impl<R: Rng> Sampler<R> {
             self.rng.random_range(0..10)
         };
         match choice {
-            0..2 => {
+            0..3 => {
                 let mut body = vec![];
-                while body.is_empty() || self.rng.random_ratio(4, 5) {
+                let mut prob = 10;
+                while body.is_empty() || self.rng.random_ratio(prob, prob + 1) {
                     body.push(self.sample_stmt(juice - 1));
+                    prob -= 1;
                 }
                 ImpStmt::Block { body }
             }
-            2..6 => {
-                let (var, ty) = if !self.in_scope.is_empty() && self.rng.random_ratio(3, 5) {
+            3..7 => {
+                let (var, ty) = if !self.in_scope.is_empty() && self.rng.random_ratio(7, 10) {
                     let (var, ty) = self
                         .in_scope
                         .iter()
@@ -214,7 +217,7 @@ impl<R: Rng> Sampler<R> {
                 self.in_scope.insert(var, ty);
                 ImpStmt::Assign { var, expr }
             }
-            6..8 => {
+            7..9 => {
                 let cond = self.sample_expr(Type::Bool);
                 let old_in_scope = self.in_scope.clone();
                 let then_body = Box::new(self.sample_stmt(juice - 1));
@@ -227,7 +230,7 @@ impl<R: Rng> Sampler<R> {
                     else_body,
                 }
             }
-            8..10 => {
+            9..10 => {
                 let cond = self.sample_expr(Type::Bool);
                 let old_in_scope = self.in_scope.clone();
                 let body = Box::new(self.sample_stmt(juice - 1));
@@ -364,9 +367,9 @@ fn main() {
                 );
             };
             if args.parallel {
-                (0..100000).into_par_iter().for_each(iter_func);
+                (0..NUM_GENERATED).into_par_iter().for_each(iter_func);
             } else {
-                (0..100000).for_each(iter_func);
+                (0..NUM_GENERATED).for_each(iter_func);
             }
         }
         (None, Some(text)) => {
