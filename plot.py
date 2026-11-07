@@ -3,6 +3,9 @@ import numpy as np
 import matplotlib
 import os
 
+np.set_printoptions(suppress=True)
+data = np.genfromtxt("log", delimiter=",", dtype=int)[1:, :]
+
 SERIF_FONT = "Linux Libertine"
 SANS_SERIF_FONT = "Linux Biolinum"
 
@@ -23,12 +26,8 @@ def save(self, filename, exts=None, *args, **kwargs):
 matplotlib.figure.Figure.save = save
 
 fig, ax = plt.subplots()
-
-np.set_printoptions(suppress=True)
-data = np.genfromtxt("log", delimiter=",", dtype=int)[1:, :]
-max_num_rule_fires = max(data[:, 6])
-ax.scatter(data[:, 3], data[:, 8], s=1, c=np.cbrt(data[:, 6]), cmap="gist_rainbow")
-
+colors = np.log(data[:, 6] + 1)
+ax.scatter(data[:, 3], data[:, 8], s=1, c=colors, cmap="gist_rainbow")
 ax.set_xlabel("Number of Reachable Locations")
 ax.set_ylabel("Analysis Time (micros)")
 ax.set_xscale("log")
@@ -38,7 +37,8 @@ fig.tight_layout()
 fig.save("time_vs_locations.pdf")
 
 fig, ax = plt.subplots()
-ax.scatter(data[:, 6], data[:, 8], s=1, c=np.log(data[:, 3]), cmap="gist_rainbow")
+colors = np.log(data[:, 3])
+ax.scatter(data[:, 6], data[:, 8], s=1, c=colors, cmap="gist_rainbow")
 ax.set_xscale("log")
 ax.set_yscale("log")
 ax.set_xlabel("Number of Rule Fires")

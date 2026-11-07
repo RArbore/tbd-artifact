@@ -192,21 +192,27 @@ impl<R: Rng> Sampler<R> {
         };
         match choice {
             0..4 => {
-                let (var, ty) = if !self.in_scope.is_empty() && self.rng.random_ratio(7, 10) {
-                    let (var, ty) = self
-                        .in_scope
-                        .iter()
-                        .nth(self.rng.random_range(0..self.in_scope.len()))
-                        .unwrap();
-                    (*var, *ty)
-                } else {
-                    let new = (format!("v{}", self.num_vars).into(), self.sample_type());
-                    self.num_vars += 1;
-                    new
-                };
-                let expr = self.sample_expr(ty);
-                self.in_scope.insert(var, ty);
-                ImpStmt::Assign { var, expr }
+                let mut body = vec![];
+                let mut prob = 30;
+                while body.is_empty() || self.rng.random_ratio(prob, prob + 1) {
+                    let (var, ty) = if !self.in_scope.is_empty() && self.rng.random_ratio(7, 10) {
+                        let (var, ty) = self
+                            .in_scope
+                            .iter()
+                            .nth(self.rng.random_range(0..self.in_scope.len()))
+                            .unwrap();
+                        (*var, *ty)
+                    } else {
+                        let new = (format!("v{}", self.num_vars).into(), self.sample_type());
+                        self.num_vars += 1;
+                        new
+                    };
+                    let expr = self.sample_expr(ty);
+                    self.in_scope.insert(var, ty);
+                    body.push(ImpStmt::Assign { var, expr });
+                    prob -= 1;
+                }
+                ImpStmt::Block { body }
             }
             4..7 => {
                 let mut body = vec![];
