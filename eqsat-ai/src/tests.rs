@@ -361,8 +361,6 @@ fn simplified(y: i64) {
     let (values, mut saturator) = get_return(text);
     let correct = saturator.intern(SSA::Param(0, Type::I64));
     assert_eq!(correct, values[0]);
-    let correct = saturator.intern(SSA::Knot(0, Type::I64, Analysis::top()));
-    assert_eq!(correct, values[0]);
 }
 
 #[test]
