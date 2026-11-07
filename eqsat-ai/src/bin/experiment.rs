@@ -22,7 +22,7 @@ struct Args {
     index: Option<u64>,
     #[arg(short, long)]
     text: Option<String>,
-    #[arg(short, long, default_value = "0")]
+    #[arg(short, long, default_value = "10")]
     max_saturate_iters: usize,
     #[arg(long, action)]
     enable_rws: bool,
@@ -140,7 +140,8 @@ impl<R: Rng> Sampler<R> {
 
     fn sample_assigns_and_ifs(&mut self, preceding_ifs: usize, enclosing_ifs: usize) -> ImpStmt {
         let mut body = vec![];
-        while body.is_empty() || self.rng.random_ratio(19, 20) {
+        let mut prob = 100;
+        while body.is_empty() || self.rng.random_ratio(prob, prob + 1) {
             let var = if !self.in_scope.is_empty() && self.rng.random_ratio(3, 5) {
                 *self
                     .in_scope
@@ -156,6 +157,7 @@ impl<R: Rng> Sampler<R> {
             let expr = self.sample_expr(Type::I64);
             self.in_scope.insert(var, Type::I64);
             body.push(ImpStmt::Assign { var, expr });
+            prob -= 1;
         }
         let mut body = ImpStmt::Block { body };
         for _ in 0..enclosing_ifs {
