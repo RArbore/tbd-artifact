@@ -51,7 +51,7 @@ pub fn abstract_interpret(
         vars: context.vars,
         ssa_blocks: context.blocks,
         reachable_blocks,
-        max_num_iterations: *context.num_visits_per_block.keys().max().unwrap(),
+        max_num_iterations: *context.num_visits_per_block.values().max().unwrap(),
         num_interesting_visits: context.num_interesting_visits,
         num_rule_fires: context.saturator.num_rule_fires,
     }
@@ -222,8 +222,6 @@ impl<'a> AIContext<'a> {
 
     fn visit_entry(&mut self, nonssa: &NonSSAFunc, block: BlockId) {
         self.update_block(block, SSABlock::Entry);
-        self.saturator.intern(SSA::Constant(Constant::Bool(false)));
-        self.saturator.intern(SSA::Constant(Constant::Bool(true)));
         let vars = nonssa
             .params
             .iter()
@@ -366,7 +364,6 @@ impl<'a> AIContext<'a> {
                     let ty1 = self.saturator.ssa.ty(value1);
                     let ty2 = self.saturator.ssa.ty(value2);
                     assert_eq!(ty1, ty2);
-                    let mut knot = self.saturator.intern(SSA::Knot(knot_id, ty1, analysis));
 
                     let idom = self.saturator.version(new_block).parent().unwrap();
                     let set1: FxHashSet<_> = self
@@ -379,11 +376,17 @@ impl<'a> AIContext<'a> {
                         .version(ssa_pred2)
                         .set(value2, Some(idom))
                         .collect();
-                    for id in set1.intersection(&set2) {
-                        knot = self.saturator.union(knot, *id);
-                    }
+                    let new_id = if value1 == value2 && set1.len() == 1 && set2.len() == 1 {
+                        value1
+                    } else {
+                        let mut knot = self.saturator.intern(SSA::Knot(knot_id, ty1, analysis));
+                        for id in set1.intersection(&set2) {
+                            knot = self.saturator.union(knot, *id);
+                        }
+                        knot
+                    };
                     for var in vars {
-                        new_vars.insert(var, knot);
+                        new_vars.insert(var, new_id);
                     }
                 }
 
