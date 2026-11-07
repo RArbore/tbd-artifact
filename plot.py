@@ -25,9 +25,13 @@ def save(self, filename, exts=None, *args, **kwargs):
     plt.close(self)
 matplotlib.figure.Figure.save = save
 
+cmap = "gnuplot2"
+s = 7
+alpha = 0.5
+
 fig, ax = plt.subplots()
 colors = np.log(data[:, 6] + 1)
-ax.scatter(data[:, 3], data[:, 8], s=1, c=colors, cmap="gist_rainbow")
+ax.scatter(data[:, 5], data[:, 8], s=s, c=colors, cmap=cmap, alpha=alpha)
 ax.set_xlabel("Number of Reachable Locations")
 ax.set_ylabel("Analysis Time (micros)")
 ax.set_xscale("log")
@@ -37,8 +41,8 @@ fig.tight_layout()
 fig.save("time_vs_locations.pdf")
 
 fig, ax = plt.subplots()
-colors = np.log(data[:, 3])
-ax.scatter(data[:, 6], data[:, 8], s=1, c=colors, cmap="gist_rainbow")
+colors = np.log(data[:, 5])
+ax.scatter(data[:, 6], data[:, 8], s=s, c=colors, cmap=cmap, alpha=alpha)
 ax.set_xscale("log")
 ax.set_yscale("log")
 ax.set_xlabel("Number of Rule Fires")
