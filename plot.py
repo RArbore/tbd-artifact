@@ -7,6 +7,8 @@ import os
 
 np.set_printoptions(suppress=True)
 data = np.genfromtxt("log", delimiter=",", dtype=int)[1:, :]
+print("Max number of rules:", np.max(data[:, 6]))
+print("Max number of visits of a block:", np.max(data[:, 4]))
 
 SERIF_FONT = "Linux Libertine"
 SANS_SERIF_FONT = "Linux Biolinum"
