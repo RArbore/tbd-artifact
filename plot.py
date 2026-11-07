@@ -1,3 +1,5 @@
+from matplotlib import colorizer as colorizer
+from matplotlib import colors as colors
 from matplotlib import pyplot as plt
 import numpy as np
 import matplotlib
@@ -20,33 +22,23 @@ plt.rcParams.update(
     }
 )
 
-def save(self, filename, exts=None, *args, **kwargs):
-    self.savefig(filename, *args, **kwargs)
-    plt.close(self)
-matplotlib.figure.Figure.save = save
-
 cmap = "gnuplot2"
-s = 7
+s = 10
 alpha = 0.5
+w = 4
+c = np.maximum(data[:, 6], 1)
 
 fig, ax = plt.subplots()
-colors = np.log(data[:, 6] + 1)
-ax.scatter(data[:, 5], data[:, 8], s=s, c=colors, cmap=cmap, alpha=alpha)
+norm = colors.LogNorm(vmin=c.min(), vmax=c.max())
+ax.scatter(data[:, 5], data[:, 8], s=s, c=c, cmap=cmap, alpha=alpha, norm=norm)
 ax.set_xlabel("Number of Reachable Locations")
-ax.set_ylabel("Analysis Time (micros)")
+ax.set_ylabel("Analysis Time (microseconds)")
 ax.set_xscale("log")
 ax.set_yscale("log")
 ax.spines[["top", "right"]].set_visible(False)
+cax = fig.add_axes([0.22, 0.5, 0.03, 0.43])
+fig.colorbar(colorizer.ColorizingArtist(colorizer.Colorizer(norm=norm, cmap=cmap)), cax=cax, label="Number of Applied Rules")
+fig.set_figwidth(w)
+fig.set_figheight(w)
 fig.tight_layout()
-fig.save("time_vs_locations.pdf")
-
-fig, ax = plt.subplots()
-colors = np.log(data[:, 5])
-ax.scatter(data[:, 6], data[:, 8], s=s, c=colors, cmap=cmap, alpha=alpha)
-ax.set_xscale("log")
-ax.set_yscale("log")
-ax.set_xlabel("Number of Rule Fires")
-ax.set_ylabel("Analysis Time (micros)")
-ax.spines[["top", "right"]].set_visible(False)
-fig.tight_layout()
-fig.save("time_vs_rules.pdf")
+plt.savefig("plot.pdf", bbox_inches="tight")
