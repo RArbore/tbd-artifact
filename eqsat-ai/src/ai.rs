@@ -1,3 +1,4 @@
+use core::cmp::max;
 use std::collections::BTreeSet;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -18,7 +19,7 @@ pub struct AnalysisResult {
     pub vars: FxHashMap<BlockId, VarMap>,
     pub ssa_blocks: FxHashMap<BlockId, SSABlockId>,
     pub reachable_blocks: Vec<BlockId>,
-    pub max_num_iterations: usize,
+    pub max_component_iterations: usize,
     pub num_interesting_visits: usize,
     pub num_rule_fires: usize,
 }
@@ -37,7 +38,7 @@ pub fn abstract_interpret(
         widening_edges,
         old_analyses: FxHashMap::default(),
         num_iterations: 0,
-        num_visits_per_block: FxHashMap::default(),
+        max_component_iterations: 0,
         num_interesting_visits: 0,
         saturator,
     };
@@ -51,7 +52,7 @@ pub fn abstract_interpret(
         vars: context.vars,
         ssa_blocks: context.blocks,
         reachable_blocks,
-        max_num_iterations: *context.num_visits_per_block.values().max().unwrap(),
+        max_component_iterations: context.max_component_iterations,
         num_interesting_visits: context.num_interesting_visits,
         num_rule_fires: context.saturator.num_rule_fires,
     }
@@ -90,7 +91,7 @@ struct AIContext<'a> {
     // Track the number of iterations through the program, to determine when to stop narrowing.
     num_iterations: usize,
     // Track the number of times each block was visited, for statistics.
-    num_visits_per_block: FxHashMap<BlockId, usize>,
+    max_component_iterations: usize,
     // Track the number of blocks that were visited (and did something interesting), for statistics.
     num_interesting_visits: usize,
     // All building of the SSA program goes through the Saturator. This includes applying rewrite
@@ -116,6 +117,7 @@ impl<'a> AIContext<'a> {
                     }
                     last_knot_count = Some(self.knot_map.num_knots());
                 }
+                self.max_component_iterations = max(self.max_component_iterations, self.num_iterations - old_num_iterations);
                 self.num_iterations = old_num_iterations;
             }
         }
@@ -186,7 +188,6 @@ impl<'a> AIContext<'a> {
 
     fn visit_block(&mut self, nonssa: &NonSSAFunc, block: BlockId) {
         use Block::*;
-        *self.num_visits_per_block.entry(block).or_default() += 1;
         match &nonssa.cfg[block] {
             Entry => self.visit_entry(nonssa, block),
             Guard {
