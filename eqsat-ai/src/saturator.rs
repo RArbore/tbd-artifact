@@ -39,8 +39,7 @@ enum NodeTrieEdit {
         new_canon_id: SSAId,
     },
     PopUnion {
-        id: SSAId,
-        new_canon_id: SSAId,
+        newly_canon_id: SSAId,
         parent: Rc<Version<Analysis>>,
     },
 }
@@ -379,17 +378,14 @@ impl Saturator {
                 assert_eq!(id, version.find_in_parent(id));
                 let old_canon_id = version.find(id);
                 assert_ne!(old_canon_id, id);
-                for set_id in parent.set(id, None) {
-                    Self::apply_node_edit(
-                        NodeTrieEdit::PopUnion {
-                            id: set_id,
-                            new_canon_id: id,
-                            parent: Rc::clone(parent),
-                        },
-                        &self.ssa,
-                        &mut self.tries,
-                    );
-                }
+                Self::apply_node_edit(
+                    NodeTrieEdit::PopUnion {
+                        newly_canon_id: id,
+                        parent: Rc::clone(parent),
+                    },
+                    &self.ssa,
+                    &mut self.tries,
+                );
 
                 let analysis = parent.analysis(id);
                 Self::apply_analysis_edit(
@@ -483,18 +479,19 @@ impl Saturator {
                 }
             }
             PopUnion {
-                id,
-                new_canon_id,
+                newly_canon_id,
                 parent,
             } => {
-                let node = ssa.get(id);
-                if let Some(inserted_id) = tries.inserted_as(id)
-                    && inserted_id != new_canon_id
-                {
-                    tries.remove_tuple(inserted_id, node, id);
-                    tries.insert_tuple(new_canon_id, node, id, false);
+                for set_id in parent.set(newly_canon_id, None) {
+                    let node = ssa.get(set_id);
+                    if let Some(inserted_id) = tries.inserted_as(set_id)
+                        && inserted_id != newly_canon_id
+                    {
+                        tries.remove_tuple(inserted_id, node, set_id);
+                        tries.insert_tuple(newly_canon_id, node, set_id, false);
+                    }
                 }
-                for user in ssa.users(new_canon_id).cloned() {
+                for user in ssa.users(newly_canon_id).cloned() {
                     let user_node = ssa.get(user);
                     if parent.is_canonical(user_node) {
                         let user_canon = parent.find(user);
