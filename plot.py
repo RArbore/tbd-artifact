@@ -31,8 +31,8 @@ plt.rcParams.update(
 )
 
 cmap = "gnuplot2"
-s = 10
-alpha = 0.5
+s = 7
+alpha = 1
 w = 4
 c = np.maximum(data[:, 6], 1)
 
