@@ -331,6 +331,7 @@ impl Saturator {
             |down_version| down_versions.push(down_version),
         );
         down_versions.reverse();
+        let mut to_reset = FxHashSet::default();
 
         for version in up_versions {
             // When popping a version, any examined nodes may need to be re-examined.
@@ -354,9 +355,16 @@ impl Saturator {
                     &mut self.tries,
                     &mut self.tuples_using_in_root,
                 );
-                for set_id in parent.set(id, None) {
-                    self.node_trie_edits
-                        .push(NodeTrieEdit::ResetRoot { id: set_id });
+
+                for id in self
+                    .tuples_using_in_root
+                    .entry(old_canon_id)
+                    .or_default()
+                    .iter()
+                {
+                    if version.find_in_parent(*id) != old_canon_id {
+                        to_reset.insert(*id);
+                    }
                 }
 
                 let analysis = parent.analysis(id);
@@ -386,7 +394,6 @@ impl Saturator {
             }
 
             // And any unions that hold in the pushed version but not its parent induce trie edits.
-            let parent = version.parent().unwrap();
             for id in version.non_canon_ids_at_level() {
                 assert_eq!(id, version.find_in_parent(id));
                 let new_canon_id = version.find(id);
@@ -400,9 +407,11 @@ impl Saturator {
                     &mut self.tries,
                     &mut self.tuples_using_in_root,
                 );
-                for set_id in parent.set(id, None) {
-                    self.node_trie_edits
-                        .push(NodeTrieEdit::ResetRoot { id: set_id });
+
+                for id in self.tuples_using_in_root.entry(id).or_default().iter() {
+                    if version.find(*id) == new_canon_id {
+                        to_reset.insert(*id);
+                    }
                 }
 
                 Self::apply_analysis_edit(
@@ -422,6 +431,10 @@ impl Saturator {
                     &mut self.analysis_for_root,
                 );
             }
+        }
+
+        for id in to_reset {
+            self.node_trie_edits.push(NodeTrieEdit::ResetRoot { id });
         }
     }
 
