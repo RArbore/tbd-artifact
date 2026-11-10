@@ -3,18 +3,19 @@ from matplotlib import colors as colors
 from matplotlib import pyplot as plt
 import numpy as np
 import matplotlib
+import sys
 import os
 
 np.set_printoptions(suppress=True)
-data = np.genfromtxt("log", delimiter=",", dtype=int)[1:, :]
-print("Max number of applied rules:", np.max(data[:, 6]))
-print("Mean of max number of repetitions of a component:", np.mean(data[:, 4]))
-print("Median of max number of repetitions of a component:", np.median(data[:, 4]))
-print("Max of max number of repetitions of a component:", np.max(data[:, 4]))
-fit = np.polyfit(np.log(data[:, 3]), np.log(data[:, 8]), 1)
+data = np.genfromtxt(sys.argv[1], delimiter=",", dtype=int)[1:, :]
+print("Max number of applied rules:", np.max(data[:, 7]))
+print("Mean of max number of repetitions of a component:", np.mean(data[:, 5]))
+print("Median of max number of repetitions of a component:", np.median(data[:, 5]))
+print("Max of max number of repetitions of a component:", np.max(data[:, 5]))
+fit = np.polyfit(np.log(data[:, 4]), np.log(data[:, 9]), 1)
 print("Line fit vs. number of reachable blocks:", fit)
-print("Line fit vs. number of visited locations:", np.polyfit(np.log(data[:, 5]), np.log(data[:, 8]), 1))
-print("Line fit vs. number of applied rules", np.polyfit(np.log(np.maximum(data[:, 6], 1)), np.log(data[:, 8]), 1))
+print("Line fit vs. number of visited locations:", np.polyfit(np.log(data[:, 6]), np.log(data[:, 9]), 1))
+print("Line fit vs. number of applied rules", np.polyfit(np.log(np.maximum(data[:, 7], 1)), np.log(data[:, 9]), 1))
 
 SERIF_FONT = "Linux Libertine"
 SANS_SERIF_FONT = "Linux Biolinum"
@@ -38,8 +39,8 @@ c = np.maximum(data[:, 6], 1)
 
 fig, ax = plt.subplots()
 norm = colors.LogNorm(vmin=c.min(), vmax=c.max())
-ax.scatter(data[:, 3], data[:, 8], s=s, c=c, cmap=cmap, alpha=alpha, norm=norm)
-#x = np.arange(np.min(data[:, 3]), np.max(data[:, 3]), 100)
+ax.scatter(data[:, 4], data[:, 9], s=s, c=c, cmap=cmap, alpha=alpha, norm=norm)
+#x = np.arange(np.min(data[:, 4]), np.max(data[:, 4]), 100)
 #ax.plot(x, np.exp(np.poly1d(fit)(np.log(x))), c="red", linewidth=1, linestyle="--")
 ax.set_xlabel("Number of Reachable Locations")
 ax.set_ylabel("Analysis Time (microseconds)")
