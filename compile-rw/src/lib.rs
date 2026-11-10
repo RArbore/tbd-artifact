@@ -1012,6 +1012,7 @@ pub fn compile_rw(contents: &str) -> String {
             inserted_as: FxHashMap<SSAId, SSAId>,
             inserted_kb: FxHashMap<SSAId, KnownBits>,
             inserted_int: FxHashMap<SSAId, Interval>,
+            tuples_using_in_root: FxHashMap<SSAId, FxHashSet<SSAId>>,
             #trie_fields
         }
 
@@ -1036,9 +1037,14 @@ pub fn compile_rw(contents: &str) -> String {
                 }
             }
 
+            pub fn tuples_using_in_root(&mut self, canon_id: SSAId) -> &FxHashSet<SSAId> {
+                self.tuples_using_in_root.entry(canon_id).or_default()
+            }
+
             pub fn insert_tuple(&mut self, canon_id: SSAId, value: SSA, non_canon_id: SSAId, is_delta: bool) {
                 if !is_delta {
                     assert!(self.inserted_as.insert(non_canon_id, canon_id).is_none());
+                    self.tuples_using_in_root.entry(canon_id).or_default().insert(non_canon_id);
                 }
                 match value {
                     SSA::Constant(cons) => {
@@ -1062,6 +1068,7 @@ pub fn compile_rw(contents: &str) -> String {
             pub fn remove_tuple(&mut self, canon_id: SSAId, value: SSA, non_canon_id: SSAId) {
                 let is_delta = false;
                 assert_eq!(self.inserted_as.remove(&non_canon_id), Some(canon_id));
+                self.tuples_using_in_root.entry(canon_id).or_default().remove(&non_canon_id);
                 match value {
                     SSA::Constant(cons) => {
                         #trie_constant_remove
@@ -1189,7 +1196,7 @@ pub fn compile_rw(contents: &str) -> String {
         use core::fmt::{Debug, Formatter, Result};
         use std::collections::BTreeMap;
 
-        use rustc_hash::FxHashMap;
+        use rustc_hash::{FxHashMap, FxHashSet};
 
         use crate::analysis::{Interval, KnownBits, get_int, get_kb};
         use crate::nonssa::{BinaryOp, Constant, Type, UnaryOp};
