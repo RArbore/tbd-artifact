@@ -1,5 +1,5 @@
 use core::mem::take;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -33,10 +33,11 @@ enum NodeTrieEdit {
         id: SSAId,
         canon_id: SSAId,
     },
+    ResetRoot {
+        id: SSAId,
+    },
     PushUnion {
         newly_non_canon_id: SSAId,
-        newly_canon_id: SSAId,
-        parent: Rc<Version<Analysis>>,
     },
     PopUnion {
         newly_canon_id: SSAId,
@@ -61,6 +62,10 @@ pub struct Saturator {
     // 2. Unioned with another node...
     // ...and their analysis value changed since the last iteration of rewriting.
     delta_analysis: FxHashSet<SSAId>,
+    // Keep track of which tuples in the trie are inserted with what root SSAId.
+    tuples_using_in_root: FxHashMap<SSAId, FxHashSet<SSAId>>,
+    // Keep track of the analysis that each SSAId is inserted into the tries with.
+    analysis_for_root: FxHashMap<SSAId, Analysis>,
     // Store an empty root version. This is needed so we have a well-defined LCA between old and new
     // versions for the entry block.
     root_version: Rc<Version<Analysis>>,
@@ -95,6 +100,8 @@ impl Saturator {
         Self {
             delta: Default::default(),
             delta_analysis: Default::default(),
+            tuples_using_in_root: Default::default(),
+            analysis_for_root: Default::default(),
             root_version: Default::default(),
             versions: Default::default(),
             current_version: Default::default(),
@@ -120,7 +127,7 @@ impl Saturator {
         id
     }
 
-    pub fn union(&mut self, x: SSAId, y: SSAId) -> SSAId {
+    pub fn union(&mut self, x: SSAId, y: SSAId) -> (SSAId, SSAId) {
         assert_eq!(self.ssa.ty(x), self.ssa.ty(y));
         let VersionState::Mutable(version) = self
             .versions
@@ -130,7 +137,39 @@ impl Saturator {
             panic!()
         };
         let (canon, non_canon) = version.union(x, y);
-        canon
+        if canon != non_canon {
+            self.delta.extend(
+                self.tuples_using_in_root
+                    .entry(non_canon)
+                    .or_default()
+                    .iter(),
+            );
+            self.node_trie_edits.push(NodeTrieEdit::PushUnion {
+                newly_non_canon_id: non_canon,
+            });
+            for set_id in self
+                .tuples_using_in_root
+                .entry(non_canon)
+                .or_default()
+                .iter()
+            {
+                self.node_trie_edits
+                    .push(NodeTrieEdit::ResetRoot { id: *set_id });
+            }
+
+            let new_analysis = version.analysis(canon);
+            if self.analysis_for_root.get(&canon).cloned() != Some(new_analysis) {
+                self.delta_analysis.insert(canon);
+                self.analysis_trie_edits
+                    .push(AnalysisTrieEdit::AddAnalysis {
+                        id: canon,
+                        analysis: new_analysis,
+                    })
+            }
+            self.analysis_trie_edits
+                .push(AnalysisTrieEdit::RemoveAnalysis { id: non_canon });
+        }
+        (canon, non_canon)
     }
 
     pub fn version(&self, id: SSABlockId) -> &Version<Analysis> {
@@ -192,6 +231,11 @@ impl Saturator {
             self.delta.insert(canon_id);
         }
         if before != after {
+            assert_eq!(id, canon_id);
+            self.tuples_using_in_root
+                .entry(canon_id)
+                .or_default()
+                .insert(id);
             self.node_trie_edits
                 .push(NodeTrieEdit::Intern { id, canon_id });
             self.analysis_trie_edits
@@ -305,14 +349,21 @@ impl Saturator {
                         newly_canon_id: id,
                         parent: Rc::clone(parent),
                     },
+                    &version,
                     &self.ssa,
                     &mut self.tries,
+                    &mut self.tuples_using_in_root,
                 );
+                for set_id in parent.set(id, None) {
+                    self.node_trie_edits
+                        .push(NodeTrieEdit::ResetRoot { id: set_id });
+                }
 
                 let analysis = parent.analysis(id);
                 Self::apply_analysis_edit(
                     AnalysisTrieEdit::AddAnalysis { id, analysis },
                     &mut self.tries,
+                    &mut self.analysis_for_root,
                 );
             }
 
@@ -323,6 +374,7 @@ impl Saturator {
                 Self::apply_analysis_edit(
                     AnalysisTrieEdit::AddAnalysis { id, analysis },
                     &mut self.tries,
+                    &mut self.analysis_for_root,
                 );
             }
         }
@@ -342,14 +394,22 @@ impl Saturator {
                 Self::apply_node_edit(
                     NodeTrieEdit::PushUnion {
                         newly_non_canon_id: id,
-                        newly_canon_id: new_canon_id,
-                        parent: Rc::clone(parent),
                     },
+                    &version,
                     &self.ssa,
                     &mut self.tries,
+                    &mut self.tuples_using_in_root,
                 );
+                for set_id in parent.set(id, None) {
+                    self.node_trie_edits
+                        .push(NodeTrieEdit::ResetRoot { id: set_id });
+                }
 
-                Self::apply_analysis_edit(AnalysisTrieEdit::RemoveAnalysis { id }, &mut self.tries);
+                Self::apply_analysis_edit(
+                    AnalysisTrieEdit::RemoveAnalysis { id },
+                    &mut self.tries,
+                    &mut self.analysis_for_root,
+                );
             }
 
             // And any nodes with version-specific analysis values induce trie edits.
@@ -359,6 +419,7 @@ impl Saturator {
                 Self::apply_analysis_edit(
                     AnalysisTrieEdit::AddAnalysis { id, analysis },
                     &mut self.tries,
+                    &mut self.analysis_for_root,
                 );
             }
         }
@@ -374,29 +435,45 @@ impl Saturator {
         self.current_version = Some(block);
     }
 
-    fn apply_node_edit(edit: NodeTrieEdit, ssa: &SSAProgram, tries: &mut Tries) {
+    fn apply_node_edit(
+        edit: NodeTrieEdit,
+        current_version: &Version<Analysis>,
+        ssa: &SSAProgram,
+        tries: &mut Tries,
+        tuples_using_in_root: &mut FxHashMap<SSAId, FxHashSet<SSAId>>,
+    ) {
         use NodeTrieEdit::*;
         match edit {
             Intern { id, canon_id } => {
                 tries.insert_tuple(canon_id, ssa.get(id), id, false);
+                tuples_using_in_root.entry(canon_id).or_default().insert(id);
             }
-            PushUnion {
-                newly_non_canon_id,
-                newly_canon_id,
-                parent,
-            } => {
-                for set_id in parent.set(newly_non_canon_id, None) {
-                    let node = ssa.get(set_id);
-                    if let Some(inserted_id) = tries.inserted_as(set_id)
-                        && inserted_id != newly_canon_id
-                    {
-                        tries.remove_tuple(inserted_id, node, set_id);
-                        tries.insert_tuple(newly_canon_id, node, set_id, false);
-                    }
+            ResetRoot { id: non_canon_id } => {
+                let node = ssa.get(non_canon_id);
+                let canon_id = current_version.find(non_canon_id);
+                if let Some(inserted_id) = tries.inserted_as(non_canon_id)
+                    && inserted_id != canon_id
+                {
+                    tries.remove_tuple(inserted_id, node, non_canon_id);
+                    tuples_using_in_root
+                        .entry(inserted_id)
+                        .or_default()
+                        .remove(&non_canon_id);
+                    tries.insert_tuple(canon_id, node, non_canon_id, false);
+                    tuples_using_in_root
+                        .entry(canon_id)
+                        .or_default()
+                        .insert(non_canon_id);
                 }
+            }
+            PushUnion { newly_non_canon_id } => {
                 for user in ssa.users(newly_non_canon_id).cloned() {
                     if let Some(inserted_id) = tries.inserted_as(user) {
                         tries.remove_tuple(inserted_id, ssa.get(user), user);
+                        tuples_using_in_root
+                            .entry(inserted_id)
+                            .or_default()
+                            .remove(&user);
                     }
                 }
             }
@@ -404,15 +481,6 @@ impl Saturator {
                 newly_canon_id,
                 parent,
             } => {
-                for set_id in parent.set(newly_canon_id, None) {
-                    let node = ssa.get(set_id);
-                    if let Some(inserted_id) = tries.inserted_as(set_id)
-                        && inserted_id != newly_canon_id
-                    {
-                        tries.remove_tuple(inserted_id, node, set_id);
-                        tries.insert_tuple(newly_canon_id, node, set_id, false);
-                    }
-                }
                 for user in ssa.users(newly_canon_id).cloned() {
                     let user_node = ssa.get(user);
                     if parent.is_canonical(user_node) {
@@ -421,6 +489,10 @@ impl Saturator {
                             assert_eq!(inserted_id, user_canon);
                         } else {
                             tries.insert_tuple(user_canon, user_node, user, false);
+                            tuples_using_in_root
+                                .entry(user_canon)
+                                .or_default()
+                                .insert(user);
                         }
                     }
                 }
@@ -428,31 +500,47 @@ impl Saturator {
         }
     }
 
-    fn apply_analysis_edit(edit: AnalysisTrieEdit, tries: &mut Tries) {
+    fn apply_analysis_edit(
+        edit: AnalysisTrieEdit,
+        tries: &mut Tries,
+        analysis_for_root: &mut FxHashMap<SSAId, Analysis>,
+    ) {
         use AnalysisTrieEdit::*;
         match edit {
             AddAnalysis { id, analysis } => {
                 if let Some(analysis) = tries.inserted_analysis(id) {
                     tries.remove_analysis(id, analysis);
+                    assert_eq!(analysis_for_root.remove(&id), Some(analysis));
                 }
                 tries.insert_analysis(id, analysis, false);
+                assert_eq!(analysis_for_root.insert(id, analysis), None);
             }
             RemoveAnalysis { id } => {
                 if let Some(analysis) = tries.inserted_analysis(id) {
                     tries.remove_analysis(id, analysis);
+                    assert_eq!(analysis_for_root.remove(&id), Some(analysis));
                 }
             }
         }
     }
 
     fn apply_edits(&mut self) {
+        let current_version = self
+            .current_version
+            .map(|current_block| self.versions[&current_block].as_ref())
+            .unwrap_or(&self.root_version);
         for edit in take(&mut self.node_trie_edits) {
-            Self::apply_node_edit(edit, &self.ssa, &mut self.tries);
+            Self::apply_node_edit(
+                edit,
+                current_version,
+                &self.ssa,
+                &mut self.tries,
+                &mut self.tuples_using_in_root,
+            );
         }
         for edit in take(&mut self.analysis_trie_edits) {
-            Self::apply_analysis_edit(edit, &mut self.tries);
+            Self::apply_analysis_edit(edit, &mut self.tries, &mut self.analysis_for_root);
         }
-        self.check_trie_consistency();
     }
 
     pub fn saturate(&mut self) {
@@ -486,10 +574,16 @@ impl Saturator {
             while let Some(id) = worklist.pop_front() {
                 let old_ssa = self.ssa.get(id);
                 let new_ssa = self.canonicalize(old_ssa);
-                // We should only ever insert a node into the worklist if it's non-canonical.
-                assert_ne!(old_ssa, new_ssa);
-                let new_id = self.intern(new_ssa);
-                self.union(id, new_id);
+                if old_ssa != new_ssa {
+                    let new_id = self.intern(new_ssa);
+                    let (canon, non_canon) = self.union(id, new_id);
+                    if canon != non_canon {
+                        // All users of the newly non-canonical node need to be canonicalized.
+                        for user in self.ssa.users(non_canon) {
+                            worklist.push_back(*user);
+                        }
+                    }
+                }
             }
 
             self.apply_edits();
@@ -522,16 +616,30 @@ impl Saturator {
         assert!(self.node_trie_edits.is_empty());
         assert!(self.analysis_trie_edits.is_empty());
         let mut correct = Tries::default();
+        let mut tuples_using_in_root: FxHashMap<SSAId, FxHashSet<SSAId>> = FxHashMap::default();
+        let mut analysis_for_root: FxHashMap<SSAId, Analysis> = FxHashMap::default();
         for id in 0..self.ssa.num_nodes() {
             let node = self.ssa.get(id);
             let canon_id = self.find(id);
             if self.is_canonical(node) {
                 correct.insert_tuple(canon_id, node, id, false);
+                tuples_using_in_root.entry(canon_id).or_default().insert(id);
             }
             if id == canon_id {
-                correct.insert_analysis(id, self.analysis(id), false);
+                let analysis = self.analysis(id);
+                correct.insert_analysis(id, analysis, false);
+                analysis_for_root.insert(id, analysis);
             }
         }
+        assert_eq!(
+            tuples_using_in_root.into_iter().collect::<BTreeMap<_, _>>(),
+            self.tuples_using_in_root
+                .iter()
+                .filter(|(_, tuples)| !tuples.is_empty())
+                .map(|(root, tuples)| (*root, tuples.clone()))
+                .collect()
+        );
+        assert_eq!(analysis_for_root, self.analysis_for_root);
         assert_eq!(correct, self.tries);
     }
 }

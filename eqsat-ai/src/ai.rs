@@ -382,7 +382,7 @@ impl<'a> AIContext<'a> {
                     } else {
                         let mut knot = self.saturator.intern(SSA::Knot(knot_id, ty1, analysis));
                         for id in set1.intersection(&set2) {
-                            knot = self.saturator.union(knot, *id);
+                            knot = self.saturator.union(knot, *id).0;
                         }
                         knot
                     };
