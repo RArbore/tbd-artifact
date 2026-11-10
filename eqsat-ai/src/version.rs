@@ -107,20 +107,23 @@ impl SparseUnionFind {
         id
     }
 
-    pub fn union(&mut self, mut x: SSAId, mut y: SSAId) -> SSAId {
+    // If the IDs are not already in the same class, this returns a pair of the canonical ID for the
+    // merged class, as well as the ID that was canonical but is just now non-canonical. If the IDs
+    // are already in the class, this returns the leader ID for the class, twice.
+    pub fn union(&mut self, mut x: SSAId, mut y: SSAId) -> (SSAId, SSAId) {
         loop {
             let px = self.parent(x);
             let py = self.parent(y);
             if px == py {
                 // Union was already represented, so don't exchange siblings.
-                break px;
+                break (px, px);
             }
 
             if px > py {
                 if x == px {
                     self.set_parent(x, py);
                     self.exchange_siblings(x, y);
-                    break self.find(py);
+                    break (self.find(py), x);
                 }
                 self.set_parent(x, py);
                 x = px;
@@ -128,53 +131,7 @@ impl SparseUnionFind {
                 if y == py {
                     self.set_parent(y, px);
                     self.exchange_siblings(x, y);
-                    break self.find(px);
-                }
-                self.set_parent(y, px);
-                y = py;
-            }
-        }
-    }
-
-    // To properly maintain delta sets, we need to be able to, on a union, add all of the IDs whose
-    // canonical IDs changed to the delta set. In effect, this means running a function on the
-    // disjoint set that "lost" the comparison on a union (that is, when unioning two sets, right
-    // before joining the two sets with `exchange_siblings`, we call `fn_for_changed_set` on all of
-    // the IDs in the set that's about to be entirely non-canonical).
-    pub fn union_with<F>(&mut self, mut x: SSAId, mut y: SSAId, mut fn_for_changed_set: F) -> SSAId
-    where
-        F: FnMut(SSAId, SSAId, SSAId),
-    {
-        loop {
-            let px = self.parent(x);
-            let py = self.parent(y);
-            if px == py {
-                break px;
-            }
-
-            if px > py {
-                if x == px {
-                    let canon_id = self.find(py);
-                    self.set_parent(x, canon_id);
-                    // The only difference with `union`.
-                    for id in self.set(x) {
-                        fn_for_changed_set(id, x, canon_id);
-                    }
-                    self.exchange_siblings(x, y);
-                    break canon_id;
-                }
-                self.set_parent(x, py);
-                x = px;
-            } else {
-                if y == py {
-                    let canon_id = self.find(px);
-                    self.set_parent(y, canon_id);
-                    // And here.
-                    for id in self.set(y) {
-                        fn_for_changed_set(id, y, canon_id);
-                    }
-                    self.exchange_siblings(x, y);
-                    break canon_id;
+                    break (self.find(px), y);
                 }
                 self.set_parent(y, px);
                 y = py;
@@ -334,74 +291,23 @@ impl<A: Domain> Version<A> {
         self.contradiction
     }
 
-    fn update_analysis<F>(&mut self, x: SSAId, y: SSAId, canon: SSAId, fn_for_changed_analysis: F)
-    where
-        F: FnOnce(SSAId, SSAId, A, A),
-    {
-        let x_analysis = self.analysis(x);
-        let y_analysis = self.analysis(y);
-        let combined = x_analysis.meet(&y_analysis);
-        let (non_canon, old_analysis) = if canon == x {
-            (y, x_analysis)
-        } else {
-            assert_eq!(canon, y);
-            (x, y_analysis)
-        };
-        fn_for_changed_analysis(canon, non_canon, old_analysis, combined.clone());
-        self.analysis.insert(canon, combined);
-        self.analysis.remove(&non_canon);
-        self.max_analysis_id = max(self.max_analysis_id, canon);
-    }
-
-    pub fn union(&mut self, mut x: SSAId, mut y: SSAId) -> SSAId {
+    pub fn union(&mut self, mut x: SSAId, mut y: SSAId) -> (SSAId, SSAId) {
         x = self.find(x);
         y = self.find(y);
         if x == y {
-            x
+            (x, x)
         } else {
-            let canon = self.uf.union(x, y);
-            self.max_find_id = max(self.max_find_id, if canon == x { y } else { x });
-            self.max_sibling_id = max(self.max_sibling_id, max(x, y));
-            self.update_analysis(x, y, canon, |_, _, _, _| {});
-            canon
-        }
-    }
+            let x_analysis = self.analysis(x);
+            let y_analysis = self.analysis(y);
+            let combined = x_analysis.meet(&y_analysis);
+            let (canon, non_canon) = self.uf.union(x, y);
+            self.analysis.insert(canon, combined);
+            self.analysis.remove(&non_canon);
 
-    // See `SparseUnionFind::union_with` for an explanation of `fn_for_changed_set`.
-    // `fn_for_changed_analysis` is called on the chosen canonical SSAId with its old and new
-    // analysis values.
-    pub fn union_with<F1, F2>(
-        &mut self,
-        mut x: SSAId,
-        mut y: SSAId,
-        mut fn_for_changed_set: F1,
-        fn_for_changed_analysis: F2,
-    ) -> SSAId
-    where
-        F1: FnMut(SSAId, SSAId, SSAId),
-        F2: FnOnce(SSAId, SSAId, A, A),
-    {
-        x = self.find(x);
-        y = self.find(y);
-        if x == y {
-            x
-        } else {
-            let canon = self.uf.union_with(x, y, |id, old_canon_id, new_canon_id| {
-                // `SparseUnionFind::union` will call `fn_for_changed_set` on all IDs in the set *at the
-                // current layer*, but we want to call it on all IDs in the *multi-layer* set of the
-                // losing ID.
-                if let Some(parent) = self.parent.as_ref() {
-                    for set_id in parent.set(id, None) {
-                        fn_for_changed_set(set_id, old_canon_id, new_canon_id);
-                    }
-                } else {
-                    fn_for_changed_set(id, old_canon_id, new_canon_id);
-                }
-            });
-            self.max_find_id = max(self.max_find_id, if canon == x { y } else { x });
+            self.max_find_id = max(self.max_find_id, non_canon);
             self.max_sibling_id = max(self.max_sibling_id, max(x, y));
-            self.update_analysis(x, y, canon, fn_for_changed_analysis);
-            canon
+            self.max_analysis_id = max(self.max_analysis_id, canon);
+            (canon, non_canon)
         }
     }
 

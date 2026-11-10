@@ -34,9 +34,9 @@ enum NodeTrieEdit {
         canon_id: SSAId,
     },
     PushUnion {
-        id: SSAId,
-        old_canon_id: SSAId,
-        new_canon_id: SSAId,
+        newly_non_canon_id: SSAId,
+        newly_canon_id: SSAId,
+        parent: Rc<Version<Analysis>>,
     },
     PopUnion {
         newly_canon_id: SSAId,
@@ -107,17 +107,7 @@ impl IDManager {
         self.versions[&version].as_ref().find(id)
     }
 
-    fn union_with<F1, F2>(
-        &mut self,
-        x: SSAId,
-        y: SSAId,
-        mut fn_for_changed_set: F1,
-        fn_for_changed_analysis: F2,
-    ) -> SSAId
-    where
-        F1: FnMut(SSAId, SSAId, SSAId),
-        F2: FnOnce(SSAId, SSAId, Analysis, Analysis),
-    {
+    fn union(&mut self, x: SSAId, y: SSAId) -> (SSAId, SSAId) {
         let VersionState::Mutable(version) = self
             .versions
             .get_mut(&self.current_version.unwrap())
@@ -125,22 +115,7 @@ impl IDManager {
         else {
             panic!()
         };
-        version.union_with(
-            x,
-            y,
-            |id, old_canon_id, new_canon_id| {
-                // Record any SSAId whose canonical SSAId changed as a delta ID. Notably, the SSAId
-                // inserted here is itself *not* canonical.
-                self.delta.insert(id);
-                fn_for_changed_set(id, old_canon_id, new_canon_id);
-            },
-            |canon_id, non_canon_id, old_analysis, combined| {
-                if old_analysis != combined {
-                    self.delta_analysis.insert(canon_id);
-                }
-                fn_for_changed_analysis(canon_id, non_canon_id, old_analysis, combined);
-            },
-        )
+        version.union(x, y)
     }
 
     fn analysis(&self, id: SSAId) -> Analysis {
@@ -207,26 +182,8 @@ impl Saturator {
 
     pub fn union(&mut self, x: SSAId, y: SSAId) -> SSAId {
         assert_eq!(self.ssa.ty(x), self.ssa.ty(y));
-        self.ids.union_with(
-            x,
-            y,
-            |id, old_canon_id, new_canon_id| {
-                self.node_trie_edits.push(NodeTrieEdit::PushUnion {
-                    id,
-                    old_canon_id,
-                    new_canon_id,
-                });
-            },
-            |canon_id, non_canon_id, _, combined| {
-                self.analysis_trie_edits
-                    .push(AnalysisTrieEdit::RemoveAnalysis { id: non_canon_id });
-                self.analysis_trie_edits
-                    .push(AnalysisTrieEdit::AddAnalysis {
-                        id: canon_id,
-                        analysis: combined,
-                    });
-            },
-        )
+        let (canon, non_canon) = self.ids.union(x, y);
+        canon
     }
 
     pub fn version(&self, id: SSABlockId) -> &Version<Analysis> {
@@ -417,17 +374,15 @@ impl Saturator {
                 assert_eq!(id, version.find_in_parent(id));
                 let new_canon_id = version.find(id);
                 assert_ne!(new_canon_id, id);
-                for set_id in parent.set(id, None) {
-                    Self::apply_node_edit(
-                        NodeTrieEdit::PushUnion {
-                            id: set_id,
-                            old_canon_id: id,
-                            new_canon_id,
-                        },
-                        &self.ssa,
-                        &mut self.tries,
-                    );
-                }
+                Self::apply_node_edit(
+                    NodeTrieEdit::PushUnion {
+                        newly_non_canon_id: id,
+                        newly_canon_id: new_canon_id,
+                        parent: Rc::clone(parent),
+                    },
+                    &self.ssa,
+                    &mut self.tries,
+                );
 
                 Self::apply_analysis_edit(AnalysisTrieEdit::RemoveAnalysis { id }, &mut self.tries);
             }
@@ -461,18 +416,20 @@ impl Saturator {
                 tries.insert_tuple(canon_id, ssa.get(id), id, false);
             }
             PushUnion {
-                id,
-                old_canon_id,
-                new_canon_id,
+                newly_non_canon_id,
+                newly_canon_id,
+                parent,
             } => {
-                let node = ssa.get(id);
-                if let Some(inserted_id) = tries.inserted_as(id)
-                    && inserted_id != new_canon_id
-                {
-                    tries.remove_tuple(inserted_id, node, id);
-                    tries.insert_tuple(new_canon_id, node, id, false);
+                for set_id in parent.set(newly_non_canon_id, None) {
+                    let node = ssa.get(set_id);
+                    if let Some(inserted_id) = tries.inserted_as(set_id)
+                        && inserted_id != newly_canon_id
+                    {
+                        tries.remove_tuple(inserted_id, node, set_id);
+                        tries.insert_tuple(newly_canon_id, node, set_id, false);
+                    }
                 }
-                for user in ssa.users(old_canon_id).cloned() {
+                for user in ssa.users(newly_non_canon_id).cloned() {
                     if let Some(inserted_id) = tries.inserted_as(user) {
                         tries.remove_tuple(inserted_id, ssa.get(user), user);
                     }
@@ -530,6 +487,7 @@ impl Saturator {
         for edit in take(&mut self.analysis_trie_edits) {
             Self::apply_analysis_edit(edit, &mut self.tries);
         }
+        self.check_trie_consistency();
     }
 
     pub fn saturate(&mut self) {
@@ -566,29 +524,7 @@ impl Saturator {
                 // We should only ever insert a node into the worklist if it's non-canonical.
                 assert_ne!(old_ssa, new_ssa);
                 let new_id = self.intern(new_ssa);
-                self.ids.union_with(
-                    id,
-                    new_id,
-                    |id, old_canon_id, new_canon_id| {
-                        self.node_trie_edits.push(NodeTrieEdit::PushUnion {
-                            id,
-                            old_canon_id,
-                            new_canon_id,
-                        });
-                        for user in self.ssa.users(id) {
-                            worklist.push_back(*user);
-                        }
-                    },
-                    |canon_id, non_canon_id, _, combined| {
-                        self.analysis_trie_edits
-                            .push(AnalysisTrieEdit::RemoveAnalysis { id: non_canon_id });
-                        self.analysis_trie_edits
-                            .push(AnalysisTrieEdit::AddAnalysis {
-                                id: canon_id,
-                                analysis: combined,
-                            });
-                    },
-                );
+                self.ids.union(id, new_id);
             }
 
             self.apply_edits();
