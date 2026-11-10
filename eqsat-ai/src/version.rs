@@ -36,6 +36,8 @@ pub struct Version<A: Domain> {
     find_cache: RefCell<FxHashMap<SSAId, SSAId>>,
     // Track the maximum SSAId that was ever given a non-trivial parent in this version.
     max_find_id: SSAId,
+    // Track the maximum SSAId that was ever given a non-trivial sibling in this version.
+    max_sibling_id: SSAId,
     // Cache calls to `Version::analysis_in_parent`.
     analysis_cache: RefCell<FxHashMap<SSAId, A>>,
     // Track the maximum SSAId that was ever given a non-trivial analysis in this version.
@@ -214,6 +216,7 @@ impl Iterator for SparseUnionFindSet<'_> {
 impl<A: Domain> Version<A> {
     pub fn child(parent: Rc<Version<A>>) -> Self {
         let max_find_id = parent.max_find_id;
+        let max_sibling_id = parent.max_sibling_id;
         let max_analysis_id = parent.max_analysis_id;
         let level = parent.level + 1;
         Self {
@@ -224,6 +227,7 @@ impl<A: Domain> Version<A> {
             find_cache: Default::default(),
             analysis_cache: Default::default(),
             max_find_id,
+            max_sibling_id,
             max_analysis_id,
             level,
             examined_ids: Default::default(),
@@ -357,6 +361,7 @@ impl<A: Domain> Version<A> {
         } else {
             let canon = self.uf.union(x, y);
             self.max_find_id = max(self.max_find_id, if canon == x { y } else { x });
+            self.max_sibling_id = max(self.max_sibling_id, max(x, y));
             self.update_analysis(x, y, canon, |_, _, _, _| {});
             canon
         }
@@ -394,6 +399,7 @@ impl<A: Domain> Version<A> {
                 }
             });
             self.max_find_id = max(self.max_find_id, if canon == x { y } else { x });
+            self.max_sibling_id = max(self.max_sibling_id, max(x, y));
             self.update_analysis(x, y, canon, fn_for_changed_analysis);
             canon
         }
@@ -483,11 +489,14 @@ impl<A: Domain> Iterator for VersionSet<'_, A> {
                     let last_version = *version_stack.last().unwrap();
                     if let Some(id) = last_set.next() {
                         // If `up_to` is some version, then only enumerate IDs that are canonical in
-                        // that version (version must be an ancestor of the original version).
+                        // that version (version must be an ancestor of the original version). If the
+                        // parent version does not have any interesting siblings for the ID, then
+                        // also stop going upwards.
                         if let Some(parent_version) = last_version.parent.as_ref()
                             && up_to
                                 .map(|up_to| !eq(up_to, &**parent_version))
                                 .unwrap_or(true)
+                            && parent_version.max_sibling_id >= id
                         {
                             set_stack.push(parent_version.uf.set(id));
                             version_stack.push(parent_version);
