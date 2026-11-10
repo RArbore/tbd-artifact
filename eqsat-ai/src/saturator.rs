@@ -50,12 +50,7 @@ enum AnalysisTrieEdit {
     RemoveAnalysis { id: SSAId },
 }
 
-// Because Rust does not have field borrows, we have to do silly things sometimes to convey to the
-// borrow checker that we are not violating any of its rules. In particular, the `saturate` method of
-// `Saturator` needs simultaneous access to the `union_with` method and the `ssa` member. This struct
-// should be considered as part of `Saturator` directly.
-#[derive(Default)]
-struct IDManager {
+pub struct Saturator {
     // What nodes have either been:
     // 1. Added to the hash-cons...
     // 2. Have had their canonical SSAId changed (due to a union)...
@@ -82,32 +77,51 @@ struct IDManager {
     // SSAIds, those SSAIds need to be removed from `previously_examined`, so that they are not re-
     // examined unnecessarily.
     previously_examined: FxHashSet<SSAId>,
-}
-
-pub struct Saturator {
+    // The SSA program being created.
     pub ssa: SSAProgram,
-    ids: IDManager,
+    // The tries for the "current" version.
     tries: Tries,
+    // Queue up edits to the node and analysis tries.
     node_trie_edits: Vec<NodeTrieEdit>,
     analysis_trie_edits: Vec<AnalysisTrieEdit>,
+    // Keep track of some statistics and whether we are running "rw" rules.
     pub num_rule_fires: usize,
     max_num_rule_fires: usize,
     enable_rws: bool,
 }
 
-impl IDManager {
-    fn find(&self, mut id: SSAId) -> SSAId {
+impl Saturator {
+    pub fn new(max_num_rule_fires: usize, enable_rws: bool) -> Self {
+        Self {
+            delta: Default::default(),
+            delta_analysis: Default::default(),
+            root_version: Default::default(),
+            versions: Default::default(),
+            current_version: Default::default(),
+            previously_examined: Default::default(),
+            ssa: Default::default(),
+            tries: Default::default(),
+            node_trie_edits: Default::default(),
+            analysis_trie_edits: Default::default(),
+            num_rule_fires: 0,
+            max_num_rule_fires,
+            enable_rws,
+        }
+    }
+
+    pub fn find_in_version(&self, id: SSAId, version: SSABlockId) -> SSAId {
+        self.versions[&version].as_ref().find(id)
+    }
+
+    pub fn find(&self, mut id: SSAId) -> SSAId {
         if let Some(version) = self.current_version {
             id = self.find_in_version(id, version);
         }
         id
     }
 
-    fn find_in_version(&self, id: SSAId, version: SSABlockId) -> SSAId {
-        self.versions[&version].as_ref().find(id)
-    }
-
-    fn union(&mut self, x: SSAId, y: SSAId) -> (SSAId, SSAId) {
+    pub fn union(&mut self, x: SSAId, y: SSAId) -> SSAId {
+        assert_eq!(self.ssa.ty(x), self.ssa.ty(y));
         let VersionState::Mutable(version) = self
             .versions
             .get_mut(&self.current_version.unwrap())
@@ -115,10 +129,15 @@ impl IDManager {
         else {
             panic!()
         };
-        version.union(x, y)
+        let (canon, non_canon) = version.union(x, y);
+        canon
     }
 
-    fn analysis(&self, id: SSAId) -> Analysis {
+    pub fn version(&self, id: SSABlockId) -> &Version<Analysis> {
+        self.versions[&id].as_ref()
+    }
+
+    pub fn analysis(&self, id: SSAId) -> Analysis {
         if let Some(version) = self.current_version {
             self.analysis_in_version(id, version)
         } else {
@@ -126,7 +145,7 @@ impl IDManager {
         }
     }
 
-    fn analysis_in_version(&self, id: SSAId, version: SSABlockId) -> Analysis {
+    pub fn analysis_in_version(&self, id: SSAId, version: SSABlockId) -> Analysis {
         self.versions[&version].as_ref().analysis(id)
     }
 
@@ -156,71 +175,21 @@ impl IDManager {
             .map(|current_version| self.versions[&current_version].as_ref().canonicalize(ssa))
             .unwrap_or(ssa)
     }
-}
-
-impl Saturator {
-    pub fn new(max_num_rule_fires: usize, enable_rws: bool) -> Self {
-        Self {
-            ssa: Default::default(),
-            ids: Default::default(),
-            tries: Default::default(),
-            node_trie_edits: Default::default(),
-            analysis_trie_edits: Default::default(),
-            num_rule_fires: 0,
-            max_num_rule_fires,
-            enable_rws,
-        }
-    }
-
-    pub fn find(&self, id: SSAId) -> SSAId {
-        self.ids.find(id)
-    }
-
-    pub fn find_in_version(&mut self, id: SSAId, version: SSABlockId) -> SSAId {
-        self.ids.find_in_version(id, version)
-    }
-
-    pub fn union(&mut self, x: SSAId, y: SSAId) -> SSAId {
-        assert_eq!(self.ssa.ty(x), self.ssa.ty(y));
-        let (canon, non_canon) = self.ids.union(x, y);
-        canon
-    }
-
-    pub fn version(&self, id: SSABlockId) -> &Version<Analysis> {
-        self.ids.versions[&id].as_ref()
-    }
-
-    pub fn analysis(&mut self, id: SSAId) -> Analysis {
-        self.ids.analysis(id)
-    }
-
-    pub fn analysis_in_version(&mut self, id: SSAId, version: SSABlockId) -> Analysis {
-        self.ids.analysis_in_version(id, version)
-    }
-
-    pub fn mark_contradiction(&mut self) {
-        self.ids.mark_contradiction();
-    }
-
-    pub fn is_contradiction_in_version(&self, version: SSABlockId) -> bool {
-        self.ids.is_contradiction_in_version(version)
-    }
 
     pub fn intern(&mut self, mut ssa: SSA) -> SSAId {
         let before = self.ssa.num_nodes();
-        ssa = self.ids.canonicalize(ssa);
+        ssa = self.canonicalize(ssa);
         let id = self.ssa.intern(ssa);
-        let canon_id = self.ids.find(id);
+        let canon_id = self.find(id);
         let after = self.ssa.num_nodes();
-        if (before != after || self.ids.previously_examined.remove(&canon_id))
+        if (before != after || self.previously_examined.remove(&canon_id))
             && let VersionState::Mutable(version) = self
-                .ids
                 .versions
-                .get_mut(&self.ids.current_version.unwrap())
+                .get_mut(&self.current_version.unwrap())
                 .unwrap()
         {
             version.examine(canon_id);
-            self.ids.delta.insert(canon_id);
+            self.delta.insert(canon_id);
         }
         if before != after {
             self.node_trie_edits
@@ -246,9 +215,8 @@ impl Saturator {
         // Other rules that may have executed since we edited the trie may have caused unions.
         id = self.find(id);
         let VersionState::Mutable(version) = self
-            .ids
             .versions
-            .get_mut(&self.ids.current_version.unwrap())
+            .get_mut(&self.current_version.unwrap())
             .unwrap()
         else {
             panic!()
@@ -257,7 +225,7 @@ impl Saturator {
         let new_analysis = old_analysis.meet(&analysis);
         if old_analysis != new_analysis {
             version.set_analysis(id, new_analysis);
-            self.ids.delta_analysis.insert(id);
+            self.delta_analysis.insert(id);
             self.analysis_trie_edits
                 .push(AnalysisTrieEdit::AddAnalysis {
                     id,
@@ -272,7 +240,7 @@ impl Saturator {
         let pred_version_rc = match self.ssa.get_block(block) {
             Entry => None,
             Identity(pred) | Guard(pred, _, _) | Return(pred, _) => {
-                let state = self.ids.versions.get_mut(pred).unwrap();
+                let state = self.versions.get_mut(pred).unwrap();
                 let rc = match state {
                     Mutable(version) => {
                         // Why isn't there a core::mem primitive for this?
@@ -285,8 +253,8 @@ impl Saturator {
                 Some(rc)
             }
             Merge(pred1, pred2, _) => {
-                let pred1 = self.ids.versions[&pred1].as_ref();
-                let pred2 = self.ids.versions[&pred2].as_ref();
+                let pred1 = self.versions[&pred1].as_ref();
+                let pred2 = self.versions[&pred2].as_ref();
                 // This looks weird, but we do want to make sure that we get an Rc in this situation.
                 Some(Version::lca(pred1, pred2, |_| {}, |_| {}).unwrap())
             }
@@ -294,23 +262,20 @@ impl Saturator {
 
         let version = pred_version_rc
             .map(|rc| Version::child(rc))
-            .unwrap_or_else(|| Version::child(Rc::clone(&self.ids.root_version)));
+            .unwrap_or_else(|| Version::child(Rc::clone(&self.root_version)));
         self.traverse_to_version(&version);
-        self.ids
-            .versions
-            .insert(block, VersionState::Mutable(version));
-        self.ids.current_version = Some(block);
+        self.versions.insert(block, VersionState::Mutable(version));
+        self.current_version = Some(block);
     }
 
     pub fn traverse_to_version(&mut self, version: &Version<Analysis>) {
-        assert!(self.ids.delta.is_empty());
-        assert!(self.ids.delta_analysis.is_empty());
+        assert!(self.delta.is_empty());
+        assert!(self.delta_analysis.is_empty());
         self.apply_edits();
         let last_version = self
-            .ids
             .current_version
-            .map(|last_block| self.ids.versions[&last_block].as_ref())
-            .unwrap_or(&self.ids.root_version);
+            .map(|last_block| self.versions[&last_block].as_ref())
+            .unwrap_or(&self.root_version);
 
         // Traverse up and down the version hierarchy from the last version to the current version.
         let mut up_versions = vec![];
@@ -326,7 +291,7 @@ impl Saturator {
         for version in up_versions {
             // When popping a version, any examined nodes may need to be re-examined.
             for id in version.examined() {
-                self.ids.previously_examined.insert(id);
+                self.previously_examined.insert(id);
             }
 
             // And any unions that held in the popped version but not its parent induce trie edits.
@@ -365,7 +330,7 @@ impl Saturator {
         for version in down_versions {
             // When pushing a version, any already examined nodes don't need to be re-examined.
             for id in version.examined() {
-                self.ids.previously_examined.remove(&id);
+                self.previously_examined.remove(&id);
             }
 
             // And any unions that hold in the pushed version but not its parent induce trie edits.
@@ -400,13 +365,13 @@ impl Saturator {
     }
 
     pub fn move_to_version(&mut self, block: SSABlockId) {
-        if self.ids.current_version == Some(block) {
+        if self.current_version == Some(block) {
             return;
         }
-        let version = self.ids.versions.remove(&block).unwrap();
+        let version = self.versions.remove(&block).unwrap();
         self.traverse_to_version(version.as_ref());
-        self.ids.versions.insert(block, version);
-        self.ids.current_version = Some(block);
+        self.versions.insert(block, version);
+        self.current_version = Some(block);
     }
 
     fn apply_node_edit(edit: NodeTrieEdit, ssa: &SSAProgram, tries: &mut Tries) {
@@ -491,26 +456,26 @@ impl Saturator {
     }
 
     pub fn saturate(&mut self) {
-        if let VersionState::Immutable(_) = self.ids.versions[&self.ids.current_version.unwrap()] {
-            assert!(self.ids.delta.is_empty());
-            assert!(self.ids.delta_analysis.is_empty());
+        if let VersionState::Immutable(_) = self.versions[&self.current_version.unwrap()] {
+            assert!(self.delta.is_empty());
+            assert!(self.delta_analysis.is_empty());
             return;
         };
         let threshold = self.num_rule_fires + self.max_num_rule_fires;
         while self.num_rule_fires < threshold {
-            if (self.ids.delta.is_empty() && self.ids.delta_analysis.is_empty())
-                || self.is_contradiction_in_version(self.ids.current_version.unwrap())
+            if (self.delta.is_empty() && self.delta_analysis.is_empty())
+                || self.is_contradiction_in_version(self.current_version.unwrap())
             {
                 break;
             }
             self.apply_edits();
 
             // Prepare worklist for rebuilding. The worklist should always contain only nodes that
-            // use non-canonical SSAIds.
+            // use non-canonical SSA
             let mut worklist = VecDeque::new();
-            for id in &self.ids.delta {
+            for id in &self.delta {
                 // The only nodes in `delta` that should fail this check are new nodes.
-                if *id != self.ids.find(*id) {
+                if *id != self.find(*id) {
                     for user in self.ssa.users(*id) {
                         worklist.push_back(*user);
                     }
@@ -520,36 +485,36 @@ impl Saturator {
             // Perform rebuilding.
             while let Some(id) = worklist.pop_front() {
                 let old_ssa = self.ssa.get(id);
-                let new_ssa = self.ids.canonicalize(old_ssa);
+                let new_ssa = self.canonicalize(old_ssa);
                 // We should only ever insert a node into the worklist if it's non-canonical.
                 assert_ne!(old_ssa, new_ssa);
                 let new_id = self.intern(new_ssa);
-                self.ids.union(id, new_id);
+                self.union(id, new_id);
             }
 
             self.apply_edits();
             let mut tries = take(&mut self.tries);
             // Each iteration, construct the delta tries from scratch.
-            for id in &self.ids.delta {
+            for id in &self.delta {
                 let node = self.ssa.get(*id);
-                if self.ids.is_canonical(node) {
-                    tries.insert_tuple(self.ids.find(*id), node, *id, true);
+                if self.is_canonical(node) {
+                    tries.insert_tuple(self.find(*id), node, *id, true);
                 }
             }
-            for id in &self.ids.delta_analysis {
-                if *id == self.ids.find(*id) {
-                    tries.insert_analysis(*id, self.ids.analysis(*id), true);
+            for id in &self.delta_analysis {
+                if *id == self.find(*id) {
+                    tries.insert_analysis(*id, self.analysis(*id), true);
                 }
             }
-            self.ids.delta.clear();
-            self.ids.delta_analysis.clear();
+            self.delta.clear();
+            self.delta_analysis.clear();
 
             apply_rws::<false>(self, &tries, self.enable_rws, threshold);
             tries.clear_delta();
             self.tries = tries;
         }
-        self.ids.delta.clear();
-        self.ids.delta_analysis.clear();
+        self.delta.clear();
+        self.delta_analysis.clear();
         self.apply_edits();
     }
 
@@ -559,12 +524,12 @@ impl Saturator {
         let mut correct = Tries::default();
         for id in 0..self.ssa.num_nodes() {
             let node = self.ssa.get(id);
-            let canon_id = self.ids.find(id);
-            if self.ids.is_canonical(node) {
+            let canon_id = self.find(id);
+            if self.is_canonical(node) {
                 correct.insert_tuple(canon_id, node, id, false);
             }
             if id == canon_id {
-                correct.insert_analysis(id, self.ids.analysis(id), false);
+                correct.insert_analysis(id, self.analysis(id), false);
             }
         }
         assert_eq!(correct, self.tries);
