@@ -140,7 +140,7 @@ impl<R: Rng> Sampler<R> {
     fn sample_assigns_and_ifs(&mut self, preceding_ifs: u64) -> ImpStmt {
         let mut body = vec![];
         let mut prob = 200;
-        while body.len() < 10 || self.rng.random_ratio(prob, prob + 1) {
+        while body.len() < 20 || self.rng.random_ratio(prob, prob + 1) {
             let var = if !self.in_scope.is_empty() && self.rng.random_ratio(3, 5) {
                 *self
                     .in_scope

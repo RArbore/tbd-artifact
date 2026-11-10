@@ -9,11 +9,6 @@ import os
 np.set_printoptions(suppress=True)
 data = np.genfromtxt(sys.argv[1], delimiter=",", dtype=int)
 data = data.reshape((100, -1, 10))
-print(data.shape)
-print(data[0, 0, :])
-print(data[1, 0, :])
-print(data[0, 1, :])
-print(data[1, 1, :])
 
 SERIF_FONT = "Linux Libertine"
 SANS_SERIF_FONT = "Linux Biolinum"
