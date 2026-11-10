@@ -94,6 +94,14 @@ impl SSA {
             },
         }
     }
+
+    pub fn is_param_or_knot(&self) -> bool {
+        use SSA::*;
+        match self {
+            Constant(_) | Unary(_, _) | Binary(_, _, _) => false,
+            Param(_, _) | Knot(_, _, _) => true,
+        }
+    }
 }
 
 impl SSAHashCons {
