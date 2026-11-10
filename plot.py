@@ -35,7 +35,7 @@ cmap = "gnuplot2"
 s = 7
 alpha = 1
 w = 4
-c = np.maximum(data[:, 6], 1)
+c = np.maximum(data[:, 7], 1)
 
 fig, ax = plt.subplots()
 norm = colors.LogNorm(vmin=c.min(), vmax=c.max())
