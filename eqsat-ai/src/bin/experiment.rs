@@ -137,7 +137,7 @@ impl<R: Rng> Sampler<R> {
         }
     }
 
-    fn sample_assigns_and_ifs(&mut self, preceding_ifs: usize) -> ImpStmt {
+    fn sample_assigns_and_ifs(&mut self, preceding_ifs: u64) -> ImpStmt {
         let mut body = vec![];
         let mut prob = 100;
         while body.is_empty() || self.rng.random_ratio(prob, prob + 1) {
@@ -239,9 +239,9 @@ impl<R: Rng> Sampler<R> {
     }
 }
 
-fn generate_func<R: Rng>(sampler: &mut Sampler<R>, preceding_ifs: usize) -> ImpFunc {
+fn generate_func<R: Rng>(sampler: &mut Sampler<R>, preceding_ifs: Option<u64>) -> ImpFunc {
     let mut params = vec![];
-    if preceding_ifs > 0 {
+    if preceding_ifs.is_some() {
         let param = format!("b").into();
         params.push((param, Type::Bool));
     }
@@ -253,7 +253,7 @@ fn generate_func<R: Rng>(sampler: &mut Sampler<R>, preceding_ifs: usize) -> ImpF
         sampler.num_vars += 1;
     }
 
-    let body = if preceding_ifs > 0 {
+    let body = if let Some(preceding_ifs) = preceding_ifs {
         sampler.sample_assigns_and_ifs(preceding_ifs)
     } else {
         sampler.sample_stmt(INITIAL_JUICE)
@@ -325,7 +325,11 @@ fn main() {
     let args = Args::parse();
     match (args.index, args.text) {
         (None, None) => {
-            let range = if args.preceding_ifs { NUM_GENERATED + NUM_GENERATED_PER_IF } else { NUM_GENERATED };
+            let range = if args.preceding_ifs {
+                NUM_GENERATED + NUM_GENERATED_PER_IF
+            } else {
+                NUM_GENERATED
+            };
             let iter_func = |i| {
                 let seed = if args.preceding_ifs {
                     i / (range / NUM_GENERATED_PER_IF)
@@ -333,16 +337,16 @@ fn main() {
                     i
                 };
                 let num_ifs = if args.preceding_ifs {
-                    10 * (i % (range / NUM_GENERATED_PER_IF))
+                    Some(10 * (i % (range / NUM_GENERATED_PER_IF)))
                 } else {
-                    0
+                    None
                 };
                 let mut sampler = Sampler {
                     in_scope: BTreeMap::new(),
                     num_vars: 0,
                     rng: Xoshiro128PlusPlus::seed_from_u64(seed),
                 };
-                let func = generate_func(&mut sampler, num_ifs as usize);
+                let func = generate_func(&mut sampler, num_ifs);
                 let mut func_args = vec![];
                 for (_, ty) in &func.params {
                     func_args.push(sampler.sample_constant(*ty));
@@ -358,7 +362,7 @@ fn main() {
                 println!(
                     "{},{},{},{},{},{},{},{},{},{}",
                     seed,
-                    num_ifs,
+                    num_ifs.unwrap_or(0),
                     args.max_saturate_iters,
                     stats.num_blocks,
                     stats.num_reachable_blocks,
@@ -403,12 +407,13 @@ fn main() {
         }
         (Some(index), None) => {
             assert!(!args.parallel);
+            assert!(!args.preceding_ifs);
             let mut sampler = Sampler {
                 in_scope: BTreeMap::new(),
                 num_vars: 0,
                 rng: Xoshiro128PlusPlus::seed_from_u64(index),
             };
-            let func = generate_func(&mut sampler, 0);
+            let func = generate_func(&mut sampler, None);
             let mut func_args = vec![];
             for (_, ty) in &func.params {
                 func_args.push(sampler.sample_constant(*ty));

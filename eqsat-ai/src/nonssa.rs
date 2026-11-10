@@ -87,7 +87,7 @@ pub enum Block {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NonSSAFunc {
     pub name: Symbol,
     pub params: Vec<(Symbol, Type)>,
