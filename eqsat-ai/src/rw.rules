@@ -58,8 +58,6 @@
 (rule (a:(Constant[bool] false) a:(NE b c)) ((union b c)))
 
 (rule (a:(Constant[i64] b)) ((KnownBits a `KnownBits::from_constant(b)`) (Interval a `Interval::from_constant(b)`)))
-(rule (a:(Param[i64] _)) ((KnownBits a `KnownBits::top()`) (Interval a `Interval::Top`)))
-(rule (a:(Knot[i64] kb int _)) ((KnownBits a kb) (Interval a int)))
 
 (rule (a:(Neg b) (KnownBits b kb)) ((KnownBits a `kb.neg()`)))
 (rule (a:(BitwiseNot b) (KnownBits b kb)) ((KnownBits a `kb.bitwise_not()`)))

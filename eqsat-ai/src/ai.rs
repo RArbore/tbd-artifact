@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use rustc_hash::{FxHashMap, FxHashSet};
 use symbol_table::GlobalSymbol as Symbol;
 
-use crate::analysis::Domain;
+use crate::analysis::{Domain, Interval, KnownBits};
 use crate::nonssa::{Block, BlockId, Constant, Expr, NonSSAFunc, State, Type, WTO};
 use crate::saturator::Saturator;
 use crate::ssa::{Analysis, KnotId, SSA, SSABlock, SSABlockId, SSAId};
@@ -117,7 +117,10 @@ impl<'a> AIContext<'a> {
                     }
                     last_knot_count = Some(self.knot_map.num_knots());
                 }
-                self.max_component_iterations = max(self.max_component_iterations, self.num_iterations - old_num_iterations);
+                self.max_component_iterations = max(
+                    self.max_component_iterations,
+                    self.num_iterations - old_num_iterations,
+                );
                 self.num_iterations = old_num_iterations;
             }
         }
@@ -228,11 +231,14 @@ impl<'a> AIContext<'a> {
             .iter()
             .enumerate()
             .map(|(idx, (param, ty))| {
+                let id = self.saturator.intern(SSA::Param(idx, *ty));
+                self.saturator
+                    .analyze(id, (KnownBits::top(), Interval::top()));
                 (
                     *param,
                     // There is no version for before the entry. That's fine, because we won't have
                     // equated function parameters with anything yet.
-                    self.saturator.intern(SSA::Param(idx, *ty)),
+                    id,
                 )
             })
             .collect();
@@ -384,6 +390,7 @@ impl<'a> AIContext<'a> {
                         for id in set1.intersection(&set2) {
                             knot = self.saturator.union(knot, *id).0;
                         }
+                        self.saturator.analyze(knot, analysis);
                         knot
                     };
                     for var in vars {
