@@ -139,8 +139,8 @@ impl<R: Rng> Sampler<R> {
 
     fn sample_assigns_and_ifs(&mut self, preceding_ifs: u64) -> ImpStmt {
         let mut body = vec![];
-        let mut prob = 200;
-        while body.len() < 20 || self.rng.random_ratio(prob, prob + 1) {
+        let len = self.rng.random_range(20..1000);
+        while body.len() < len {
             let var = if !self.in_scope.is_empty() && self.rng.random_ratio(3, 5) {
                 *self
                     .in_scope
@@ -156,7 +156,6 @@ impl<R: Rng> Sampler<R> {
             let expr = self.sample_expr(Type::I64);
             self.in_scope.insert(var, Type::I64);
             body.push(ImpStmt::Assign { var, expr });
-            prob -= 1;
         }
         let mut sequence = vec![];
         for _ in 0..preceding_ifs {
