@@ -929,7 +929,7 @@ pub fn compile_rw(contents: &str) -> String {
                     SSA::Binary(op, _, _) => {
                         #trie_binary_insert
                     }
-                    _ => {}
+                    _ => panic!()
                 }
             }
 
@@ -946,7 +946,7 @@ pub fn compile_rw(contents: &str) -> String {
                     SSA::Binary(op, _, _) => {
                         #trie_binary_remove
                     }
-                    _ => {}
+                    _ => panic!()
                 }
             }
 

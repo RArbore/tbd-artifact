@@ -144,6 +144,7 @@ impl Saturator {
                     .or_default()
                     .iter(),
             );
+            self.delta.insert(non_canon);
             self.node_trie_edits.push(NodeTrieEdit::PushUnion {
                 newly_non_canon_id: non_canon,
             });
@@ -232,10 +233,12 @@ impl Saturator {
         }
         if before != after {
             assert_eq!(id, canon_id);
-            self.tuples_using_in_root
-                .entry(canon_id)
-                .or_default()
-                .insert(id);
+            if !ssa.is_param_or_knot() {
+                self.tuples_using_in_root
+                    .entry(canon_id)
+                    .or_default()
+                    .insert(id);
+            }
             self.node_trie_edits
                 .push(NodeTrieEdit::Intern { id, canon_id });
             self.analysis_trie_edits
@@ -458,31 +461,39 @@ impl Saturator {
         use NodeTrieEdit::*;
         match edit {
             Intern { id, canon_id } => {
-                tries.insert_tuple(canon_id, ssa.get(id), id, false);
-                tuples_using_in_root.entry(canon_id).or_default().insert(id);
+                let node = ssa.get(id);
+                if !node.is_param_or_knot() {
+                    tries.insert_tuple(canon_id, node, id, false);
+                    tuples_using_in_root.entry(canon_id).or_default().insert(id);
+                }
             }
             ResetRoot { id: non_canon_id } => {
                 let node = ssa.get(non_canon_id);
-                let canon_id = current_version.find(non_canon_id);
-                if let Some(inserted_id) = tries.inserted_as(non_canon_id)
-                    && inserted_id != canon_id
-                {
-                    tries.remove_tuple(inserted_id, node, non_canon_id);
-                    tuples_using_in_root
-                        .entry(inserted_id)
-                        .or_default()
-                        .remove(&non_canon_id);
-                    tries.insert_tuple(canon_id, node, non_canon_id, false);
-                    tuples_using_in_root
-                        .entry(canon_id)
-                        .or_default()
-                        .insert(non_canon_id);
+                if !node.is_param_or_knot() {
+                    let canon_id = current_version.find(non_canon_id);
+                    if let Some(inserted_id) = tries.inserted_as(non_canon_id)
+                        && inserted_id != canon_id
+                    {
+                        tries.remove_tuple(inserted_id, node, non_canon_id);
+                        tuples_using_in_root
+                            .entry(inserted_id)
+                            .or_default()
+                            .remove(&non_canon_id);
+                        tries.insert_tuple(canon_id, node, non_canon_id, false);
+                        tuples_using_in_root
+                            .entry(canon_id)
+                            .or_default()
+                            .insert(non_canon_id);
+                    }
                 }
             }
             PushUnion { newly_non_canon_id } => {
                 for user in ssa.users(newly_non_canon_id).cloned() {
-                    if let Some(inserted_id) = tries.inserted_as(user) {
-                        tries.remove_tuple(inserted_id, ssa.get(user), user);
+                    let user_node = ssa.get(user);
+                    if !user_node.is_param_or_knot()
+                        && let Some(inserted_id) = tries.inserted_as(user)
+                    {
+                        tries.remove_tuple(inserted_id, user_node, user);
                         tuples_using_in_root
                             .entry(inserted_id)
                             .or_default()
@@ -496,7 +507,7 @@ impl Saturator {
             } => {
                 for user in ssa.users(newly_canon_id).cloned() {
                     let user_node = ssa.get(user);
-                    if parent.is_canonical(user_node) {
+                    if !user_node.is_param_or_knot() && parent.is_canonical(user_node) {
                         let user_canon = parent.find(user);
                         if let Some(inserted_id) = tries.inserted_as(user) {
                             assert_eq!(inserted_id, user_canon);
@@ -604,7 +615,7 @@ impl Saturator {
             // Each iteration, construct the delta tries from scratch.
             for id in &self.delta {
                 let node = self.ssa.get(*id);
-                if self.is_canonical(node) {
+                if !node.is_param_or_knot() && self.is_canonical(node) {
                     tries.insert_tuple(self.find(*id), node, *id, true);
                 }
             }
@@ -634,7 +645,7 @@ impl Saturator {
         for id in 0..self.ssa.num_nodes() {
             let node = self.ssa.get(id);
             let canon_id = self.find(id);
-            if self.is_canonical(node) {
+            if !node.is_param_or_knot() && self.is_canonical(node) {
                 correct.insert_tuple(canon_id, node, id, false);
                 tuples_using_in_root.entry(canon_id).or_default().insert(id);
             }
