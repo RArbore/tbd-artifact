@@ -7,7 +7,7 @@ import sys
 import os
 
 np.set_printoptions(suppress=True)
-data = np.genfromtxt(sys.argv[1], delimiter=",", dtype=int)[1:, :]
+data = np.genfromtxt(sys.argv[1], delimiter=",", dtype=int)
 print("Max number of applied rules:", np.max(data[:, 7]))
 print("Mean of max number of repetitions of a component:", np.mean(data[:, 5]))
 print("Median of max number of repetitions of a component:", np.median(data[:, 5]))
