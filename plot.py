@@ -35,6 +35,7 @@ cmap = "gnuplot2"
 s = 7
 alpha = 1
 w = 4
+h = 3
 c = np.maximum(data[:, 7], 1)
 
 fig, ax = plt.subplots()
@@ -47,10 +48,10 @@ ax.set_ylabel("Analysis Time (microseconds)")
 ax.set_xscale("log")
 ax.set_yscale("log")
 #ax.spines[["top", "right"]].set_visible(False)
-cax = fig.add_axes([0.185, 0.932, 0.5, 0.03])
+cax = fig.add_axes([0.185, 0.9193, 0.5, 0.03])
 cbar = fig.colorbar(colorizer.ColorizingArtist(colorizer.Colorizer(norm=norm, cmap=cmap)), orientation="horizontal", cax=cax, label="Applied Rules")
 cbar.set_ticks(ticks=[1, 10, 100, 1000, 10000, 100000])
 fig.set_figwidth(w)
-fig.set_figheight(w)
+fig.set_figheight(h)
 fig.tight_layout()
 plt.savefig("plot.pdf", bbox_inches="tight")

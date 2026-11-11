@@ -28,6 +28,7 @@ plt.rcParams.update(
 cmap = "gnuplot2"
 s = 1
 w = 4
+h = 3
 c = np.maximum(data[:, :, 7], 1)
 
 fig, ax = plt.subplots()
@@ -40,10 +41,10 @@ ax.set_ylabel("Analysis Time (microseconds)")
 #ax.spines[["top", "right"]].set_visible(False)
 ax.set_xlim(xmin=0,xmax=1000)
 ax.set_ylim(ymin=0)
-cax = fig.add_axes([0.22, 0.932, 0.5, 0.03])
+cax = fig.add_axes([0.22, 0.9193, 0.5, 0.03])
 cbar = fig.colorbar(colorizer.ColorizingArtist(colors), orientation="horizontal", cax=cax, label="Applied Rules")
 cbar.set_ticks(ticks=[0, 2500, 5000, 7500, 10000, 12500])
 fig.set_figwidth(w)
-fig.set_figheight(w)
+fig.set_figheight(h)
 fig.tight_layout()
 plt.savefig("plot-preceding-ifs.pdf", bbox_inches="tight")
