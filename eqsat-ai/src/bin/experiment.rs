@@ -16,6 +16,7 @@ use eqsat_ai::saturator::Saturator;
 const NUM_GENERATED: u64 = 10000;
 const NUM_GENERATED_PER_IF: u64 = 100;
 const INITIAL_JUICE: usize = 5;
+const NUM_RUNS_PER_MEASUREMENT: u32 = 5;
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -292,9 +293,17 @@ fn check_func(
     let concrete_interpret_time = concrete_interpret_time.elapsed();
 
     let mut saturator = Saturator::new(max_saturate_iters, enable_rws);
-    let abstract_interpret_time = Instant::now();
+    let instant = Instant::now();
     let result = abstract_interpret(&mut saturator, nonssa.name, &nonssa);
-    let abstract_interpret_time = abstract_interpret_time.elapsed();
+    let mut abstract_interpret_time = instant.elapsed();
+    for _ in 1..NUM_RUNS_PER_MEASUREMENT {
+        let instant = Instant::now();
+        let mut saturator = Saturator::new(max_saturate_iters, enable_rws);
+        let same_result = abstract_interpret(&mut saturator, nonssa.name, &nonssa);
+        assert_eq!(result, same_result);
+        abstract_interpret_time += instant.elapsed();
+    }
+    abstract_interpret_time /= NUM_RUNS_PER_MEASUREMENT;
     let max_version_level = result
         .ssa_blocks
         .values()

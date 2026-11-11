@@ -15,6 +15,7 @@ const MAX_NARROW_ITERS: usize = 4;
 // follow Lemerre's advice.
 pub type VarMap = FxHashMap<Symbol, SSAId>;
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct AnalysisResult {
     pub vars: FxHashMap<BlockId, VarMap>,
     pub ssa_blocks: FxHashMap<BlockId, SSABlockId>,
